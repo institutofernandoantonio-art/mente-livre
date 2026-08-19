@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BrainMark, BRAIN_ASSET_IS_PLACEHOLDER } from "@/components/BrainMark";
+import { BrainMark } from "@/components/BrainMark";
 import { LogoMark } from "@/components/LogoMark";
 import { buttonVariants } from "@/components/ui/Button";
 
@@ -8,12 +8,6 @@ export default function WelcomePage() {
     <main className="flex min-h-dvh flex-col items-center px-6 pt-16 pb-[max(2rem,env(safe-area-inset-bottom))] md:min-h-0 md:justify-center md:py-20">
       <div className="flex w-full max-w-sm flex-col items-center text-center">
         <BrainMark className="h-48 w-56 sm:h-56 sm:w-64" />
-
-        {BRAIN_ASSET_IS_PLACEHOLDER && (
-          <p className="mt-2 text-xs text-ink-soft/70" role="note">
-            Imagem provisória — aguardando asset oficial
-          </p>
-        )}
 
         <LogoMark className="mt-6 h-8 w-10" />
 

@@ -2,17 +2,12 @@ import Image from "next/image";
 import { cn } from "@/lib/cn";
 
 /**
- * Caminho do asset oficial do cérebro/elemento abstrato do Mente Livre.
- *
- * PROVISÓRIO: até hoje, este arquivo é um placeholder gerado (um blob azul
- * simples, sem tentar reproduzir a identidade oficial). Quando o arquivo
- * definitivo (PNG ou WebP, fundo transparente) for fornecido, basta
- * substituir o arquivo em `public/brand/mente-livre-brain.png` — ou, se o
- * formato/nome mudar, ajustar só a constante abaixo. Nenhuma outra parte da
- * tela precisa mudar.
+ * Asset oficial do cérebro/elemento abstrato do Mente Livre. Recortado da
+ * referência visual oficial em `docs/design-references/01-boas-vindas-capa.png`
+ * (que permanece intacta como arquivo de referência — este é o recorte de
+ * produção, só com o elemento gráfico, sem o mockup de tela/textos/botão).
  */
 const BRAIN_ASSET_SRC = "/brand/mente-livre-brain.png";
-export const BRAIN_ASSET_IS_PLACEHOLDER = true;
 
 interface BrainMarkProps {
   className?: string;
@@ -20,8 +15,8 @@ interface BrainMarkProps {
 
 /**
  * Elemento visual principal da identidade do Mente Livre. Usa imagem
- * raster (não SVG) para poder ser fiel ao asset oficial da marca; o
- * Next.js otimiza formato/tamanho automaticamente via `next/image`.
+ * raster (não SVG) para ser fiel ao asset oficial da marca; o Next.js
+ * otimiza formato/tamanho automaticamente via `next/image`.
  */
 export function BrainMark({ className }: BrainMarkProps) {
   return (

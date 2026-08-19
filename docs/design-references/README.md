@@ -10,26 +10,34 @@ aparece nestas imagens.
 
 ## Sobre os arquivos
 
-Os arquivos de imagem **não puderam ser copiados para esta pasta**: eles
-foram enviados como anexos diretamente na conversa, e o ambiente de
-desenvolvimento não tem acesso ao sistema de arquivos onde ficam
-armazenados — não existe um caminho local para copiá-los daqui. Por isso,
-esta pasta contém só a **descrição em texto** de cada tela, com um nome de
-arquivo já reservado, para quando os PNGs/WebPs reais forem fornecidos.
+**Atualização de 2026-08-19:** a tela 01 (Boas-vindas/Capa) já está
+disponível como arquivo real nesta pasta — `01-boas-vindas-capa.png`
+(853×1844, a composição completa da tela: cérebro + wordmark + subtítulo +
+botão). É a fonte usada para o asset de produção da Tela 1 (ver
+`PROJECT_CONTEXT.md`, seção "Identidade visual oficial"). Este arquivo
+nunca é editado — é só referência; o recorte de produção fica em
+`public/brand/mente-livre-brain.png`.
+
+Os outros 9 arquivos de imagem **ainda não puderam ser copiados para esta
+pasta**: quando enviados apenas como anexo colado na conversa, o ambiente
+de desenvolvimento não tem acesso ao sistema de arquivos onde ficam
+armazenados. Por ora, essas 9 continuam com só a **descrição em texto**
+abaixo, com nome de arquivo já reservado, para quando forem fornecidas como
+arquivo (do jeito que a tela 01 foi).
 
 O usuário mencionou 11 telas; apenas 10 imagens distintas chegaram até a
 IA nesta conversa. Estão catalogadas as 10 recebidas. Se uma ficou de fora,
 falta reenviá-la para completar o catálogo.
 
-**Quando os arquivos reais forem enviados:** salvar cada um nesta pasta com
-o nome de arquivo já indicado abaixo (mantendo a numeração), para que o
-catálogo e os arquivos fiquem consistentes.
+**Quando os demais arquivos reais forem enviados:** salvar cada um nesta
+pasta com o nome de arquivo já indicado abaixo (mantendo a numeração), para
+que o catálogo e os arquivos fiquem consistentes.
 
 ## Catálogo (10 telas)
 
 | # | Arquivo reservado | Conteúdo | Ordem de envio original |
 |---|---|---|---|
-| 01 | `01-boas-vindas-capa.png` | **Tela 1 — Boas-vindas/Capa.** Cérebro 3D translúcido se dissolvendo em partículas azuis (com alguns brilhos quentes), logomarca pequena, wordmark "MENTE LIVRE" (bicolor, tracking largo), subtítulo "Sua mente pensa. A IA organiza.", botão "Começar". | 4ª imagem enviada |
+| 01 | `01-boas-vindas-capa.png` ✅ **disponível** | **Tela 1 — Boas-vindas/Capa.** Cérebro 3D translúcido se dissolvendo em partículas azuis (com alguns brilhos quentes), logomarca pequena, wordmark "MENTE LIVRE" (bicolor, tracking largo), subtítulo "Sua mente pensa. A IA organiza.", botão "Começar". Já em uso — ver `public/brand/mente-livre-brain.png`. | 4ª imagem enviada |
 | 02 | `02-chat-inicial-bom-dia.png` | Orbe de IA com glow, balão de chat "Bom dia. O que está ocupando sua mente hoje?", botão grande de microfone "Falar com a IA", atalho "Digitar minha resposta". | 1ª imagem enviada |
 | 03 | `03-captura-de-voz-ouvindo.png` | Estado de gravação: "Fale naturalmente. Eu cuido do resto.", visualização de onda sonora, texto "Estou ouvindo...", aviso "Tudo é processado com segurança e privacidade." | 2ª imagem enviada |
 | 04 | `04-organizando-ideias-loading.png` | Estado de carregamento: ícones (e-mail, calendário, tarefa etc.) orbitando um núcleo central com o logotipo, texto "Organizando suas ideias...", barra de progresso. | 7ª imagem enviada |
