@@ -14,25 +14,45 @@ começar".
 
 ## Identidade visual oficial
 
-As imagens em `Desenho telas.pdf` / anexadas pelo usuário em 2026-08-19 são a
-**referência visual oficial do Mente Livre V1** e têm prioridade sobre
-qualquer interpretação visual anterior. Delas vieram os tokens de cor, o
-padrão de sombra/glow, a tipografia do wordmark e o padrão de tela cheia
-(elemento visual grande no topo, botão ancorado perto do rodapé com folga).
+Existem **10 telas de referência visual e de experiência oficiais** do
+Mente Livre, enviadas pelo usuário em 2026-08-19 (o usuário mencionou 11;
+apenas 10 imagens distintas chegaram até a IA — ver nota em
+`docs/design-references/README.md`). Elas têm prioridade sobre qualquer
+interpretação visual anterior e **devem ser consultadas em qualquer
+implementação futura de tela**. O catálogo completo, com descrição de cada
+tela e a linguagem visual comum extraída delas (cor, tipografia, sombras,
+gradientes, botões, cards, ícones, hierarquia), está em
+[`docs/design-references/README.md`](docs/design-references/README.md).
+
+**Regra importante, pedida explicitamente pelo usuário:** referência visual
+**não é autorização de escopo**. Várias das 10 telas mostram funcionalidades
+fora do que foi aprovado na Fase 0 (Banco de Ideias, missão com cronômetro
+e % de progresso, triagem de notificações externas, métrica de "clareza
+mental %", Matriz Despertar Consciente). Essas ideias ficam registradas no
+catálogo como possibilidade futura, mas **não entram na V1 automaticamente**
+— o escopo aprovado na Fase 0 continua tendo prioridade. Qualquer decisão
+de ampliar o escopo com algo visto nas referências precisa ser pedida
+explicitamente pelo usuário.
+
+A tela 01 do catálogo (`01-boas-vindas-capa.png`) corresponde à Tela 1 —
+Boas-vindas do fluxo do produto.
 
 **Cérebro/elemento abstrato principal:** a referência usa uma imagem 3D
 foto-realista (não um ícone vetorial). Não temos ferramenta de geração de
-imagem raster disponível, então o asset atual em
-`public/brand/mente-livre-brain.png` é um **placeholder provisório** (um
-blob de gradiente azul simples, gerado programaticamente, sem tentar imitar
-a forma do cérebro) — marcado como tal na própria tela (`BrainMark.tsx`
-exporta `BRAIN_ASSET_IS_PLACEHOLDER`, que controla um aviso visível abaixo
-da imagem). **Quando o arquivo oficial (PNG ou WebP, fundo transparente)
-for fornecido:** substituir `public/brand/mente-livre-brain.png` por ele
-(ou ajustar o caminho na constante `BRAIN_ASSET_SRC` em `BrainMark.tsx`) e
-mudar `BRAIN_ASSET_IS_PLACEHOLDER` para `false`. Nenhuma outra parte da
-tela precisa mudar — o componente já usa `next/image` com `object-contain`
-e dimensionamento responsivo.
+imagem raster nem acesso ao arquivo original enviado pelo usuário (anexos
+de chat não ficam acessíveis como arquivo no ambiente de desenvolvimento) —
+por isso o asset atual em `public/brand/mente-livre-brain.png` é um
+**placeholder provisório** (um blob de gradiente azul simples, gerado
+programaticamente, sem tentar imitar a forma do cérebro) — marcado como tal
+na própria tela (`BrainMark.tsx` exporta `BRAIN_ASSET_IS_PLACEHOLDER`, que
+controla um aviso visível abaixo da imagem). **Quando o arquivo oficial
+(PNG ou WebP, fundo transparente) for fornecido:** salvar uma cópia em
+`docs/design-references/01-boas-vindas-capa.png` (catálogo) e substituir
+`public/brand/mente-livre-brain.png` pelo mesmo arquivo (ou ajustar o
+caminho na constante `BRAIN_ASSET_SRC` em `BrainMark.tsx`), e mudar
+`BRAIN_ASSET_IS_PLACEHOLDER` para `false`. Nenhuma outra parte da tela
+precisa mudar — o componente já usa `next/image` com `object-contain` e
+dimensionamento responsivo.
 
 ## Stack escolhida
 
@@ -74,6 +94,9 @@ src/
     cn.ts         utilitário para combinar classes CSS condicionalmente
 public/
   brand/          assets de imagem da marca (cérebro/elemento principal)
+docs/
+  design-references/  catálogo das 10 telas de referência oficiais (texto
+                       por ora — ver seção "Identidade visual oficial")
 ```
 
 ## Decisões arquiteturais registradas
@@ -120,6 +143,9 @@ public/
 - [x] Correção visual pós-Fase 1 — Tela 1 realinhada à identidade visual
       oficial (ver seção "Identidade visual oficial" acima). Cérebro
       permanece como placeholder até o asset oficial ser fornecido.
+- [x] Catalogação das 10 telas de referência oficiais em
+      `docs/design-references/` (descrição em texto; arquivos de imagem
+      ainda pendentes — ver Pendências).
 - [ ] Fase 2 — Autenticação e banco
 - [ ] Fase 3 — Brain dump por texto
 - [ ] Fase 4 — Organização por IA
@@ -134,7 +160,10 @@ public/
 
 - Fase 2: criar conta Supabase, definir tabelas acima com migrations, RLS,
   telas de cadastro/login/logout, proteção de rotas privadas.
-- **Pendente do usuário:** arquivo oficial do cérebro/elemento abstrato
+- **Pendente do usuário:** os 10 arquivos de imagem das telas de
+  referência (para arquivar em `docs/design-references/` com os nomes já
+  reservados no catálogo) — em especial o do cérebro/elemento abstrato
   (PNG ou WebP, fundo transparente, alta resolução) para substituir o
   placeholder em `public/brand/mente-livre-brain.png` — ver seção
-  "Identidade visual oficial".
+  "Identidade visual oficial". Confirmar também se há mesmo uma 11ª tela
+  que não chegou a ser enviada.
