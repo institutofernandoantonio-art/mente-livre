@@ -12,6 +12,28 @@ preocupações; o usuário revisa, prioriza e recebe um plano realista para o
 dia. Dor principal: "tenho várias coisas na cabeça e não sei por onde
 começar".
 
+## Identidade visual oficial
+
+As imagens em `Desenho telas.pdf` / anexadas pelo usuário em 2026-08-19 são a
+**referência visual oficial do Mente Livre V1** e têm prioridade sobre
+qualquer interpretação visual anterior. Delas vieram os tokens de cor, o
+padrão de sombra/glow, a tipografia do wordmark e o padrão de tela cheia
+(elemento visual grande no topo, botão ancorado perto do rodapé com folga).
+
+**Cérebro/elemento abstrato principal:** a referência usa uma imagem 3D
+foto-realista (não um ícone vetorial). Não temos ferramenta de geração de
+imagem raster disponível, então o asset atual em
+`public/brand/mente-livre-brain.png` é um **placeholder provisório** (um
+blob de gradiente azul simples, gerado programaticamente, sem tentar imitar
+a forma do cérebro) — marcado como tal na própria tela (`BrainMark.tsx`
+exporta `BRAIN_ASSET_IS_PLACEHOLDER`, que controla um aviso visível abaixo
+da imagem). **Quando o arquivo oficial (PNG ou WebP, fundo transparente)
+for fornecido:** substituir `public/brand/mente-livre-brain.png` por ele
+(ou ajustar o caminho na constante `BRAIN_ASSET_SRC` em `BrainMark.tsx`) e
+mudar `BRAIN_ASSET_IS_PLACEHOLDER` para `false`. Nenhuma outra parte da
+tela precisa mudar — o componente já usa `next/image` com `object-contain`
+e dimensionamento responsivo.
+
 ## Stack escolhida
 
 - **Next.js** (App Router, TypeScript) — frontend e backend no mesmo projeto.
@@ -45,9 +67,13 @@ src/
   components/
     ui/           componentes reutilizáveis (Button, Input, Textarea, Card,
                    Modal, Loader, EmptyState, ErrorState)
-    BrainMark.tsx símbolo abstrato do Mente Livre (SVG)
+    BrainMark.tsx elemento visual principal (imagem raster, ver seção
+                   "Identidade visual oficial" acima)
+    LogoMark.tsx  logomarca pequena (SVG, acima do wordmark)
   lib/
     cn.ts         utilitário para combinar classes CSS condicionalmente
+public/
+  brand/          assets de imagem da marca (cérebro/elemento principal)
 ```
 
 ## Decisões arquiteturais registradas
@@ -55,8 +81,18 @@ src/
 - **Tema sempre claro.** O produto nunca deve ficar escuro, mesmo se o
   sistema operacional do usuário estiver no modo escuro (pedido explícito
   do briefing). Por isso não há `@media (prefers-color-scheme: dark)`.
-- **Símbolo do cérebro é SVG inline**, não imagem — fica leve e nítido em
-  qualquer tela sem arquivo externo para carregar.
+- **Elemento visual principal (cérebro) é imagem raster via `next/image`**,
+  não SVG — decisão revertida em 2026-08-19 a pedido do usuário, para
+  permitir fidelidade total ao asset 3D da identidade oficial (um SVG
+  vetorial nunca reproduziria a textura foto-realista da referência). O
+  Next.js otimiza formato/tamanho automaticamente ao servir a imagem.
+- **Logomarca pequena (`LogoMark.tsx`) continua sendo SVG** — é um traço
+  simples, não faz parte da observação acima sobre o cérebro.
+- **`--shadow-glow` foi adicionado aos tokens** (`globals.css`) para o halo
+  azul difuso atrás de elementos circulares, visto em várias telas da
+  referência oficial (orbe de IA, botão de microfone). Ainda não está em
+  uso na Tela 1 — o glow dela está embutido no próprio asset do cérebro —
+  mas o token já existe para as próximas telas não reinventarem o efeito.
 - **`buttonVariants()` em `Button.tsx`** expõe as classes visuais do botão
   separadas do elemento `<button>`, para poder estilizar um `<Link>` (que
   precisa continuar sendo um `<a>` por acessibilidade/SEO) exatamente igual
@@ -81,6 +117,9 @@ src/
 - [x] Fase 0 — Planejamento (aprovado)
 - [x] Fase 1 — Projeto base: estrutura, tokens de design, componentes
       fundamentais, Tela 1 (Boas-vindas)
+- [x] Correção visual pós-Fase 1 — Tela 1 realinhada à identidade visual
+      oficial (ver seção "Identidade visual oficial" acima). Cérebro
+      permanece como placeholder até o asset oficial ser fornecido.
 - [ ] Fase 2 — Autenticação e banco
 - [ ] Fase 3 — Brain dump por texto
 - [ ] Fase 4 — Organização por IA
@@ -95,3 +134,7 @@ src/
 
 - Fase 2: criar conta Supabase, definir tabelas acima com migrations, RLS,
   telas de cadastro/login/logout, proteção de rotas privadas.
+- **Pendente do usuário:** arquivo oficial do cérebro/elemento abstrato
+  (PNG ou WebP, fundo transparente, alta resolução) para substituir o
+  placeholder em `public/brand/mente-livre-brain.png` — ver seção
+  "Identidade visual oficial".

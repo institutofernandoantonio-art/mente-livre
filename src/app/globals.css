@@ -34,6 +34,13 @@
   --color-alert-50: #fef2f2;
 
   --shadow-soft: 0 8px 30px -12px rgb(15 23 42 / 0.12);
+
+  /*
+    Halo azul difuso atrás de elementos circulares (a "esfera" da IA, o
+    cérebro da tela de boas-vindas). Presente em várias telas da referência
+    visual oficial — por isso vira token, não estilo isolado.
+  */
+  --shadow-glow: 0 0 80px -8px rgb(59 130 246 / 0.35);
 }
 
 :root {
