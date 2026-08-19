@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Mente Livre
 
-## Getting Started
+App onde a pessoa despeja tudo o que está ocupando a cabeça (texto ou voz) e
+a IA transforma isso em tarefas organizadas, ajuda a priorizar e monta um
+plano realista para o dia.
 
-First, run the development server:
+> Sua mente pensa. A IA organiza.
+
+Este projeto está sendo construído em fases pequenas e testáveis. O
+histórico de decisões e o que já está pronto ficam registrados em
+[`PROJECT_CONTEXT.md`](./PROJECT_CONTEXT.md).
+
+## Pré-requisitos
+
+- [Node.js](https://nodejs.org) 20 ou mais recente
+- npm (já vem junto com o Node.js)
+
+## Instalação
+
+```bash
+npm install
+```
+
+## Variáveis de ambiente
+
+Copie `.env.example` para `.env.local` e preencha os valores. Cada variável
+está comentada no próprio arquivo, explicando para que serve e em qual fase
+do projeto ela passa a ser necessária.
+
+```bash
+cp .env.example .env.local
+```
+
+Até a Fase 1 (projeto base), nenhuma variável é obrigatória — o site
+funciona sem `.env.local` preenchido.
+
+## Banco de dados
+
+Ainda não configurado. Será adicionado na Fase 2, usando Supabase
+(PostgreSQL gerenciado + autenticação).
+
+## Rodando em desenvolvimento
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abra [http://localhost:3000](http://localhost:3000) no navegador.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Testes
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Ainda não configurados. Serão adicionados a partir da Fase 2, conforme as
+funcionalidades que precisam ser testadas forem existindo.
 
-## Learn More
+## Produção / Deploy
 
-To learn more about Next.js, take a look at the following resources:
+Planejado para a Fase 10, usando Vercel. Instruções completas de deploy
+serão adicionadas nessa fase.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Problemas comuns
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+**A porta 3000 já está em uso.** Feche outro processo que esteja rodando
+`npm run dev`, ou rode `npm run dev -- -p 3001` para usar outra porta.
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+**`npm install` falhou.** Confirme que o Node.js está instalado rodando
+`node -v` no terminal — a versão precisa ser 20 ou mais recente.

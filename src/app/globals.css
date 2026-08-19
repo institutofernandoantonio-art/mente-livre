@@ -1,26 +1,52 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+/*
+  Tokens de design do Mente Livre.
+  Tailwind v4 lê cores/tamanhos direto daqui (não existe mais tailwind.config.js
+  para isso). Qualquer ajuste de paleta ou espaçamento deve ser feito só neste
+  bloco, para manter consistência em todas as telas.
+*/
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* Paleta principal: branco + azul, quase sem outras cores. */
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+
+  /* Azul-marinho, reservado para textos importantes. */
+  --color-ink: #0f172a;
+  --color-ink-soft: #334155;
+
+  /* Cinza muito suave, para fundos e bordas discretas. */
+  --color-mist-50: #f8fafc;
+  --color-mist-100: #f1f5f9;
+  --color-mist-200: #e2e8f0;
+
+  /* Cor de erro, usada só quando algo realmente precisa de atenção. */
+  --color-alert-500: #dc2626;
+  --color-alert-50: #fef2f2;
+
+  --shadow-soft: 0 8px 30px -12px rgb(15 23 42 / 0.12);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+  --background: var(--color-mist-50);
+  --foreground: var(--color-ink);
 }
 
+/*
+  O produto nunca deve virar tela escura (item 5 do briefing): o tema é
+  sempre claro, independente da preferência do sistema operacional.
+*/
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }
