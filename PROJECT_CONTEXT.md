@@ -12,6 +12,64 @@ preocupações; o usuário revisa, prioriza e recebe um plano realista para o
 dia. Dor principal: "tenho várias coisas na cabeça e não sei por onde
 começar".
 
+## Visão futura: autoconhecimento e dados sensíveis (fora do escopo da V1)
+
+Registrado em 2026-08-19, a pedido do usuário — é uma **direção
+arquitetural**, não uma funcionalidade a implementar agora.
+
+**O que é:** no futuro, o Mente Livre poderá incorporar sistemas de
+autoconhecimento e desenvolvimento humano — por exemplo, **Eneagrama**
+(associar a pessoa a um perfil, ajudar a reconhecer padrões de
+comportamento/emocionais e trabalhar movimentos de desenvolvimento) e
+**Calibryum** (outro sistema de desenvolvimento, que trabalharia em
+conjunto com o Mente Livre). **Nenhum dos dois pertence à V1.** Não criar
+tabelas, campos genéricos ou estruturas especulativas para eles agora.
+
+**Princípio de arquitetura a preservar desde já:** mesmo sem implementar
+esses módulos, a V1 não deve tomar decisões que dificultem essa evolução
+depois. Em especial, nunca misturar conceitualmente estas 5 categorias de
+dado:
+
+1. dados declarados diretamente pelo usuário;
+2. resultados produzidos por instrumentos/questionários;
+3. observações comportamentais;
+4. inferências produzidas por IA;
+5. recomendações produzidas pelo sistema.
+
+Uma inferência da IA nunca deve ser guardada ou mostrada silenciosamente
+como se fosse um fato objetivo sobre a pessoa. Quando esse tipo de recurso
+for construído no futuro, a modelagem deverá permitir registrar origem,
+contexto, data e nível de confiança de cada informação.
+
+**Segurança e privacidade como requisito estrutural, desde a V1** (não só
+quando os módulos futuros chegarem):
+
+- princípio de menor privilégio;
+- RLS rigoroso, com políticas explícitas por operação (não `FOR ALL`
+  genérico) — ver [`docs/SECURITY.md`](docs/SECURITY.md) e
+  [`docs/DECISIONS.md`](docs/DECISIONS.md);
+- isolamento total de dados entre usuários;
+- autenticação verificada no servidor, nunca só na tela;
+- segredos só no servidor; nenhuma service role no frontend;
+- minimização de dados — coletar só o necessário;
+- não registrar conteúdo pessoal desnecessariamente em logs;
+- exclusão de conta/dados de forma segura (feature ainda não construída,
+  mas a modelagem não deve dificultar isso depois);
+- possibilidade futura de exportação dos dados do usuário;
+- política de retenção de dados;
+- rastreabilidade adequada de operações administrativas sensíveis;
+- preparação para uma revisão de segurança antes de qualquer lançamento
+  público;
+- preparação para adequação à LGPD.
+
+**Regra para conteúdo gerado por IA sobre a pessoa:** qualquer conteúdo
+futuro da IA sobre personalidade, comportamento ou padrões do usuário deve
+ser tratado como **interpretação/inferência**, nunca automaticamente como
+diagnóstico ou fato. Esse tipo de funcionalidade, quando vier, precisa de
+critérios próprios de consentimento, transparência, privacidade e
+validação antes de entrar em produção — não herda automaticamente as
+regras de nenhuma outra parte do produto.
+
 ## Identidade visual oficial
 
 Existem **10 telas de referência visual e de experiência oficiais** do
@@ -53,93 +111,22 @@ RGBA/com transparência) é o asset de produção usado por `BrainMark.tsx`
 via `next/image`. Não existe mais placeholder nem aviso de "imagem
 provisória" na interface.
 
-## Stack escolhida
+## Arquitetura técnica
 
-- **Next.js** (App Router, TypeScript) — frontend e backend no mesmo projeto.
-- **Tailwind CSS v4** — estilos utilitários; tokens de design centralizados
-  em `src/app/globals.css` (bloco `@theme inline`), não existe
-  `tailwind.config.js` nessa versão.
-- **Supabase** (Fase 2) — PostgreSQL gerenciado + autenticação + RLS (regra
-  de segurança no próprio banco, impede um usuário ver dados de outro).
-- **Anthropic (Claude API)** (Fase 4) — organização por IA, chamada só pelo
-  backend.
-- **Vercel** (Fase 10) — deploy.
+A stack, o diagrama de arquitetura, a estrutura de pastas e o desenho
+incremental do banco de dados (uma tabela por fase) moraram nesta seção até
+esta reorganização — agora estão em
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), sem perda de conteúdo. Este
+arquivo (`PROJECT_CONTEXT.md`) continua sendo a fonte do **estado atual**
+do projeto (visão, fases, pendências), não dos detalhes técnicos de
+implementação.
 
-## Arquitetura
-
-```
-Navegador → páginas Next.js (React) → rotas de backend Next.js → Supabase / IA
-```
-
-O navegador nunca acessa banco ou IA diretamente — sempre pelas rotas de
-backend, onde ficam as chaves secretas.
-
-## Estrutura de pastas (até agora)
-
-```
-src/
-  app/            páginas e rotas (App Router)
-    page.tsx      Tela 1 — Boas-vindas
-    entrada/      Tela 2 — placeholder até a Fase 3
-    globals.css   tokens de design (cores, sombra) + estilos base
-    layout.tsx    layout raiz, metadata, fontes
-  components/
-    ui/           componentes reutilizáveis (Button, Input, Textarea, Card,
-                   Modal, Loader, EmptyState, ErrorState)
-    BrainMark.tsx elemento visual principal (imagem raster, ver seção
-                   "Identidade visual oficial" acima)
-    LogoMark.tsx  logomarca pequena (SVG, acima do wordmark)
-  lib/
-    cn.ts         utilitário para combinar classes CSS condicionalmente
-public/
-  brand/          assets de imagem da marca (cérebro/elemento principal)
-docs/
-  design-references/  catálogo das 10 telas de referência oficiais (texto
-                       por ora — ver seção "Identidade visual oficial")
-```
-
-## Decisões arquiteturais registradas
-
-- **Tema sempre claro.** O produto nunca deve ficar escuro, mesmo se o
-  sistema operacional do usuário estiver no modo escuro (pedido explícito
-  do briefing). Por isso não há `@media (prefers-color-scheme: dark)`.
-- **Elemento visual principal (cérebro) é imagem raster via `next/image`**,
-  não SVG — decisão revertida em 2026-08-19 a pedido do usuário, para
-  permitir fidelidade total ao asset 3D da identidade oficial (um SVG
-  vetorial nunca reproduziria a textura foto-realista da referência). O
-  Next.js otimiza formato/tamanho automaticamente ao servir a imagem.
-- **Asset de produção é um recorte com borda de transparência gradual**,
-  não a imagem oficial "crua". Recortar sem essa borda deixava um retângulo
-  visível (o branco da imagem não é pixel-idêntico ao fundo do app) e
-  cortava a sombra do cérebro de forma abrupta. Se o usuário fornecer no
-  futuro um asset já isolado do cérebro (fundo transparente, sem mockup de
-  tela ao redor), ele pode substituir este recorte diretamente — não seria
-  mais necessário reprocessar nada.
-- **Logomarca pequena (`LogoMark.tsx`) continua sendo SVG** — é um traço
-  simples, não faz parte da observação acima sobre o cérebro.
-- **`--shadow-glow` foi adicionado aos tokens** (`globals.css`) para o halo
-  azul difuso atrás de elementos circulares, visto em várias telas da
-  referência oficial (orbe de IA, botão de microfone). Ainda não está em
-  uso na Tela 1 — o glow dela está embutido no próprio asset do cérebro —
-  mas o token já existe para as próximas telas não reinventarem o efeito.
-- **`buttonVariants()` em `Button.tsx`** expõe as classes visuais do botão
-  separadas do elemento `<button>`, para poder estilizar um `<Link>` (que
-  precisa continuar sendo um `<a>` por acessibilidade/SEO) exatamente igual
-  a um botão, sem duplicar CSS.
-- **Sem biblioteca de classes condicionais externa** (`clsx`/`cva`): criado
-  um `cn()` bem pequeno em `src/lib/cn.ts` para não adicionar dependência
-  por algo simples.
-
-## Banco de dados (planejado para a Fase 2)
-
-- `profiles` — id, display_name, created_at, updated_at
-- `brain_dumps` — id, user_id, raw_text, source (text/voice), created_at
-- `items` — id, user_id, brain_dump_id, title, original_text, type,
-  priority, estimated_minutes, due_date, due_time, status,
-  needs_confirmation, notes, created_at, updated_at
-- `daily_plans` — id, user_id, plan_date, created_at, updated_at
-- `daily_plan_items` — id, plan_id, item_id, position, planned_start,
-  planned_duration, completed_at, created_at, updated_at
+As decisões técnicas específicas, com data e motivo, estão em
+[`docs/DECISIONS.md`](docs/DECISIONS.md) (inclui, por exemplo, tema sempre
+claro, cérebro como imagem raster, RLS explícito por operação, e o status
+pendente de `@supabase/ssr`). Os princípios e mecanismos de segurança (RLS,
+privilégio mínimo, segredos, teste de isolamento) estão em
+[`docs/SECURITY.md`](docs/SECURITY.md).
 
 ## Funcionalidades implementadas
 
@@ -147,8 +134,7 @@ docs/
 - [x] Fase 1 — Projeto base: estrutura, tokens de design, componentes
       fundamentais, Tela 1 (Boas-vindas)
 - [x] Correção visual pós-Fase 1 — Tela 1 realinhada à identidade visual
-      oficial (ver seção "Identidade visual oficial" acima). Cérebro
-      permanece como placeholder até o asset oficial ser fornecido.
+      oficial (ver seção "Identidade visual oficial" acima).
 - [x] Catalogação das 10 telas de referência oficiais em
       `docs/design-references/` (descrição em texto; arquivos de imagem
       ainda pendentes — ver Pendências).
@@ -167,8 +153,9 @@ docs/
 
 ## Pendências / próximos passos
 
-- Fase 2: criar conta Supabase, definir tabelas acima com migrations, RLS,
-  telas de cadastro/login/logout, proteção de rotas privadas.
+- Fase 2 (em andamento): criar conta Supabase, criar só `profiles` via
+  migration com RLS explícito por operação, telas de cadastro/login/logout,
+  proteção de rotas privadas via `@supabase/ssr`.
 - **Pendente do usuário:** os outros 9 arquivos de imagem das telas de
   referência (para arquivar em `docs/design-references/` com os nomes já
   reservados no catálogo — a tela 01 já está resolvida). Confirmar também
