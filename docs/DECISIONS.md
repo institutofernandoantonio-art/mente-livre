@@ -115,10 +115,96 @@ em cada migration.
 **Fase:** Fase 2.
 **Decisão:** usar `@supabase/ssr` (pacote atual oficial da Supabase para
 Next.js) para autenticação, não `auth-helpers-nextjs` (descontinuado) nem
-sessão só em `localStorage`. Sessão em cookie httpOnly, renovada no
-servidor.
-**Status:** decisão registrada, **implementação ainda pendente** — hoje o
-projeto só tem `@supabase/supabase-js` instalado; `@supabase/ssr`,
-login/cadastro e middleware de proteção de rotas ficam para uma etapa
-posterior da Fase 2 (ver `PROJECT_CONTEXT.md`, "Pendências / próximos
-passos").
+sessão só em `localStorage`. Sessão gerenciada em cookies, com integração
+browser/servidor via `@supabase/ssr` — os atributos exatos de cada cookie
+(nome, `httpOnly`, `secure` etc.) são os que a própria implementação
+oficial do pacote configura; não presumir nem documentar atributos
+específicos aqui além do que ela define.
+**Status (atualizado):** `@supabase/ssr@0.12.4` instalado. Clientes
+`src/lib/supabase/client.ts` (browser) e `src/lib/supabase/server.ts`
+(servidor) criados. `src/proxy.ts` criado — refresh de sessão por
+requisição via `supabase.auth.getClaims()` (ver entrada própria abaixo,
+"Refresh de sessão via `src/proxy.ts`"). Login e logout por email/senha
+implementados (ver "Primeiro fluxo de login/logout" abaixo), com proteção
+server-side de `/entrada` (ver "Proteção server-side de `/entrada`"
+abaixo). Fluxo completo validado manualmente no navegador. Ainda faltam:
+cadastro, recuperação de senha, OAuth, MFA.
+**Nota técnica:** o Next.js 16 descontinuou `middleware.ts`, renomeado
+para `proxy.ts` (mesma função, nome de arquivo/export diferente — ver
+`node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md`).
+
+---
+
+### Refresh de sessão via `src/proxy.ts`
+
+**Fase:** Fase 2.
+**Decisão:** `src/proxy.ts` (convenção Next.js 16 — não `middleware.ts`)
+roda em toda requisição (exceto assets estáticos, via `matcher`), cria um
+cliente `@supabase/ssr` a partir dos cookies da requisição e chama
+`await supabase.auth.getClaims()`, que valida o JWT no servidor e renova o
+token quando necessário; o `setAll` do cliente grava os cookies atualizados
+de volta na resposta.
+**Motivo:** é o padrão exigido pelo próprio `@supabase/ssr` para que a
+sessão continue válida entre requisições (ver `node_modules/@supabase/ssr/docs/design.md`,
+seção "SSR framework patterns" — "Using the middleware pattern is
+mandatory"). Preferido `getClaims()` a `getUser()`/`getSession()`: valida a
+JWT (localmente via JWKS quando o projeto usa chaves assimétricas) em vez
+de só ler o cookie sem verificação, e evita uma chamada de rede ao servidor
+de Auth a cada requisição quando a verificação pode ser feita localmente.
+**Proteção adicional:** o proxy recusa rodar se `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+parecer ser uma `service_role` key (mesmo padrão de guarda já usado em
+`tests/security/rls.test.mjs`).
+
+---
+
+### Primeiro fluxo de login/logout (email/senha)
+
+**Fase:** Fase 2.
+**Decisão:** página de login na rota `/login` (Server Component com um
+formulário Client Component, `src/app/login/LoginForm.tsx`, usando
+`useActionState`). O login e o logout são Server Functions em
+`src/lib/supabase/actions.ts` — colocadas junto dos clientes Supabase
+(`client.ts`/`server.ts`) em vez de espalhadas por rota, já que são as
+únicas mutações de auth do projeto até agora. Após login bem-sucedido,
+redireciona para `/entrada` (rota já existente, hoje um placeholder da
+Fase 3) em vez de criar uma tela nova ou dashboard — `/entrada` agora
+também mostra a sessão ativa (email) e um botão "Sair" quando há uma
+sessão, sem virar um dashboard. Erros de login sempre mostram a mesma
+mensagem genérica ("Email ou senha inválidos.") — nunca revelam se foi o
+e-mail ou a senha que estava errada, nem qualquer detalhe da resposta do
+Supabase.
+**Motivo:** `/login` é o nome já usado nas pendências registradas em
+`PROJECT_CONTEXT.md` ("telas de cadastro/login/logout"); reaproveitar
+`/entrada` evita construir uma tela nova só para "provar" que a sessão
+funciona, mantendo o escopo desta etapa mínimo; a mensagem de erro genérica
+segue o princípio de minimização de informação já registrado em
+`docs/SECURITY.md` — revelar qual campo está errado ajuda um atacante a
+enumerar contas cadastradas.
+**Validado manualmente no navegador:** login com usuário de teste
+(`teste1@mentelivre.local`), sessão persistente após refresh da página,
+logout, e credenciais inválidas mostrando só a mensagem genérica.
+**Pendente:** cadastro, recuperação de senha, OAuth, MFA.
+
+---
+
+### Proteção server-side de `/entrada`
+
+**Fase:** Fase 2.
+**Decisão:** a checagem de acesso mora em `src/proxy.ts`, reaproveitando o
+`getClaims()` que já roda ali para o refresh de sessão — sem criar um
+segundo cliente Supabase nem uma segunda validação. Se
+`request.nextUrl.pathname === '/entrada'` e não houver sessão válida
+(`data` nulo), o proxy responde com `NextResponse.redirect('/login')` em
+vez de deixar a requisição prosseguir, copiando para a resposta de
+redirecionamento os cookies que o `setAll` já tivesse gravado (caso um
+refresh de token tenha falhado e precisado limpar um cookie inválido).
+Nenhuma outra rota foi afetada; `/entrada` continua com sua própria
+chamada a `getClaims()` em `src/app/entrada/page.tsx`, necessária para
+exibir o email da sessão — chamada separada por ser um contexto de
+execução diferente (render da página vs. proxy), não duplicação evitável.
+**Motivo:** validar acesso no servidor, antes de qualquer renderização,
+para não depender de nenhuma checagem no navegador (`não confiar apenas no
+frontend`); reaproveitar a mesma chamada de `getClaims()` já existente
+evita duplicar cliente/validação por rota.
+**Validado manualmente no navegador:** acesso direto a `/entrada` sem
+sessão redireciona para `/login`; com sessão, abre normalmente.

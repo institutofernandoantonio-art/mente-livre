@@ -153,9 +153,23 @@ privilégio mínimo, segredos, teste de isolamento) estão em
 
 ## Pendências / próximos passos
 
-- Fase 2 (em andamento): criar conta Supabase, criar só `profiles` via
-  migration com RLS explícito por operação, telas de cadastro/login/logout,
-  proteção de rotas privadas via `@supabase/ssr`.
+- Fase 2 (em andamento):
+  - [x] conta Supabase criada; tabela `profiles` via migration com RLS
+        explícito por operação (`supabase/migrations/0001_create_profiles.sql`).
+  - [x] clientes `@supabase/ssr` (browser/servidor) e refresh de sessão
+        via `src/proxy.ts`.
+  - [x] tela de login (`/login`) e logout funcional, com usuários já
+        existentes — redireciona para `/entrada` após login.
+  - [x] proteção de rota privada: `/entrada` exige sessão válida,
+        redirecionando para `/login` no servidor (`src/proxy.ts`) quando
+        não há uma. Validado manualmente de ponta a ponta no navegador
+        (login, sessão persistente após refresh, logout, credenciais
+        inválidas com mensagem genérica, acesso direto sem sessão
+        redirecionando corretamente).
+  - [ ] tela de cadastro.
+  - [ ] recuperação de senha.
+  - [ ] OAuth.
+  - [ ] MFA.
 - **Pendente do usuário:** os outros 9 arquivos de imagem das telas de
   referência (para arquivar em `docs/design-references/` com os nomes já
   reservados no catálogo — a tela 01 já está resolvida). Confirmar também

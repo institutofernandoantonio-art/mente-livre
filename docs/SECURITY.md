@@ -53,6 +53,37 @@ restritiva contra sequestro de search_path — e qualificam todo nome de
 objeto por completo (`public.profiles`), nunca deixando a função resolver
 nomes implicitamente.
 
+## Sessão e autenticação
+
+- **Refresh de sessão:** [`src/proxy.ts`](../src/proxy.ts) roda em toda
+  requisição (exceto assets estáticos) e chama
+  `await supabase.auth.getClaims()`, que valida o JWT no servidor (em vez
+  de confiar direto no cookie) e renova o token quando necessário. Ver
+  `docs/DECISIONS.md` para o motivo de `getClaims()` em vez de
+  `getUser()`/`getSession()`.
+- **Guarda contra `service_role` incorreta:** `src/proxy.ts` recusa rodar
+  se `NEXT_PUBLIC_SUPABASE_ANON_KEY` parecer ser uma `service_role` key
+  (decodifica só o payload do JWT para checar o `role`, nunca loga o
+  valor da chave) — mesmo padrão de guarda já usado em
+  `tests/security/rls.test.mjs`.
+- **Login/logout:** [`src/lib/supabase/actions.ts`](../src/lib/supabase/actions.ts)
+  implementa `login` (email/senha, via `signInWithPassword`) e `logout`
+  (via `signOut`) como Server Functions — nunca rodam no navegador.
+- **Mensagens de erro de login:** sempre genéricas ("Email ou senha
+  inválidos.") — nunca revelam se o e-mail existe, se a senha está errada,
+  nem qualquer detalhe da resposta do Supabase ou stack trace. Aplica o
+  princípio de minimização de informação: revelar qual campo está errado
+  facilitaria enumerar contas cadastradas.
+- **Proteção de rotas:** `/entrada` é a única rota protegida por enquanto.
+  `src/proxy.ts` reutiliza o `getClaims()` já chamado para o refresh de
+  sessão (sem segundo cliente nem segunda validação) — se o pathname for
+  `/entrada` e não houver sessão válida, responde com
+  `NextResponse.redirect('/login')` antes de qualquer renderização,
+  preservando cookies que um refresh malsucedido tenha limpado. Validado
+  manualmente no navegador: acesso direto sem sessão redireciona para
+  `/login`; com sessão, `/entrada` abre normalmente. Nenhuma outra rota
+  exige sessão ainda.
+
 ## Segredos e variáveis de ambiente
 
 - `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` — podem ficar
