@@ -166,7 +166,12 @@ privilégio mínimo, segredos, teste de isolamento) estão em
         (login, sessão persistente após refresh, logout, credenciais
         inválidas com mensagem genérica, acesso direto sem sessão
         redirecionando corretamente).
-  - [ ] tela de cadastro.
+  - [x] tela de cadastro (`/cadastro`): email/senha via `signUp()`, com
+        link discreto a partir de `/login`. Perfil criado automaticamente
+        pelo trigger `handle_new_user` já existente (nenhuma tabela ou
+        migration nova). Redireciona para `/entrada` se a confirmação de
+        e-mail estiver desligada no projeto, ou mostra mensagem para
+        verificar o e-mail caso contrário — ver `docs/DECISIONS.md`.
   - [ ] recuperação de senha.
   - [ ] OAuth.
   - [ ] MFA.

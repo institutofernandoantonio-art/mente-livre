@@ -66,14 +66,34 @@ nomes implicitamente.
   (decodifica só o payload do JWT para checar o `role`, nunca loga o
   valor da chave) — mesmo padrão de guarda já usado em
   `tests/security/rls.test.mjs`.
-- **Login/logout:** [`src/lib/supabase/actions.ts`](../src/lib/supabase/actions.ts)
-  implementa `login` (email/senha, via `signInWithPassword`) e `logout`
-  (via `signOut`) como Server Functions — nunca rodam no navegador.
-- **Mensagens de erro de login:** sempre genéricas ("Email ou senha
-  inválidos.") — nunca revelam se o e-mail existe, se a senha está errada,
+- **Login/logout/cadastro:** [`src/lib/supabase/actions.ts`](../src/lib/supabase/actions.ts)
+  implementa `login` (email/senha, via `signInWithPassword`), `signup`
+  (via `signUp`) e `logout` (via `signOut`) como Server Functions — nunca
+  rodam no navegador.
+- **Mensagens de erro de login/cadastro:** sempre genéricas ("Email ou
+  senha inválidos." no login; "Não foi possível criar a conta com esses
+  dados. Verifique o email e a senha e tente novamente." no cadastro) —
+  nunca revelam se o e-mail existe/já está cadastrado, se a senha é fraca,
   nem qualquer detalhe da resposta do Supabase ou stack trace. Aplica o
-  princípio de minimização de informação: revelar qual campo está errado
+  princípio de minimização de informação: diferenciar essas causas
   facilitaria enumerar contas cadastradas.
+- **Confirmação de e-mail no cadastro:** `signup` decide o próximo passo
+  em runtime, a partir da própria resposta de `signUp()` — não presume a
+  configuração do projeto. Se `data.session` vier preenchida (confirmação
+  desligada), redireciona para `/entrada` como no login. Se vier `null`
+  (confirmação ligada), permanece em `/cadastro` mostrando uma mensagem
+  neutra para verificar o e-mail, sem estabelecer sessão nenhuma.
+- **Callback de confirmação de e-mail:**
+  [`src/app/auth/callback/route.ts`](../src/app/auth/callback/route.ts)
+  recebe o `code` (fluxo PKCE) que o Supabase anexa ao link do e-mail de
+  confirmação e troca por sessão inteiramente no servidor, via
+  `exchangeCodeForSession`, usando o mesmo cliente de
+  `src/lib/supabase/server.ts`. `code` ausente, inválido, expirado ou já
+  usado sempre redireciona para `/login` sem parâmetro de erro na URL e
+  sem logar o motivo — mesmo princípio de mensagem genérica das demais
+  falhas de autenticação. Ver `docs/DECISIONS.md` para o motivo de ser um
+  Route Handler (não Server Component): a troca exige escrever cookies, o
+  que só é permitido em Route Handlers e Server Actions.
 - **Proteção de rotas:** `/entrada` é a única rota protegida por enquanto.
   `src/proxy.ts` reutiliza o `getClaims()` já chamado para o refresh de
   sessão (sem segundo cliente nem segunda validação) — se o pathname for

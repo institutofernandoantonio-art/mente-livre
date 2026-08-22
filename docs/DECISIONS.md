@@ -183,7 +183,75 @@ enumerar contas cadastradas.
 **Validado manualmente no navegador:** login com usuário de teste
 (`teste1@mentelivre.local`), sessão persistente após refresh da página,
 logout, e credenciais inválidas mostrando só a mensagem genérica.
-**Pendente:** cadastro, recuperação de senha, OAuth, MFA.
+**Pendente:** recuperação de senha, OAuth, MFA.
+
+---
+
+### Cadastro por email/senha (`/cadastro`)
+
+**Fase:** Fase 2.
+**Decisão:** página `/cadastro` no mesmo padrão estrutural do login
+(Server Component + `SignupForm.tsx` Client Component com
+`useActionState`). A Server Function `signup` (em
+`src/lib/supabase/actions.ts`, junto de `login`/`logout`) chama
+`supabase.auth.signUp({ email, password })` usando o cliente de servidor
+já existente — nenhum cliente novo. `/login` ganhou um link discreto
+"Criar conta" apontando para `/cadastro`.
+**Detecção dinâmica da confirmação de e-mail:** em vez de presumir se o
+projeto exige confirmação de e-mail (informação que não foi verificada no
+painel do Supabase durante o planejamento), `signup` decide pelo próprio
+retorno de `signUp()`: se `data.session` existir, a sessão já está ativa
+(confirmação desligada) e redireciona para `/entrada`, igual ao login; se
+`data.session` for `null` (confirmação ligada), fica em `/cadastro`
+mostrando "Conta criada. Verifique seu email para confirmar antes de
+entrar.", sem sessão nenhuma.
+**Criação de `public.profiles`:** reaproveita o trigger `handle_new_user`
+já existente (`supabase/migrations/0001_create_profiles.sql`), que dispara
+em `after insert on auth.users` independentemente de a sessão ser criada
+imediatamente ou não. Nenhuma tabela, trigger ou migration nova.
+**Mensagem de erro:** uma única mensagem genérica para qualquer falha do
+`signUp()` ("Não foi possível criar a conta com esses dados. Verifique o
+email e a senha e tente novamente.") — mesmo princípio já aplicado no
+login (ver `docs/SECURITY.md`): nunca diferenciar email já cadastrado de
+senha fraca, para não permitir enumerar contas.
+**Motivo:** manter o mesmo padrão estrutural e de segurança já validado no
+login/logout, sem introduzir uma segunda abordagem; a detecção dinâmica
+evita presumir uma configuração do Supabase que não foi confirmada.
+
+---
+
+### Callback de confirmação de e-mail (`/auth/callback`)
+
+**Fase:** Fase 2.
+**Problema encontrado em teste manual:** `@supabase/ssr` usa o fluxo PKCE
+por padrão. Sem `emailRedirectTo`, o link do e-mail de confirmação voltava
+para a Site URL do projeto (a raiz `/`) com `?code=...` na query string, e
+nada no app consumia esse código — o usuário confirmava o e-mail mas caía
+na tela de boas-vindas sem sessão nenhuma, precisando logar manualmente
+depois em `/login`.
+**Decisão:** nova rota `src/app/auth/callback/route.ts` (Route Handler,
+não Server Component) que lê `code` da URL e chama
+`supabase.auth.exchangeCodeForSession(code)` usando o mesmo `createClient()`
+de `src/lib/supabase/server.ts`, sem alteração nele. Sucesso redireciona
+para `/entrada`; ausência de `code` ou qualquer erro na troca (expirado,
+já usado, inválido) redireciona para `/login`, sem parâmetro de erro na
+URL nem log do motivo — mesmo princípio de mensagem genérica já usado em
+`login`/`signup`. `signup()` passou a chamar `signUp()` com
+`options: { emailRedirectTo }`, onde `emailRedirectTo` é montado a partir
+do header `origin` da própria requisição (via `headers()` de
+`next/headers`), sem variável de ambiente nova.
+**Por que Route Handler e não Server Component:** trocar o código por
+sessão exige *escrever* cookies, e `cookies().set()` só é permitido em
+Route Handlers e Server Actions no Next.js App Router — não durante a
+renderização de um Server Component (é exatamente por isso que
+`src/lib/supabase/server.ts` engole esse erro em silêncio num `try/catch`
+já existente).
+**Configuração fora do repositório:** o painel do Supabase
+(Authentication → URL Configuration → Redirect URLs) precisa incluir a URL
+de callback (`<site-url>/auth/callback`) na allow-list, senão o Supabase
+rejeita o `emailRedirectTo`. Isso não é versionável no repo.
+**Fora do escopo:** nenhuma mensagem de erro específica em `/login` para
+link expirado/inválido/já usado — mantém o padrão genérico já adotado.
 
 ---
 
