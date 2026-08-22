@@ -94,15 +94,29 @@ nomes implicitamente.
   falhas de autenticação. Ver `docs/DECISIONS.md` para o motivo de ser um
   Route Handler (não Server Component): a troca exige escrever cookies, o
   que só é permitido em Route Handlers e Server Actions.
-- **Proteção de rotas:** `/entrada` é a única rota protegida por enquanto.
-  `src/proxy.ts` reutiliza o `getClaims()` já chamado para o refresh de
-  sessão (sem segundo cliente nem segunda validação) — se o pathname for
-  `/entrada` e não houver sessão válida, responde com
+- **Proteção de rotas:** `/entrada` e `/redefinir-senha` são as rotas
+  protegidas até agora. `src/proxy.ts` reutiliza o `getClaims()` já chamado
+  para o refresh de sessão (sem segundo cliente nem segunda validação) —
+  se o pathname for uma delas e não houver sessão válida, responde com
   `NextResponse.redirect('/login')` antes de qualquer renderização,
   preservando cookies que um refresh malsucedido tenha limpado. Validado
-  manualmente no navegador: acesso direto sem sessão redireciona para
-  `/login`; com sessão, `/entrada` abre normalmente. Nenhuma outra rota
-  exige sessão ainda.
+  manualmente no navegador para `/entrada`: acesso direto sem sessão
+  redireciona para `/login`; com sessão, abre normalmente. Nenhuma outra
+  rota exige sessão ainda.
+- **Recuperação de senha:** `/esqueci-senha` chama
+  `resetPasswordForEmail()`, que já não revela se o e-mail existe; a Server
+  Function `requestPasswordReset` reforça isso respondendo sempre a mesma
+  mensagem de sucesso, exista ou não a conta. O link do e-mail volta para
+  `/auth/callback?next=/redefinir-senha` — o parâmetro `next` é validado
+  contra uma allow-list fechada (`/entrada` ou `/redefinir-senha`) antes de
+  qualquer redirect, para não abrir a rota a um destino arbitrário (open
+  redirect). Depois de `updateUser({ password })` com sucesso, a Server
+  Function `updatePassword` chama `signOut()` e redireciona para `/login`,
+  em vez de deixar a sessão de recovery ativa em `/entrada` — essa sessão é
+  uma sessão completa (não limitada a troca de senha), então encerrá-la
+  reduz a janela em que só o acesso ao link do e-mail bastaria para entrar
+  no app sem nunca definir a senha nova. Ver `docs/DECISIONS.md` para o
+  detalhamento completo do fluxo.
 
 ## Segredos e variáveis de ambiente
 

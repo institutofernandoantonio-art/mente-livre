@@ -172,7 +172,13 @@ privilégio mínimo, segredos, teste de isolamento) estão em
         migration nova). Redireciona para `/entrada` se a confirmação de
         e-mail estiver desligada no projeto, ou mostra mensagem para
         verificar o e-mail caso contrário — ver `docs/DECISIONS.md`.
-  - [ ] recuperação de senha.
+  - [x] recuperação de senha: `/esqueci-senha` (envia link via
+        `resetPasswordForEmail()`) → `/auth/callback?next=/redefinir-senha`
+        (troca o code por sessão de recovery) → `/redefinir-senha` (rota
+        protegida, exige sessão; `updateUser({ password })`) → sessão
+        encerrada e redirecionamento para `/login` para logar com a senha
+        nova. Ver `docs/DECISIONS.md`. Mensagem de `/esqueci-senha` sempre
+        genérica, para não permitir enumerar contas.
   - [ ] OAuth.
   - [ ] MFA.
 - **Pendente do usuário:** os outros 9 arquivos de imagem das telas de

@@ -17,9 +17,14 @@ export default function LoginPage() {
           <LoginForm />
         </Card>
 
-        <Link href="/cadastro" className="mt-6 text-sm text-ink-soft underline underline-offset-2">
-          Criar conta
-        </Link>
+        <div className="mt-6 flex flex-col items-center gap-2 text-sm text-ink-soft">
+          <Link href="/esqueci-senha" className="underline underline-offset-2">
+            Esqueci minha senha
+          </Link>
+          <Link href="/cadastro" className="underline underline-offset-2">
+            Criar conta
+          </Link>
+        </div>
       </div>
     </main>
   );

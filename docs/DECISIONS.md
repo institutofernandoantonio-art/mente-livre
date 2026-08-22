@@ -184,7 +184,7 @@ enumerar contas cadastradas.
 **Validado manualmente no navegador:** login com usuário de teste
 (`teste1@mentelivre.local`), sessão persistente após refresh da página,
 logout, e credenciais inválidas mostrando só a mensagem genérica.
-**Pendente:** recuperação de senha, OAuth, MFA.
+**Pendente:** OAuth, MFA.
 
 ---
 
@@ -262,8 +262,10 @@ link expirado/inválido/já usado — mantém o padrão genérico já adotado.
 **Decisão:** a checagem de acesso mora em `src/proxy.ts`, reaproveitando o
 `getClaims()` que já roda ali para o refresh de sessão — sem criar um
 segundo cliente Supabase nem uma segunda validação. Se
-`request.nextUrl.pathname === '/entrada'` e não houver sessão válida
-(`data` nulo), o proxy responde com `NextResponse.redirect('/login')` em
+`request.nextUrl.pathname` for uma das rotas protegidas (`/entrada` e,
+desde a recuperação de senha, também `/redefinir-senha` — ver entrada
+própria abaixo) e não houver sessão válida (`data` nulo), o proxy responde
+com `NextResponse.redirect('/login')` em
 vez de deixar a requisição prosseguir, copiando para a resposta de
 redirecionamento os cookies que o `setAll` já tivesse gravado (caso um
 refresh de token tenha falhado e precisado limpar um cookie inválido).
@@ -277,3 +279,66 @@ frontend`); reaproveitar a mesma chamada de `getClaims()` já existente
 evita duplicar cliente/validação por rota.
 **Validado manualmente no navegador:** acesso direto a `/entrada` sem
 sessão redireciona para `/login`; com sessão, abre normalmente.
+
+---
+
+### Recuperação de senha (`/esqueci-senha` → `/redefinir-senha`)
+
+**Fase:** Fase 2.
+**Decisão:** dois passos, reaproveitando toda a infraestrutura já existente
+— nenhum cliente Supabase novo, nenhuma variável de ambiente nova.
+
+1. `/esqueci-senha` (Server Component + `ForgotPasswordForm.tsx` Client
+   Component, mesmo padrão de `/cadastro`) chama a nova Server Function
+   `requestPasswordReset` (`src/lib/supabase/actions.ts`), que executa
+   `supabase.auth.resetPasswordForEmail(email, { redirectTo:
+   '${origin}/auth/callback?next=/redefinir-senha' })` — `origin` vem do
+   header da própria requisição, mesmo padrão já usado em `signup()`.
+2. O link do e-mail cai em `/auth/callback`, que agora aceita um parâmetro
+   `next` opcional, validado contra uma **allow-list fechada**
+   (`ALLOWED_NEXT_PATHS = new Set(['/entrada', '/redefinir-senha'])`) —
+   `next` nunca é usado como redirect direto, só escolhe entre esses dois
+   caminhos fixos; qualquer outro valor cai no default `/entrada`. Sem
+   `next` (caso do `signup()`), o comportamento é idêntico ao de antes.
+   `/redefinir-senha` foi adicionada à proteção de rota em `src/proxy.ts`
+   (mesmo `getClaims()` já reaproveitado por `/entrada` — ver entrada
+   acima), então só é alcançável com a sessão de recovery que o callback
+   acabou de criar.
+3. `/redefinir-senha` (Server Component + `ResetPasswordForm.tsx`) chama a
+   nova Server Function `updatePassword`, que executa
+   `supabase.auth.updateUser({ password })` e, em caso de sucesso, chama
+   `supabase.auth.signOut()` e redireciona para `/login` — o usuário
+   precisa logar de novo com a senha nova, em vez de continuar
+   automaticamente autenticado com a sessão que o link de e-mail abriu.
+**Motivo do signOut() em vez de ir direto para `/entrada`:** a sessão criada
+por `exchangeCodeForSession()` ao clicar o link é uma sessão completa, não
+limitada a "só trocar senha" — sem o `signOut()`, bastaria clicar o link do
+e-mail (sem nunca definir senha nova) para ganhar uma sessão válida no app.
+Encerrar a sessão e exigir login de novo reduz essa janela.
+**Mensagens genéricas:** `/esqueci-senha` sempre responde com a mesma
+mensagem de sucesso, exista ou não o e-mail informado —
+`resetPasswordForEmail()` já não revela isso, e a Server Function nunca
+diferencia por erro. `code` ausente/inválido/expirado/já usado em
+`/auth/callback` continua caindo em `/login` sem detalhe, como antes.
+**Assinaturas confirmadas nos tipos reais do pacote instalado** (não
+presumidas): `resetPasswordForEmail(email: string, options?: { redirectTo?:
+string; captchaToken?: string })` e `updateUser(attributes: UserAttributes,
+options?)` aceitando `{ password: string }`, ambas em
+`node_modules/@supabase/auth-js/dist/module/GoTrueClient.d.ts`
+(`@supabase/supabase-js@2.112.3`).
+**Configuração fora do repositório:** a doc do próprio
+`resetPasswordForEmail()` recomenda consultar "redirect URLs and
+wildcards" no painel do Supabase. A Redirect URL
+`<site-url>/auth/callback?next=/redefinir-senha` foi cadastrada como
+entrada própria na allow-list (além de `<site-url>/auth/callback`, já
+existente para o cadastro).
+**Validado manualmente no navegador, de ponta a ponta:** solicitação em
+`/esqueci-senha` → e-mail recebido → `/auth/callback` → `/redefinir-senha`
+→ nova senha salva → `signOut()` → `/login` → login com a senha nova →
+`/entrada` autenticada.
+**Limitação operacional observada, não é falha do fluxo:** o serviço de
+e-mail embutido do Supabase tem limite fixo de 2 e-mails/hora; tentativas
+repetidas durante os testes retornaram HTTP 429. Isso é uma restrição do
+ambiente (esperado ser substituído por um provedor de e-mail próprio antes
+de produção), não um defeito no código deste fluxo.
+**Fora do escopo:** OAuth, MFA, captcha e qualquer item da Fase 3.

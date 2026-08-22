@@ -42,6 +42,8 @@ src/
     entrada/      Tela 2 — protegida por sessão (ver proxy.ts)
     login/        tela de login (email/senha)
     cadastro/     tela de cadastro (email/senha)
+    esqueci-senha/  tela para solicitar link de redefinição de senha
+    redefinir-senha/  tela para definir a nova senha (rota protegida)
     auth/callback/  Route Handler que troca o code (PKCE) por sessão
     globals.css   tokens de design (cores, sombra) + estilos base
     layout.tsx    layout raiz, metadata, fontes

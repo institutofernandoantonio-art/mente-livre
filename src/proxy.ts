@@ -55,8 +55,10 @@ export async function proxy(request: NextRequest) {
   // sessão — sem criar um segundo cliente ou uma segunda validação.
   const { data } = await supabase.auth.getClaims();
 
-  // Única rota protegida por enquanto: /entrada exige sessão válida.
-  if (request.nextUrl.pathname === '/entrada' && !data) {
+  // Rotas protegidas: exigem sessão válida (/redefinir-senha inclusive só é
+  // alcançável com a sessão de recovery criada por /auth/callback).
+  const protectedPaths = new Set(['/entrada', '/redefinir-senha']);
+  if (protectedPaths.has(request.nextUrl.pathname) && !data) {
     const redirectResponse = NextResponse.redirect(new URL('/login', request.url));
     // Preserva qualquer cookie que o `setAll` já tenha gravado em `response`
     // (ex.: limpeza de um cookie de sessão inválido durante um refresh que
