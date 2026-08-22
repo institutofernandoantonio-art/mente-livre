@@ -15,10 +15,11 @@ de segurança, ver [`SECURITY.md`](./SECURITY.md).
   `tailwind.config.js` nessa versão.
 - **Supabase** (Fase 2) — PostgreSQL gerenciado + autenticação + RLS (regra
   de segurança no próprio banco, impede um usuário ver dados de outro).
-  Cliente atual instalado: `@supabase/supabase-js`. A autenticação
-  server-side via `@supabase/ssr` está **decidida mas ainda não
-  implementada** (ver `DECISIONS.md`) — é trabalho pendente da Fase 2, não
-  desta tarefa.
+  Clientes instalados: `@supabase/supabase-js` e `@supabase/ssr`.
+  Autenticação server-side via `@supabase/ssr` **implementada**: login,
+  logout, cadastro, callback de confirmação de e-mail e proteção
+  server-side de `/entrada` (ver `DECISIONS.md`). Pendente: recuperação de
+  senha, OAuth, MFA.
 - **Anthropic (Claude API)** (Fase 4) — organização por IA, chamada só pelo
   backend.
 - **Vercel** (Fase 10) — deploy.
@@ -38,7 +39,10 @@ backend, onde ficam as chaves secretas.
 src/
   app/            páginas e rotas (App Router)
     page.tsx      Tela 1 — Boas-vindas
-    entrada/      Tela 2 — placeholder até a Fase 3
+    entrada/      Tela 2 — protegida por sessão (ver proxy.ts)
+    login/        tela de login (email/senha)
+    cadastro/     tela de cadastro (email/senha)
+    auth/callback/  Route Handler que troca o code (PKCE) por sessão
     globals.css   tokens de design (cores, sombra) + estilos base
     layout.tsx    layout raiz, metadata, fontes
   components/
@@ -49,6 +53,8 @@ src/
     LogoMark.tsx  logomarca pequena (SVG, acima do wordmark)
   lib/
     cn.ts         utilitário para combinar classes CSS condicionalmente
+    supabase/     clientes @supabase/ssr (browser/servidor) e Server
+                   Functions de auth (login, signup, logout)
 public/
   brand/          assets de imagem da marca (cérebro/elemento principal)
 supabase/

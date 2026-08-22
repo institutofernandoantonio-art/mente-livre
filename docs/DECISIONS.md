@@ -128,7 +128,8 @@ requisição via `supabase.auth.getClaims()` (ver entrada própria abaixo,
 implementados (ver "Primeiro fluxo de login/logout" abaixo), com proteção
 server-side de `/entrada` (ver "Proteção server-side de `/entrada`"
 abaixo). Fluxo completo validado manualmente no navegador. Ainda faltam:
-cadastro, recuperação de senha, OAuth, MFA.
+recuperação de senha, OAuth, MFA — cadastro e callback de confirmação já
+implementados (ver entradas próprias abaixo).
 **Nota técnica:** o Next.js 16 descontinuou `middleware.ts`, renomeado
 para `proxy.ts` (mesma função, nome de arquivo/export diferente — ver
 `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md`).
