@@ -342,3 +342,72 @@ repetidas durante os testes retornaram HTTP 429. Isso é uma restrição do
 ambiente (esperado ser substituído por um provedor de e-mail próprio antes
 de produção), não um defeito no código deste fluxo.
 **Fora do escopo:** OAuth, MFA, captcha e qualquer item da Fase 3.
+
+---
+
+### Login social com Google (`signInWithGoogle()`)
+
+**Fase:** Fase 2.
+**Decisão:** só em `/login` (não em `/cadastro` — OAuth já unifica login e
+cadastro num único clique, um segundo botão lá seria redundante nesta
+etapa). Nova Server Function `signInWithGoogle()`
+(`src/lib/supabase/actions.ts`), sem parâmetros, chamada via
+`<form action={signInWithGoogle}>` em `src/app/login/page.tsx` — mesmo
+padrão de `logout()` (sem `useActionState`, já que não há estado útil para
+mostrar antes do redirect externo). Usa o `createClient()` de
+`src/lib/supabase/server.ts` já existente, sem cliente novo:
+```ts
+const { data, error } = await supabase.auth.signInWithOAuth({
+  provider: 'google',
+  options: { redirectTo: `${origin}/auth/callback` },
+});
+```
+`origin` vem do header da própria requisição (`headers()`), mesmo padrão
+de `signup()`/`requestPasswordReset()`. Erro ou `data.url` ausente
+redireciona para `/login` sem detalhe — mesmo princípio de mensagem
+genérica já usado nas demais Server Functions deste arquivo.
+**Por que Server Action, não Client Component:** confirmado lendo a
+implementação real (`node_modules/@supabase/auth-js/dist/module/GoTrueClient.js`,
+`_handleProviderSignIn`) — `window.location.assign(url)` só roda se
+`isBrowser()` for verdadeiro; no servidor essa linha é pulada e a função
+só devolve `{ data: { url }, error }`, sem efeito colateral. Isso permite
+chamar `signInWithOAuth()` no servidor com segurança e nós mesmos
+chamarmos `redirect(data.url)`. Mais importante: nosso cliente roda em
+`flowType: 'pkce'` com o verificador PKCE guardado em **cookies**
+(`createServerClient`); se o fluxo iniciasse no navegador com
+`createBrowserClient`, o verificador iria para `localStorage`, e o
+`/auth/callback` (que só lê cookies) não o encontraria — a mesma classe de
+falha diagnosticada na recuperação de senha.
+**`/auth/callback` reaproveitado sem nenhuma alteração:** `redirectTo` não
+leva `?next=`, então cai no default já existente (`/entrada`) — o mesmo
+caminho de código que já processa a confirmação de cadastro. Cancelamento
+do usuário na tela do Google (ou erro do provider) faz o GoTrue redirecionar
+de volta sem `code`, o que já cai no `redirect('/login')` genérico
+existente — sem necessidade de tratar esse caso separadamente.
+**Vinculação de identidade por e-mail:** comportamento padrão do Supabase
+Auth, sempre ativo, **não é uma opção configurável** (confirmado na
+documentação oficial, não presumido) — identidades com o mesmo e-mail são
+vinculadas automaticamente ao mesmo usuário (`auth.users.id`), nunca criam
+conta duplicada nem uma segunda linha em `public.profiles` (o `on conflict
+(id) do nothing` do trigger `handle_new_user` já cobre isso). Por
+segurança, o Supabase remove identidades não confirmadas de um usuário
+existente quando uma nova identidade correspondente é vinculada — evita
+sequestro de conta via e-mail não confirmado ("Confirm email" já está
+ligado neste projeto).
+**Configuração externa (fora do repositório):** Google Cloud (cliente
+OAuth Web, Redirect URI `https://oinotyonxiiekuouvhdc.supabase.co/auth/v1/callback`)
+e Supabase Dashboard (Authentication → Providers → Google habilitado,
+Client ID/Secret configurados, "Skip nonce checks" desligado, "Allow users
+without an email" desligado) — já concluída pelo usuário antes desta
+implementação.
+**Validado manualmente no navegador:** login com Google, retorno pelo
+callback, sessão criada, acesso a `/entrada`, logout, novo login com
+Google, e login com uma segunda conta Google — todos funcionando.
+**Pendente de teste, não bloqueia:** o cancelamento do usuário na tela de
+consentimento do Google ainda não foi reproduzido manualmente — nas
+tentativas feitas, o Google reaproveitou a autorização já concedida e
+autenticou direto, sem oferecer a tela de cancelar. O código já trata esse
+caso (qualquer retorno sem `code` cai no `redirect('/login')` genérico,
+igual a qualquer outra falha), mas o comportamento específico do
+cancelamento continua sem confirmação end-to-end.
+**Fora do escopo:** outros provedores OAuth, MFA, captcha, Fase 3.

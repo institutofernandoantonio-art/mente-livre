@@ -179,7 +179,14 @@ privilégio mínimo, segredos, teste de isolamento) estão em
         encerrada e redirecionamento para `/login` para logar com a senha
         nova. Ver `docs/DECISIONS.md`. Mensagem de `/esqueci-senha` sempre
         genérica, para não permitir enumerar contas.
-  - [ ] OAuth.
+  - [x] OAuth (Google, em `/login`): botão "Entrar com Google" chama
+        `signInWithGoogle()` (`src/lib/supabase/actions.ts`), que usa
+        `signInWithOAuth()` e redireciona para a tela de consentimento do
+        Google. Reaproveita o `/auth/callback` já existente (sem
+        alteração) — mesmo mecanismo do cadastro/recuperação de senha.
+        Vinculação de identidade por e-mail é automática (comportamento
+        padrão do Supabase, não configurável) — ver `docs/DECISIONS.md`.
+        Só Google por enquanto; só em `/login`, não em `/cadastro`.
   - [ ] MFA.
 - **Pendente do usuário:** os outros 9 arquivos de imagem das telas de
   referência (para arquivar em `docs/design-references/` com os nomes já

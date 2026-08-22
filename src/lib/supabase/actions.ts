@@ -84,6 +84,24 @@ export async function signup(_prevState: SignupState, formData: FormData): Promi
   return { error: null, checkEmail: true };
 }
 
+export async function signInWithGoogle() {
+  const origin = (await headers()).get('origin');
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: `${origin}/auth/callback` },
+  });
+
+  if (error || !data.url) {
+    // Mensagem genérica de propósito, mesmo padrão das demais Server
+    // Functions deste arquivo: nunca expõe detalhe do erro do provider.
+    redirect('/login');
+  }
+
+  redirect(data.url);
+}
+
 export async function logout() {
   const supabase = await createClient();
   await supabase.auth.signOut();

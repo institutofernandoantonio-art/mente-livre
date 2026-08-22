@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { LogoMark } from '@/components/LogoMark';
 import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { signInWithGoogle } from '@/lib/supabase/actions';
 import { LoginForm } from './LoginForm';
 
 export default function LoginPage() {
@@ -15,6 +17,18 @@ export default function LoginPage() {
 
         <Card className="mt-8 w-full">
           <LoginForm />
+
+          <div className="my-4 flex items-center gap-3 text-xs text-ink-soft" aria-hidden="true">
+            <span className="h-px flex-1 bg-mist-200" />
+            ou
+            <span className="h-px flex-1 bg-mist-200" />
+          </div>
+
+          <form action={signInWithGoogle}>
+            <Button type="submit" variant="secondary" className="w-full">
+              Entrar com Google
+            </Button>
+          </form>
         </Card>
 
         <div className="mt-6 flex flex-col items-center gap-2 text-sm text-ink-soft">

@@ -117,6 +117,18 @@ nomes implicitamente.
   reduz a janela em que só o acesso ao link do e-mail bastaria para entrar
   no app sem nunca definir a senha nova. Ver `docs/DECISIONS.md` para o
   detalhamento completo do fluxo.
+- **Login social (Google):** `signInWithGoogle()`
+  (`src/lib/supabase/actions.ts`) roda como Server Function, no mesmo
+  cliente cookie-based de sempre — nunca no navegador — porque o
+  verificador PKCE do fluxo precisa ficar em cookie, não em `localStorage`,
+  para o `/auth/callback` (que só lê cookies) conseguir completá-lo.
+  `redirectTo` é sempre montado a partir do header `origin` da própria
+  requisição, nunca de input do usuário. Reaproveita o `/auth/callback`
+  existente sem alteração — erro ou cancelamento do usuário na tela do
+  Google cai no mesmo `redirect('/login')` genérico já usado para qualquer
+  outra falha de autenticação. Ver `docs/DECISIONS.md` para o
+  detalhamento completo, incluindo o comportamento (não configurável) de
+  vinculação automática de identidade por e-mail.
 
 ## Segredos e variáveis de ambiente
 
