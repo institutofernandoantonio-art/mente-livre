@@ -112,6 +112,14 @@ export function BrainDumpForm() {
           {organizedItem.priorityReason && (
             <p className="mt-1 text-ink-soft">{organizedItem.priorityReason}</p>
           )}
+          {organizedItem.planSuggestion && (
+            <>
+              <p className="mt-3 text-sm font-semibold tracking-wide text-ink uppercase">
+                Plano sugerido
+              </p>
+              <p className="mt-1 text-ink-soft">{organizedItem.planSuggestion}</p>
+            </>
+          )}
         </div>
       )}
       <Button type="submit" variant="primary" loading={pending} className="w-full">

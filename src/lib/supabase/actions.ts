@@ -55,6 +55,7 @@ export type OrganizedItem = {
   description: string | null;
   priority: string | null;
   priorityReason: string | null;
+  planSuggestion: string | null;
 };
 
 const ITEM_CATEGORIES = new Set(['tarefa', 'compromisso', 'ideia', 'lembrete', 'outro']);
@@ -62,9 +63,10 @@ const ITEM_PRIORITIES = new Set(['alta', 'média', 'baixa']);
 const ITEM_TITLE_MAX_LENGTH = 200;
 const ITEM_DESCRIPTION_MAX_LENGTH = 500;
 const PRIORITY_REASON_MAX_LENGTH = 160;
+const PLAN_SUGGESTION_MAX_LENGTH = 160;
 
 const ORGANIZE_SYSTEM_PROMPT = `Você categoriza um pensamento curto de um usuário em uma sugestão estruturada para um app de produtividade. Responda SOMENTE com um objeto JSON válido, sem nenhum texto antes ou depois, exatamente neste formato:
-{"category":"tarefa|compromisso|ideia|lembrete|outro","title":"...","description":"..." ou null,"priority":"alta|média|baixa" ou null,"priority_reason":"..." ou null}
+{"category":"tarefa|compromisso|ideia|lembrete|outro","title":"...","description":"..." ou null,"priority":"alta|média|baixa" ou null,"priority_reason":"..." ou null,"plan_suggestion":"..." ou null}
 
 Regras:
 - "category": escolha a que melhor descreve o pensamento, só entre os valores listados.
@@ -78,7 +80,14 @@ Para "priority" e "priority_reason", use como referência interna a lógica da M
 - null: não há contexto suficiente no texto para recomendar prioridade com segurança.
 - "priority_reason": frase curta (até 160 caracteres) explicando SOMENTE o motivo da prioridade escolhida, rastreável ao texto do usuário; null se "priority" for null.
 
-Nunca invente prazo, urgência, consequência, compromisso com terceiros ou importância que não estejam no texto ou não sejam claramente dedutíveis dele. Não transforme qualquer pensamento em prioridade alta por padrão.`;
+Nunca invente prazo, urgência, consequência, compromisso com terceiros ou importância que não estejam no texto ou não sejam claramente dedutíveis dele. Não transforme qualquer pensamento em prioridade alta por padrão.
+
+Para "plan_suggestion" (frase curta, até 160 caracteres, sugerindo QUANDO fazer o item; null quando não fizer sentido sugerir):
+- Se "priority" for "alta": pode sugerir hoje ou o próximo bloco livre, opcionalmente com duração aproximada (ex.: "cerca de 30 minutos", "aproximadamente 1 hora", "um bloco curto") — sempre deixando claro que é uma estimativa, nunca como fato. Nunca um horário de relógio específico (ex.: "das 14h às 14h30"), a menos que o próprio usuário já tenha declarado esse horário no texto.
+- Se "priority" for "média": pode sugerir encaixar esta semana, com a mesma regra de duração aproximada acima.
+- Se "priority" for "baixa" ou null: "plan_suggestion" deve ser null — não sugira horário.
+- Se o texto já declarar uma data/hora explícita (ex.: "amanhã às 15h"), preserve exatamente o que foi dito, de forma curta (ex.: "Amanhã, 15h") — nunca complete com duração ou horário final que o usuário não informou, e essa regra tem prioridade sobre as anteriores.
+- Nunca invente disponibilidade real do usuário nem finja saber a agenda dele.`;
 
 export async function login(_prevState: LoginState, formData: FormData): Promise<LoginState> {
   const email = formData.get('email');
@@ -390,8 +399,14 @@ function parseOrganizedItem(text: string): OrganizedItem | null {
     return null;
   }
 
-  const { category, title, description, priority, priority_reason: priorityReasonRaw } =
-    parsed as Record<string, unknown>;
+  const {
+    category,
+    title,
+    description,
+    priority,
+    priority_reason: priorityReasonRaw,
+    plan_suggestion: planSuggestionRaw,
+  } = parsed as Record<string, unknown>;
 
   if (typeof category !== 'string' || !ITEM_CATEGORIES.has(category)) {
     return null;
@@ -434,12 +449,28 @@ function parseOrganizedItem(text: string): OrganizedItem | null {
     }
   }
 
+  let planSuggestion: string | null = null;
+  if (planSuggestionRaw !== null && planSuggestionRaw !== undefined) {
+    if (typeof planSuggestionRaw !== 'string') {
+      return null;
+    }
+    const trimmed = planSuggestionRaw.trim();
+    if (trimmed.length === 0) {
+      planSuggestion = null;
+    } else if (Array.from(trimmed).length > PLAN_SUGGESTION_MAX_LENGTH) {
+      return null;
+    } else {
+      planSuggestion = trimmed;
+    }
+  }
+
   return {
     category,
     title,
     description: typeof description === 'string' ? description : null,
     priority: typeof priority === 'string' ? priority : null,
     priorityReason,
+    planSuggestion,
   };
 }
 

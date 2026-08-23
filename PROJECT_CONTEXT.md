@@ -145,7 +145,7 @@ privilégio mínimo, segredos, teste de isolamento) estão em
 - [x] Fase 3 — Brain dump por texto
 - [x] Fase 4 — Organização por IA (mínima)
 - [x] Fase 5 — Priorização (mínima)
-- [ ] Fase 6 — Planejamento do dia
+- [x] Fase 6 — Planejar (mínima — sugestão textual de quando, sem agenda)
 - [ ] Fase 7 — Hoje + Foco + Conclusão
 - [ ] Fase 8 — Resumo do dia
 - [ ] Fase 9 — Voz
@@ -278,6 +278,42 @@ privilégio mínimo, segredos, teste de isolamento) estão em
     Calendar, Time Blocking, notificações, automações, histórico/listagem
     de items, confirmação/aceite pelo usuário, ranking de vários items,
     qualquer tela nova.
+- Fase 6 (concluída, mínima):
+  - [x] Fluxo validado passa a ser FALAR → ORGANIZAR → PRIORIZAR →
+        PLANEJAR, ainda na mesma chamada à Anthropic da Fase 4
+        (`callAnthropicToOrganize()`) — nenhuma segunda chamada de IA foi
+        criada. **AGENDAR ainda não foi implementado.**
+  - [x] `planSuggestion` (frase curta, até 160 code points) adicionado à
+        resposta da IA e ao retorno de `organizeBrainDump()`, só para
+        sugerir *quando* encaixar o item — é **apenas uma recomendação da
+        IA**: não executa nenhuma ação, não agenda nada, não acessa Google
+        Calendar. **Nunca persistido** no banco (`insert` em `items`
+        inalterado, sem coluna nova).
+  - [x] Regra por prioridade: `FAZER PRIMEIRO` pode sugerir hoje/próximo
+        bloco livre; `PLANEJAR` pode sugerir esta semana; `PODE ESPERAR` e
+        `PRECISA DE MAIS CONTEXTO` não geram sugestão (`planSuggestion =
+        null`). Duração, quando mencionada, é sempre tratada como
+        estimativa aproximada (ex. "cerca de 30 minutos"), nunca como fato
+        nem como horário de relógio específico.
+  - [x] Data/hora explícita informada pelo próprio usuário é preservada
+        literalmente (ex. "Dentista amanhã às 15h" → "Amanhã, 15h") — a IA
+        nunca completa com duração ou horário final não informado, nem
+        inventa horário quando o texto não traz um.
+  - [x] Interface: bloco "PLANO SUGERIDO" no mesmo card de `/entrada`,
+        exibido só quando `planSuggestion` não é `null`. Sem tela nova, sem
+        calendário visual.
+  - [x] Testado manualmente com 5 casos reais, todos aprovados: pensamento
+        vago ("café") sem plano sugerido; tarefa sem prazo/hora ("ligar
+        para João") sem horário inventado e sem plano; prazo explícito
+        ("apresentação sexta-feira") → plano sugerindo hoje, com duração
+        aproximada; compromisso com data/hora explícita ("dentista amanhã
+        às 15h") → data/hora preservada, sem invenção; sem urgência
+        ("decoração algum dia") sem plano sugerido.
+  - **Fora do escopo desta fase:** Google Calendar, criação automática de
+    evento, leitura de agenda externa, OAuth com Calendar, Time Blocking
+    completo, notificações, automações, dashboard, calendário próprio,
+    histórico/listagem de items, confirmação/aceite pelo usuário
+    (`needs_confirmation` continua `true`, sem UI), qualquer tela nova.
 - **Pendente do usuário:** os outros 9 arquivos de imagem das telas de
   referência (para arquivar em `docs/design-references/` com os nomes já
   reservados no catálogo — a tela 01 já está resolvida). Confirmar também

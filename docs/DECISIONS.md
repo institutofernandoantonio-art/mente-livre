@@ -675,6 +675,65 @@ qualquer tela nova.
 
 ---
 
+### Planejar mínimo reaproveitando a mesma chamada (Fase 6)
+
+**Decisão:** completar o fluxo FALAR → ORGANIZAR → PRIORIZAR → PLANEJAR
+sem nenhuma migration, coluna, tabela, rota ou Server Action nova, e sem
+segunda chamada à Anthropic — a mesma chamada de `callAnthropicToOrganize()`
+(Fases 4 e 5) passou a devolver também `plan_suggestion`, uma frase curta
+(até 160 code points) sugerindo *quando* encaixar o item. **AGENDAR
+continua fora do fluxo** — não existe integração com Google Calendar nem
+qualquer criação de evento.
+**Um único campo de texto livre, não uma estrutura de 3-4 campos:**
+descartada a alternativa de campos separados (`estimated_minutes`,
+`suggested_day`, `suggested_time`) discutida no planejamento — um campo
+único, no mesmo padrão defensivo já usado para `priority_reason`, é
+suficiente e mais simples de validar/exibir.
+**`plan_suggestion` é só recomendação, nunca persistido:** viaja só entre
+Anthropic → `parseOrganizedItem()` → retorno de `organizeBrainDump()` →
+interface. O `insert` em `items` continua exatamente como na Fase 5, sem
+nenhuma coluna nova. Não executa nenhuma ação, não agenda nada, não
+acessa nenhuma agenda real do usuário.
+**Regra por prioridade (Fase 5) dada à IA:** `alta` pode sugerir hoje ou o
+próximo bloco livre; `média` pode sugerir esta semana; `baixa` e `null`
+sempre resultam em `plan_suggestion: null` — sem sugestão de horário.
+**Duração é sempre estimativa, nunca horário de relógio inventado:** a IA
+pode mencionar duração aproximada (ex. "cerca de 30 minutos",
+"aproximadamente 1 hora", "um bloco curto"), sempre como estimativa, nunca
+como fato; nunca um horário específico ("das 14h às 14h30") a menos que o
+próprio usuário já tenha declarado esse horário no texto — evita a falsa
+sensação de que o app conhece a agenda real da pessoa.
+**Data/hora explícita tem precedência:** quando o texto já traz data/hora
+(ex. "Dentista amanhã às 15h"), a IA preserva exatamente o que foi dito,
+de forma curta ("Amanhã, 15h") — nunca completa com duração ou horário
+final que o usuário não informou. Essa regra sobrepõe a de duração
+estimada por prioridade.
+**`parseOrganizedItem()`:** valida `plan_suggestion` com o mesmo padrão
+defensivo dos demais campos opcionais — tipo errado descarta a sugestão
+inteira; `trim()`; string vazia vira `null`; acima de 160 code points
+descarta a sugestão inteira.
+**Interface (`src/app/entrada/BrainDumpForm.tsx`):** bloco "PLANO
+SUGERIDO" no mesmo card de `/entrada`, exibido só quando
+`planSuggestion` não é `null` — nenhuma mensagem substituta quando é
+`null`, mesma `/entrada`, sem tela nova.
+**`needs_confirmation` inalterado:** continua sempre `true`, sem nenhum
+botão de confirmar/ajustar/aceitar nesta fase — planejar continua sendo
+recomendação da IA, o usuário ainda não decide nem confirma nada.
+**Testado manualmente, 5 casos reais, todos aprovados pelo usuário:**
+pensamento vago ("café") sem plano; tarefa sem prazo/hora ("ligar para
+João") sem plano e sem horário inventado; prazo explícito ("apresentação
+sexta-feira") → plano sugerindo hoje com duração aproximada; compromisso
+com data/hora explícita ("dentista amanhã às 15h") → "Amanhã, 15h", sem
+invenção de horário final ou duração; sem urgência ("decoração algum
+dia") sem plano sugerido.
+**Fora do escopo:** Google Calendar, criação automática de evento, leitura
+de agenda externa, OAuth com Calendar, Time Blocking completo,
+notificações, automações, dashboard, calendário próprio,
+histórico/listagem de items, confirmação/aceite pelo usuário, qualquer
+tela nova.
+
+---
+
 ### Adoção da Supabase CLI para migrations
 
 **Decisão:** `supabase` como devDependency local (`npm install --save-dev
