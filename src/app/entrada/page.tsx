@@ -32,6 +32,11 @@ export default async function EntradaPage() {
                 Voltar ao início
               </Link>
               {email && (
+                <Link href="/mfa/configurar" className={buttonVariants("ghost")}>
+                  Configurar autenticação em duas etapas
+                </Link>
+              )}
+              {email && (
                 <form action={logout}>
                   <button type="submit" className={buttonVariants("ghost")}>
                     Sair

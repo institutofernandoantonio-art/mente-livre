@@ -22,6 +22,25 @@ export type UpdatePasswordState = {
   error: string | null;
 };
 
+export type EnrollMfaState = {
+  error: string | null;
+  factorId: string | null;
+  qrCode: string | null;
+  secret: string | null;
+};
+
+export type ConfirmMfaEnrollmentState = {
+  error: string | null;
+};
+
+export type VerifyMfaChallengeState = {
+  error: string | null;
+};
+
+// Allow-list fechada de destinos pós-MFA: nunca um valor arbitrário vindo
+// da query string — só escolhe entre as duas rotas que já exigem AAL2.
+const MFA_NEXT_ALLOWED_PATHS = new Set(['/entrada', '/redefinir-senha']);
+
 export async function login(_prevState: LoginState, formData: FormData): Promise<LoginState> {
   const email = formData.get('email');
   const password = formData.get('password');
@@ -155,4 +174,110 @@ export async function updatePassword(
   // automaticamente autenticado com a sessão que o link de e-mail abriu.
   await supabase.auth.signOut();
   redirect('/login');
+}
+
+// Assinatura (prevState, formData) exigida por useActionState, mesmo sem
+// nenhum campo de formulário — o botão de "Configurar autenticador" não
+// envia dados, só dispara a Server Function.
+/* eslint-disable @typescript-eslint/no-unused-vars */
+export async function enrollMfaFactor(
+  _prevState: EnrollMfaState,
+  _formData: FormData,
+): Promise<EnrollMfaState> {
+  /* eslint-enable @typescript-eslint/no-unused-vars */
+  const supabase = await createClient();
+
+  const { data: factors, error: factorsError } = await supabase.auth.mfa.listFactors();
+  if (factorsError) {
+    return {
+      error: 'Não foi possível iniciar a configuração. Tente novamente.',
+      factorId: null,
+      qrCode: null,
+      secret: null,
+    };
+  }
+
+  if (factors.totp.length > 0) {
+    // Regra de produto do MVP: só 1 TOTP verificado por usuário.
+    return {
+      error: 'Você já tem um autenticador configurado.',
+      factorId: null,
+      qrCode: null,
+      secret: null,
+    };
+  }
+
+  // Limpa tentativas de enrollment anteriores abandonadas (TOTP nunca
+  // confirmado pelo usuário) antes de criar uma nova — nunca mexe em fator
+  // verified. unenroll() de um fator unverified não exige aal2 (a exigência
+  // documentada é só para fator verified); falha aqui não bloqueia o fluxo,
+  // só segue tentando o enroll novo.
+  const abandoned = factors.all.filter(
+    (factor) => factor.factor_type === 'totp' && factor.status === 'unverified',
+  );
+  for (const factor of abandoned) {
+    await supabase.auth.mfa.unenroll({ factorId: factor.id });
+  }
+
+  const { data, error } = await supabase.auth.mfa.enroll({
+    factorType: 'totp',
+    friendlyName: 'Autenticador',
+  });
+
+  if (error || !data) {
+    return {
+      error: 'Não foi possível iniciar a configuração. Tente novamente.',
+      factorId: null,
+      qrCode: null,
+      secret: null,
+    };
+  }
+
+  return { error: null, factorId: data.id, qrCode: data.totp.qr_code, secret: data.totp.secret };
+}
+
+export async function confirmMfaEnrollment(
+  factorId: string,
+  _prevState: ConfirmMfaEnrollmentState,
+  formData: FormData,
+): Promise<ConfirmMfaEnrollmentState> {
+  const code = formData.get('code');
+
+  if (typeof code !== 'string' || !code || !factorId) {
+    return { error: 'Informe o código do autenticador.' };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code });
+
+  if (error) {
+    // Mensagem genérica de propósito, mesmo padrão das demais Server
+    // Functions deste arquivo: nunca expõe o detalhe do erro do Supabase.
+    return { error: 'Código inválido. Tente novamente.' };
+  }
+
+  redirect('/entrada');
+}
+
+export async function verifyMfaChallenge(
+  factorId: string,
+  next: string,
+  _prevState: VerifyMfaChallengeState,
+  formData: FormData,
+): Promise<VerifyMfaChallengeState> {
+  const code = formData.get('code');
+
+  if (typeof code !== 'string' || !code || !factorId) {
+    return { error: 'Informe o código do autenticador.' };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code });
+
+  if (error) {
+    return { error: 'Código inválido. Tente novamente.' };
+  }
+
+  const destination = MFA_NEXT_ALLOWED_PATHS.has(next) ? next : '/entrada';
+  redirect(destination);
 }

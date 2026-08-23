@@ -94,15 +94,31 @@ nomes implicitamente.
   falhas de autenticação. Ver `docs/DECISIONS.md` para o motivo de ser um
   Route Handler (não Server Component): a troca exige escrever cookies, o
   que só é permitido em Route Handlers e Server Actions.
-- **Proteção de rotas:** `/entrada` e `/redefinir-senha` são as rotas
-  protegidas até agora. `src/proxy.ts` reutiliza o `getClaims()` já chamado
-  para o refresh de sessão (sem segundo cliente nem segunda validação) —
-  se o pathname for uma delas e não houver sessão válida, responde com
+- **Proteção de rotas:** `/entrada`, `/redefinir-senha`, `/mfa/configurar`
+  e `/mfa/verificar` são as rotas protegidas até agora. `src/proxy.ts`
+  reutiliza o `getClaims()` já chamado para o refresh de sessão (sem
+  segundo cliente nem segunda validação) — sem sessão válida, responde com
   `NextResponse.redirect('/login')` antes de qualquer renderização,
   preservando cookies que um refresh malsucedido tenha limpado. Validado
   manualmente no navegador para `/entrada`: acesso direto sem sessão
   redireciona para `/login`; com sessão, abre normalmente. Nenhuma outra
   rota exige sessão ainda.
+- **AAL2 (MFA) em `/entrada` e `/redefinir-senha`:** quando a sessão não
+  está em `aal2`, o proxy chama `mfa.listFactors()` — que sempre passa por
+  `getUser()` no servidor, nunca confia em `user.factors` obtido só do
+  cookie local (os cookies deste projeto não são `httpOnly`, então esse
+  campo seria editável pelo próprio usuário/DevTools). Se houver TOTP
+  verificado, redireciona para `/mfa/verificar?next=<rota>`, com `next`
+  restrito a uma allow-list fechada (`/entrada` ou `/redefinir-senha`),
+  revalidada de novo na página e na Server Function que processa o
+  código — nunca um destino arbitrário. Sem fator verificado, a sessão
+  segue em AAL1 normalmente, sem nenhuma tela nova. **Fail-closed:** se
+  `listFactors()` retornar erro, o proxy nunca deixa passar — redireciona
+  para `/login` (que não tem checagem de AAL2, evitando loop). `/entrada`
+  e `/redefinir-senha` ficam com a mesma exigência de AAL2 pelo mesmo
+  motivo: sem isso, o link de recuperação de senha por e-mail sozinho
+  bastaria para trocar a senha de uma conta protegida por MFA. Ver
+  `docs/DECISIONS.md` para o detalhamento completo do desenho.
 - **Recuperação de senha:** `/esqueci-senha` chama
   `resetPasswordForEmail()`, que já não revela se o e-mail existe; a Server
   Function `requestPasswordReset` reforça isso respondendo sempre a mesma

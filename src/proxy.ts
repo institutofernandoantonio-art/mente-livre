@@ -55,16 +55,50 @@ export async function proxy(request: NextRequest) {
   // sessão — sem criar um segundo cliente ou uma segunda validação.
   const { data } = await supabase.auth.getClaims();
 
-  // Rotas protegidas: exigem sessão válida (/redefinir-senha inclusive só é
-  // alcançável com a sessão de recovery criada por /auth/callback).
-  const protectedPaths = new Set(['/entrada', '/redefinir-senha']);
-  if (protectedPaths.has(request.nextUrl.pathname) && !data) {
+  // Rotas que só exigem sessão válida (AAL1 basta) — /mfa/verificar
+  // precisa ficar fora do grupo abaixo, senão uma sessão pendente de
+  // segundo fator nunca conseguiria alcançar a própria tela de verificação.
+  const SESSION_REQUIRED_PATHS = new Set(['/mfa/configurar', '/mfa/verificar']);
+  // Rotas que exigem AAL2 quando a conta tiver um fator TOTP verificado
+  // (/redefinir-senha inclusive — sem isso, o link de recuperação por
+  // e-mail sozinho bastaria para trocar a senha de uma conta com MFA).
+  const AAL2_REQUIRED_PATHS = new Set(['/entrada', '/redefinir-senha']);
+
+  const pathname = request.nextUrl.pathname;
+  const needsSession = SESSION_REQUIRED_PATHS.has(pathname) || AAL2_REQUIRED_PATHS.has(pathname);
+
+  if (needsSession && !data) {
     const redirectResponse = NextResponse.redirect(new URL('/login', request.url));
     // Preserva qualquer cookie que o `setAll` já tenha gravado em `response`
     // (ex.: limpeza de um cookie de sessão inválido durante um refresh que
     // falhou), para o navegador não continuar enviando um cookie obsoleto.
     response.cookies.getAll().forEach((cookie) => redirectResponse.cookies.set(cookie));
     return redirectResponse;
+  }
+
+  if (AAL2_REQUIRED_PATHS.has(pathname) && data && data.claims.aal !== 'aal2') {
+    // listFactors() sempre passa por getUser() no servidor — nunca confia
+    // no `user.factors` do cookie local (editável pelo próprio usuário,
+    // já que os cookies deste projeto não são httpOnly).
+    const { data: factors, error: factorsError } = await supabase.auth.mfa.listFactors();
+
+    if (factorsError) {
+      // Fail-closed: se não dá para confirmar se a conta tem MFA, nunca
+      // deixa passar. Sem log aqui de propósito — decisão explícita desta
+      // etapa. /login não tem checagem de AAL2, então não há loop.
+      const redirectResponse = NextResponse.redirect(new URL('/login', request.url));
+      response.cookies.getAll().forEach((cookie) => redirectResponse.cookies.set(cookie));
+      return redirectResponse;
+    }
+
+    if (factors.totp.length > 0) {
+      const redirectResponse = NextResponse.redirect(
+        new URL(`/mfa/verificar?next=${encodeURIComponent(pathname)}`, request.url),
+      );
+      response.cookies.getAll().forEach((cookie) => redirectResponse.cookies.set(cookie));
+      return redirectResponse;
+    }
+    // Sem fator TOTP verificado: a conta não usa MFA, AAL1 é suficiente.
   }
 
   return response;

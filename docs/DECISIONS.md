@@ -411,3 +411,98 @@ caso (qualquer retorno sem `code` cai no `redirect('/login')` genérico,
 igual a qualquer outra falha), mas o comportamento específico do
 cancelamento continua sem confirmação end-to-end.
 **Fora do escopo:** outros provedores OAuth, MFA, captcha, Fase 3.
+
+---
+
+### MFA — TOTP opcional (`/mfa/configurar`, `/mfa/verificar`)
+
+**Fase:** Fase 2.
+**Decisão de produto:** MFA é opcional (opt-in), só TOTP (sem SMS), no
+máximo 1 fator TOTP verificado por usuário no MVP, sem botão de desligar
+MFA nesta primeira implementação, sem códigos de backup próprios. Perda do
+autenticador é tratada como recuperação administrativa (remoção manual do
+fator pelo Supabase Dashboard → Authentication → Users), não uma feature
+de auto-recuperação.
+
+**Fonte do AAL atual vs. fonte da existência de fator — resolvido lendo o
+código real, não por preferência:** `getClaims().data.claims.aal` é a
+única fonte usada para "qual é o nível atual da sessão" (JWT verificado
+criptograficamente, mesmo padrão já em uso). Para "a conta tem um TOTP
+verificado", usamos `mfa.listFactors()` — que sempre chama `getUser()` no
+servidor (`GoTrueClient.js:4980-4998`), nunca confiando em
+`session.user.factors` obtido só de `getSession()` (que só lê o cookie,
+sem verificar nada — e nossos cookies não são `httpOnly`, então esse
+campo seria editável pelo próprio usuário). O caminho **sem** `jwt` de
+`getAuthenticatorAssuranceLevel()` foi descartado por essa mesma razão:
+ele usa `getSession()` internamente (`GoTrueClient.js:5036-5057`).
+
+**Proteção no `src/proxy.ts` (única mudança no proxy):**
+- `SESSION_REQUIRED_PATHS` (`/mfa/configurar`, `/mfa/verificar`): exigem
+  só sessão válida (AAL1 basta) — `/mfa/verificar` não pode exigir AAL2
+  de si mesma, senão uma sessão pendente de segundo fator nunca
+  conseguiria alcançar a própria tela de verificação.
+- `AAL2_REQUIRED_PATHS` (`/entrada`, `/redefinir-senha`): quando a sessão
+  não está em `aal2`, chama `listFactors()`; se houver TOTP verificado,
+  redireciona para `/mfa/verificar?next=<pathname>` (o `next` é sempre um
+  dos dois valores deste próprio Set — nunca um valor arbitrário). Sem
+  fator verificado, deixa passar em AAL1 — zero impacto para quem não usa
+  MFA.
+- **`/redefinir-senha` exige AAL2** pelo mesmo motivo de `/entrada`: sem
+  isso, quem só tivesse acesso ao e-mail de recuperação (não ao
+  autenticador) conseguiria trocar a senha de uma conta com MFA — um
+  desvio completo da segunda camada.
+- **Fail-closed explícito:** se `listFactors()` retornar erro, o proxy
+  **nunca** deixa passar — redireciona para `/login` (rota sem checagem
+  de AAL2, então sem risco de loop). Decisão explícita: sem log novo
+  nesta etapa (nem temporário, nem permanente).
+
+**`next` do `/mfa/verificar`, allow-list fechada:** o mesmo
+`Set(['/entrada', '/redefinir-senha'])` é revalidado em três lugares
+independentes — `src/proxy.ts` (quem gera o redirect), o Server Component
+de `/mfa/verificar` (antes de renderizar o formulário) e
+`verifyMfaChallenge()` (antes do redirect final) — nenhum deles confia
+que o valor já foi validado em outro lugar.
+
+**Limite de 1 TOTP verificado, aplicado no servidor:** `enrollMfaFactor()`
+chama `listFactors()` antes de tudo; se `factors.totp.length > 0` (já tem
+um fator verificado), recusa e não chama `enroll()`. Também limpa
+tentativas de enrollment anteriores abandonadas (`factors.all` filtrado
+por `factor_type === 'totp' && status === 'unverified'`) chamando
+`unenroll()` sobre elas antes de criar uma nova — evita acumular fatores
+não verificados inúteis. **Isso não implementa a funcionalidade de
+desligar MFA:** `unenroll()` só é chamado sobre fatores que o próprio
+usuário nunca confirmou; nunca sobre um fator `verified`. A exigência de
+AAL2 documentada para `unenroll()` (`types.d.ts:1279-1282`) é
+especificamente para fator *verified* — confirmado lendo a implementação
+real de `_unenroll()` (`GoTrueClient.js:4816-4836`), que não tem nenhuma
+checagem de AAL do lado do cliente; a exigência é aplicada só pelo
+servidor do GoTrue, e só nesse caso.
+
+**QR code:** `enroll({ factorType: 'totp' })` devolve `data.totp.qr_code`
+como conteúdo SVG cru — não uma data URI pronta. Precisa do prefixo
+`data:image/svg+xml;utf-8,` antes de usar em `<img src>`
+(`types.d.ts:1626-1640`, comentário do próprio tipo). Nenhuma biblioteca
+de QR code foi adicionada.
+
+**Fluxo de enrollment:** `/mfa/configurar` (link em `/entrada`) →
+`EnrollMfaForm.tsx` (único Client Component do app com estado em duas
+etapas — precisa guardar `{ factorId, qrCode, secret }` entre a chamada
+de `enroll()` e a de confirmação) → `enrollMfaFactor()` devolve o QR code
+→ usuário digita o primeiro código → `confirmMfaEnrollment(factorId, ...)`
+→ `mfa.challengeAndVerify()` → sessão promovida a `aal2` automaticamente
+(o `createServerClient` do `@supabase/ssr` já trata o evento
+`MFA_CHALLENGE_VERIFIED` para persistir isso em cookie, sem mudança em
+`server.ts`) → `redirect('/entrada')`.
+
+**Fluxo de challenge no login:** `login()`, `signup()` e
+`signInWithGoogle()` continuam **inalterados** — todos terminam em
+`redirect('/entrada')` como sempre. É o `proxy.ts`, ao processar a
+requisição seguinte, que decide se deixa passar ou manda para
+`/mfa/verificar`. Isso vale igualmente para login por senha e por Google
+— nenhum dos dois precisa saber que MFA existe.
+
+**Não alterados, confirmado neste desenho:** `src/lib/supabase/server.ts`,
+`src/lib/supabase/client.ts`, `src/app/auth/callback/route.ts`, `login()`,
+`signup()`, `signInWithGoogle()`.
+**Fora do escopo:** desligar MFA, múltiplos fatores, SMS, códigos de
+backup próprios, Fase 3.

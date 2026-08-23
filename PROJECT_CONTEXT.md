@@ -187,7 +187,14 @@ privilégio mínimo, segredos, teste de isolamento) estão em
         Vinculação de identidade por e-mail é automática (comportamento
         padrão do Supabase, não configurável) — ver `docs/DECISIONS.md`.
         Só Google por enquanto; só em `/login`, não em `/cadastro`.
-  - [ ] MFA.
+  - [x] MFA (TOTP, opcional): `/mfa/configurar` (enroll + QR code) e
+        `/mfa/verificar` (challenge no login), link em `/entrada`. Gate de
+        AAL2 centralizado em `src/proxy.ts` — `/entrada` e
+        `/redefinir-senha` exigem AAL2 somente quando existe TOTP
+        verificado; sem MFA, nenhuma tela nova aparece. Só 1 fator TOTP no
+        MVP, sem botão de desligar, sem SMS, sem códigos de backup — perda
+        do autenticador é recuperação administrativa nesta fase. Ver
+        `docs/DECISIONS.md`.
 - **Pendente do usuário:** os outros 9 arquivos de imagem das telas de
   referência (para arquivar em `docs/design-references/` com os nomes já
   reservados no catálogo — a tela 01 já está resolvida). Confirmar também
