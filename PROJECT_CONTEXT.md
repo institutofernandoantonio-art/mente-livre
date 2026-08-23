@@ -142,7 +142,7 @@ privilégio mínimo, segredos, teste de isolamento) estão em
       recortado da referência oficial em uso (ver "Identidade visual
       oficial" acima).
 - [ ] Fase 2 — Autenticação e banco
-- [ ] Fase 3 — Brain dump por texto
+- [x] Fase 3 — Brain dump por texto
 - [ ] Fase 4 — Organização por IA
 - [ ] Fase 5 — Priorização
 - [ ] Fase 6 — Planejamento do dia
@@ -195,6 +195,37 @@ privilégio mínimo, segredos, teste de isolamento) estão em
         MVP, sem botão de desligar, sem SMS, sem códigos de backup — perda
         do autenticador é recuperação administrativa nesta fase. Ver
         `docs/DECISIONS.md`.
+- Fase 3 (concluída):
+  - [x] tabela `brain_dumps` (`supabase/migrations/20260823171808_create_brain_dumps.sql`),
+        RLS explícita por operação (SELECT/INSERT/UPDATE/DELETE, nenhuma
+        `FOR ALL`), mesmo padrão de `profiles`. `source` fixo em `'text'`
+        nesta fase (CHECK constraint, não enum — `'voice'` fica para a
+        Fase 9). Limite de 10.000 code points aplicado tanto no servidor
+        (`Array.from(rawText).length`) quanto no banco
+        (`char_length(raw_text) <= 10000`).
+  - [x] `/entrada` deixou de ser placeholder: `BrainDumpForm` (Client
+        Component) captura o texto e chama `createBrainDump()`
+        (`src/lib/supabase/actions.ts`). `user_id` vem só de
+        `getClaims().claims.sub`, nunca do formulário; `source` é literal
+        no servidor. Mensagens sempre genéricas em erro.
+  - [x] Textarea controlado no `BrainDumpForm` — necessário porque o React
+        reseta campos não-controlados de um `<form action={...}>` sempre
+        que a action termina sem lançar exceção, mesmo em erro lógico
+        nosso; controlar o valor preserva o texto digitado em qualquer
+        falha e só limpa após sucesso real. Ver `docs/DECISIONS.md`.
+  - [x] Testado manualmente: salvamento normal, texto vazio/só espaços,
+        emoji/caracteres especiais, falha de rede (texto preservado,
+        depois salvo com sucesso ao reconectar), ownership de gravação
+        entre duas contas reais (cada `brain_dump` com o `user_id`
+        correto).
+  - **Limitação registrada, não é pendência a resolver agora:** a Fase 3
+    não inclui leitura/histórico de `brain_dumps` na aplicação — só
+    criação. Por isso, o isolamento de `SELECT` entre usuários não foi
+    testado via interface (não existe tela para isso); a política de
+    `SELECT` já existe no banco (mesmo padrão de defesa em profundidade
+    das demais tabelas), mas seu teste de isolamento fica para quando uma
+    tela de leitura existir. Nenhuma funcionalidade de leitura foi criada
+    só para viabilizar esse teste.
 - **Pendente do usuário:** os outros 9 arquivos de imagem das telas de
   referência (para arquivar em `docs/design-references/` com os nomes já
   reservados no catálogo — a tela 01 já está resolvida). Confirmar também

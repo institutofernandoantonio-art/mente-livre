@@ -145,6 +145,17 @@ nomes implicitamente.
   outra falha de autenticação. Ver `docs/DECISIONS.md` para o
   detalhamento completo, incluindo o comportamento (não configurável) de
   vinculação automática de identidade por e-mail.
+- **Brain dump (`brain_dumps`, Fase 3):** RLS explícita por operação
+  (SELECT/INSERT/UPDATE/DELETE), mesmo padrão de `profiles`. `user_id`
+  nunca vem do formulário — só de `getClaims().claims.sub` na Server
+  Function `createBrainDump()`, reforçado pelo `WITH CHECK (auth.uid() =
+  user_id)` da política de INSERT. `source` é literal `'text'` no
+  servidor, nunca lido do cliente. Limite de tamanho aplicado tanto no
+  servidor quanto no banco, com a mesma semântica de contagem (code
+  points Unicode) nos dois lados. Mensagens de erro sempre genéricas,
+  sem detalhe do Postgres/Supabase. A aplicação só usa `INSERT` nesta
+  fase — sem leitura/histórico, edição ou exclusão na UI. Ver
+  `docs/DECISIONS.md` para o detalhamento completo.
 
 ## Segredos e variáveis de ambiente
 

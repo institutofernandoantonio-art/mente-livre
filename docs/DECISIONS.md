@@ -506,3 +506,79 @@ requisição seguinte, que decide se deixa passar ou manda para
 `signup()`, `signInWithGoogle()`.
 **Fora do escopo:** desligar MFA, múltiplos fatores, SMS, códigos de
 backup próprios, Fase 3.
+
+---
+
+### Brain dump por texto (Fase 3)
+
+**Decisão:** `brain_dumps` (id, user_id, raw_text, source, created_at),
+RLS explícita por operação (SELECT/INSERT/UPDATE/DELETE, nunca `FOR ALL`),
+mesmo padrão de `profiles`. Aplicada via Supabase CLI (adotada nesta
+etapa como devDependency — ver entrada própria abaixo), não mais colada
+manualmente no SQL Editor.
+**Ownership:** `user_id` só de `getClaims().claims.sub` na Server Function
+`createBrainDump()` (`src/lib/supabase/actions.ts`) — nunca do formulário.
+Reforçado por `WITH CHECK (auth.uid() = user_id)` na política de INSERT
+(defesa em profundidade, mesmo princípio já usado em todas as tabelas
+deste projeto).
+**`source` fixo em `'text'` nesta fase:** literal no servidor, nunca lido
+do formulário. `CHECK (source in ('text'))` no banco, não `ENUM` do
+Postgres — ampliar um `ENUM` depois tem restrições transacionais; um
+`CHECK` é trivial de trocar quando a Fase 9 (voz) chegar.
+**Limite de 10.000 caracteres, mesma semântica em servidor e banco:**
+`Array.from(rawText).length` no TypeScript, `char_length(raw_text)` no
+Postgres — os dois contam por *code point* Unicode. `rawText.length` (JS)
+foi descartado de propósito: conta unidades UTF-16, divergindo do banco
+para emoji fora do BMP (confirmado empiricamente durante o planejamento).
+**Somente criação nesta fase:** a aplicação só faz `INSERT` em
+`brain_dumps` — nenhuma leitura, edição ou exclusão na UI. As políticas de
+SELECT/UPDATE/DELETE já existem no banco (mesmo padrão de proteção
+completa desde já, independente do que a UI usa hoje), mas seu teste de
+isolamento entre usuários fica pendente de uma tela de leitura futura —
+nenhuma tela foi criada só para viabilizar esse teste agora.
+**Bug de UX corrigido durante o teste manual — textarea perdia o texto em
+qualquer erro:** o React reseta campos não-controlados de um `<form
+action={...}>` sempre que a *action* termina sem lançar exceção — e
+`createBrainDump()` nunca lança, só retorna `{ error, success: false }`
+em qualquer falha. Para o React isso conta como "sucesso da action",
+então o campo era limpo mesmo em erro lógico nosso (confirmado na
+documentação oficial do React, não presumido). Correção: `Textarea` do
+`BrainDumpForm` passou a ser controlado (`value`/`onChange` locais); a
+limpeza no sucesso passou a ser feita durante a renderização (comparando
+a referência do `state` do `useActionState` com a do último processado),
+não dentro de `useEffect`, para não disparar `setState` síncrono em
+efeito (apontado pelo lint `react-hooks/set-state-in-effect`).
+**Testado manualmente:** salvamento normal, texto vazio/só espaços,
+emoji/caracteres especiais, falha de rede (texto preservado, depois
+salvo com sucesso ao reconectar), ownership de gravação entre duas
+contas reais — cada `brain_dump` associado ao `user_id` correto,
+confirmado diretamente na tabela.
+**Fora do escopo:** IA, histórico/listagem, edição, exclusão na UI,
+priorização, items, daily plans, voz — qualquer coisa de Fase 4 em
+diante.
+
+---
+
+### Adoção da Supabase CLI para migrations
+
+**Decisão:** `supabase` como devDependency local (`npm install --save-dev
+supabase`), não instalação global — mesma versão fixada em
+`package.json` para todo o time. Sem CI/CD de banco nesta etapa — só o
+mecanismo mínimo local e reproduzível (`supabase migration new`,
+`supabase db push`), como pedido explicitamente.
+**Reconciliação da migration `0001`:** ela havia sido aplicada
+manualmente pelo SQL Editor antes da CLI existir no projeto, então o
+histórico remoto (`supabase_migrations.schema_migrations`) não tinha
+registro dela. Reconciliada com `supabase migration repair 0001 --status
+applied --linked`, sem reexecutar o SQL — confirmado antes com
+`supabase migration list --linked` e `supabase db push --dry-run` que não
+havia divergência nem risco de recriação. Migration `0001` não foi
+renomeada (o nome já era o identificador de versão usado na reconciliação;
+renomear não traria benefício).
+**Nomenclatura:** `supabase migration new <nome>` gera arquivos com
+prefixo de timestamp UTC de 14 dígitos (`YYYYMMDDHHMMSS_nome.sql`),
+confirmado empiricamente com a versão instalada (`2.115.0`), não só pela
+documentação (que não detalhava o formato exato).
+**`supabase/config.toml` e `supabase/.gitignore`** foram gerados por
+`supabase init` e são seguros para versionar — nenhum segredo literal
+neles; todo campo sensível usa `env(NOME_DA_VARIAVEL)`.

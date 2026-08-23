@@ -41,6 +41,13 @@ export type VerifyMfaChallengeState = {
 // da query string — só escolhe entre as duas rotas que já exigem AAL2.
 const MFA_NEXT_ALLOWED_PATHS = new Set(['/entrada', '/redefinir-senha']);
 
+export type CreateBrainDumpState = {
+  error: string | null;
+  success: boolean;
+};
+
+const RAW_TEXT_MAX_LENGTH = 10000;
+
 export async function login(_prevState: LoginState, formData: FormData): Promise<LoginState> {
   const email = formData.get('email');
   const password = formData.get('password');
@@ -280,4 +287,46 @@ export async function verifyMfaChallenge(
 
   const destination = MFA_NEXT_ALLOWED_PATHS.has(next) ? next : '/entrada';
   redirect(destination);
+}
+
+export async function createBrainDump(
+  _prevState: CreateBrainDumpState,
+  formData: FormData,
+): Promise<CreateBrainDumpState> {
+  const rawText = formData.get('raw_text');
+
+  if (typeof rawText !== 'string' || rawText.trim().length === 0) {
+    return { error: 'Escreva alguma coisa antes de salvar.', success: false };
+  }
+
+  // Array.from() conta por code point, igual ao char_length() do Postgres
+  // usado na constraint do banco — rawText.length (UTF-16) divergiria para
+  // emoji fora do BMP.
+  if (Array.from(rawText).length > RAW_TEXT_MAX_LENGTH) {
+    return { error: 'O texto pode ter no máximo 10.000 caracteres.', success: false };
+  }
+
+  const supabase = await createClient();
+
+  // user_id nunca vem do formulário — só de claims verificadas no servidor.
+  const { data: claims } = await supabase.auth.getClaims();
+  const userId = claims?.claims.sub;
+
+  if (!userId) {
+    return { error: 'Sessão expirada. Atualize a página e tente novamente.', success: false };
+  }
+
+  const { error } = await supabase.from('brain_dumps').insert({
+    user_id: userId,
+    raw_text: rawText,
+    source: 'text', // literal no servidor, nunca do formulário
+  });
+
+  if (error) {
+    // Mensagem genérica de propósito, mesmo padrão das demais Server
+    // Functions deste arquivo: nunca expõe o detalhe do erro do Supabase.
+    return { error: 'Não foi possível salvar. Tente novamente.', success: false };
+  }
+
+  return { error: null, success: true };
 }

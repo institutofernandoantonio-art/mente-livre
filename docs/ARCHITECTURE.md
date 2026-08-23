@@ -17,9 +17,8 @@ de segurança, ver [`SECURITY.md`](./SECURITY.md).
   de segurança no próprio banco, impede um usuário ver dados de outro).
   Clientes instalados: `@supabase/supabase-js` e `@supabase/ssr`.
   Autenticação server-side via `@supabase/ssr` **implementada**: login,
-  logout, cadastro, callback de confirmação de e-mail e proteção
-  server-side de `/entrada` (ver `DECISIONS.md`). Pendente: recuperação de
-  senha, OAuth, MFA.
+  logout, cadastro, recuperação de senha, OAuth (Google) e MFA (TOTP
+  opcional) — ver `DECISIONS.md`.
 - **Anthropic (Claude API)** (Fase 4) — organização por IA, chamada só pelo
   backend.
 - **Vercel** (Fase 10) — deploy.
@@ -39,11 +38,13 @@ backend, onde ficam as chaves secretas.
 src/
   app/            páginas e rotas (App Router)
     page.tsx      Tela 1 — Boas-vindas
-    entrada/      Tela 2 — protegida por sessão (ver proxy.ts)
+    entrada/      Tela 2 — protegida por sessão; captura de brain dump por
+                   texto (Fase 3, ver BrainDumpForm.tsx)
     login/        tela de login (email/senha)
     cadastro/     tela de cadastro (email/senha)
     esqueci-senha/  tela para solicitar link de redefinição de senha
     redefinir-senha/  tela para definir a nova senha (rota protegida)
+    mfa/          configurar/verificar autenticação em duas etapas (TOTP)
     auth/callback/  Route Handler que troca o code (PKCE) por sessão
     globals.css   tokens de design (cores, sombra) + estilos base
     layout.tsx    layout raiz, metadata, fontes
@@ -60,9 +61,9 @@ src/
 public/
   brand/          assets de imagem da marca (cérebro/elemento principal)
 supabase/
-  migrations/     migrations SQL do banco (aplicadas manualmente no SQL
-                   Editor do Supabase por enquanto — ver Pendências em
-                   PROJECT_CONTEXT.md)
+  config.toml     configuração da Supabase CLI (devDependency, ver DECISIONS.md)
+  migrations/     migrations SQL do banco, aplicadas via Supabase CLI
+                   (`npx supabase db push`)
 docs/
   design-references/  catálogo das 10 telas de referência oficiais
   ARCHITECTURE.md      este arquivo
@@ -83,8 +84,12 @@ fase**, não tudo de uma vez:
 - `profiles` — **Fase 2.** id, display_name, created_at, updated_at.
   Criada automaticamente (trigger) quando o usuário se cadastra. Migration:
   [`supabase/migrations/0001_create_profiles.sql`](../supabase/migrations/0001_create_profiles.sql).
-- `brain_dumps` — **Fase 3.** id, user_id, raw_text, source (text/voice),
-  created_at.
+- `brain_dumps` — **Fase 3, implementada.** id, user_id, raw_text, source
+  (só `'text'` permitido nesta fase — `'voice'` fica para a Fase 9),
+  created_at. Migration:
+  [`supabase/migrations/20260823171808_create_brain_dumps.sql`](../supabase/migrations/20260823171808_create_brain_dumps.sql).
+  Só criação (`INSERT`) é usada pela aplicação nesta fase — sem leitura,
+  edição ou exclusão na UI ainda (ver `DECISIONS.md`).
 - `items` — **Fase 4.** id, user_id, brain_dump_id, title, original_text,
   type, priority, estimated_minutes, due_date, due_time, status,
   needs_confirmation, notes, created_at, updated_at.

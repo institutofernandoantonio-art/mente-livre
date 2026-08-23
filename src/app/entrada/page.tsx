@@ -1,14 +1,14 @@
 import Link from "next/link";
-import { EmptyState } from "@/components/ui/EmptyState";
+import { Card } from "@/components/ui/Card";
 import { buttonVariants } from "@/components/ui/Button";
 import { createClient } from "@/lib/supabase/server";
 import { logout } from "@/lib/supabase/actions";
+import { BrainDumpForm } from "./BrainDumpForm";
 
 /**
- * Placeholder da Tela 2 (despejo mental). O fluxo completo de texto/voz
- * é construído na Fase 3 — esta página só evita um link quebrado na Fase 1.
- * Também é o destino pós-login da Fase 2 (ver docs/DECISIONS.md): mostra a
- * sessão ativa e o logout, sem virar um dashboard.
+ * Tela 2 (despejo mental) — Fase 3: captura de texto livre. Também é o
+ * destino pós-login da Fase 2 (ver docs/DECISIONS.md): mostra a sessão
+ * ativa e o logout.
  */
 export default async function EntradaPage() {
   const supabase = await createClient();
@@ -23,29 +23,28 @@ export default async function EntradaPage() {
             Sessão ativa: <span className="font-medium text-ink">{email}</span>
           </p>
         )}
-        <EmptyState
-          title="Essa tela chega na próxima fase"
-          description="O despejo mental por texto e voz será construído na Fase 3 do projeto."
-          action={
-            <div className="flex flex-col items-center gap-3">
-              <Link href="/" className={buttonVariants("secondary")}>
-                Voltar ao início
-              </Link>
-              {email && (
-                <Link href="/mfa/configurar" className={buttonVariants("ghost")}>
-                  Configurar autenticação em duas etapas
-                </Link>
-              )}
-              {email && (
-                <form action={logout}>
-                  <button type="submit" className={buttonVariants("ghost")}>
-                    Sair
-                  </button>
-                </form>
-              )}
-            </div>
-          }
-        />
+
+        <Card>
+          <BrainDumpForm />
+        </Card>
+
+        <div className="mt-6 flex flex-col items-center gap-3">
+          <Link href="/" className={buttonVariants("secondary")}>
+            Voltar ao início
+          </Link>
+          {email && (
+            <Link href="/mfa/configurar" className={buttonVariants("ghost")}>
+              Configurar autenticação em duas etapas
+            </Link>
+          )}
+          {email && (
+            <form action={logout}>
+              <button type="submit" className={buttonVariants("ghost")}>
+                Sair
+              </button>
+            </form>
+          )}
+        </div>
       </div>
     </main>
   );
