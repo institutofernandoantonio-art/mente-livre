@@ -1,15 +1,24 @@
 'use client';
 
-import { useActionState, useState } from 'react';
+import { useActionState, useState, useEffect } from 'react';
 import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
-import { createBrainDump, type CreateBrainDumpState } from '@/lib/supabase/actions';
+import {
+  createBrainDump,
+  organizeBrainDump,
+  type CreateBrainDumpState,
+  type OrganizedItem,
+} from '@/lib/supabase/actions';
 
-const initialState: CreateBrainDumpState = { error: null, success: false };
+const initialState: CreateBrainDumpState = { error: null, success: false, brainDumpId: null };
+
+type OrganizeStatus = 'idle' | 'organizing' | 'done' | 'failed';
 
 export function BrainDumpForm() {
   const [state, formAction, pending] = useActionState(createBrainDump, initialState);
   const [rawText, setRawText] = useState('');
+  const [organizeStatus, setOrganizeStatus] = useState<OrganizeStatus>('idle');
+  const [organizedItem, setOrganizedItem] = useState<OrganizedItem | null>(null);
 
   // O React reseta campos NÃO-controlados de um <form action={...}> sempre
   // que a action termina sem lançar exceção — o que inclui qualquer retorno
@@ -23,8 +32,36 @@ export function BrainDumpForm() {
     setHandledState(state);
     if (state.success) {
       setRawText('');
+      if (state.brainDumpId) {
+        setOrganizeStatus('organizing');
+        setOrganizedItem(null);
+      }
     }
   }
+
+  // Organizar por IA é uma etapa independente do salvamento — dispara
+  // automaticamente depois de um brain dump salvo com sucesso. Falha aqui
+  // nunca desfaz o salvamento nem mostra erro técnico. O efeito só faz a
+  // chamada assíncrona em si; a transição para "organizando" já aconteceu
+  // acima, durante a renderização (mesmo motivo do ajuste de rawText).
+  useEffect(() => {
+    if (!state.success || !state.brainDumpId) {
+      return;
+    }
+
+    let cancelled = false;
+    const brainDumpId = state.brainDumpId;
+
+    organizeBrainDump(brainDumpId).then((item) => {
+      if (cancelled) return;
+      setOrganizeStatus(item ? 'done' : 'failed');
+      setOrganizedItem(item);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [state.success, state.brainDumpId]);
 
   return (
     <form action={formAction} className="flex w-full flex-col gap-4">
@@ -43,8 +80,24 @@ export function BrainDumpForm() {
       )}
       {state.success && (
         <p role="status" className="text-sm text-ink-soft">
-          Pensamento salvo.
+          {organizeStatus === 'organizing'
+            ? 'Pensamento salvo. Organizando...'
+            : organizeStatus === 'failed'
+              ? 'Pensamento salvo. Não consegui organizar agora.'
+              : 'Pensamento salvo.'}
         </p>
+      )}
+      {organizedItem && (
+        <div className="rounded-xl border border-mist-200 bg-mist-50 p-4 text-sm">
+          <p className="font-medium text-ink capitalize">{organizedItem.category}</p>
+          <p className="text-ink">{organizedItem.title}</p>
+          {organizedItem.description && (
+            <p className="mt-1 text-ink-soft">{organizedItem.description}</p>
+          )}
+          {organizedItem.priority && (
+            <p className="mt-1 text-ink-soft">Prioridade sugerida: {organizedItem.priority}</p>
+          )}
+        </div>
       )}
       <Button type="submit" variant="primary" loading={pending} className="w-full">
         Salvar

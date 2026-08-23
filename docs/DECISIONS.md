@@ -559,6 +559,72 @@ diante.
 
 ---
 
+### Organização de um brain dump por IA (Fase 4 mínima)
+
+**Decisão:** `items` (id, user_id, brain_dump_id, category, title,
+description, priority, needs_confirmation, created_at), RLS explícita por
+operação, mesmo padrão das demais tabelas. `brain_dump_id` é `unique` —
+no máximo 1 item por brain dump nesta fase (repetir a organização do mesmo
+brain dump é tratado como qualquer outra falha, sem duplicar).
+**Independência entre salvar e organizar:** `createBrainDump()` (Fase 3,
+inalterada) persiste o brain dump primeiro; `organizeBrainDump()` é chamada
+depois, separadamente, pelo `BrainDumpForm` (Client Component), assim que o
+`useActionState` confirma sucesso com um `brainDumpId`. Se a organização
+falhar por qualquer motivo, o brain dump já salvo não é desfeito nem
+afetado — a interface mostra "Pensamento salvo. Não consegui organizar
+agora.", nunca um erro técnico.
+**Chamada à Anthropic:** `fetch` direto para
+`https://api.anthropic.com/v1/messages` (sem SDK, decisão explícita do
+usuário), só no servidor (`callAnthropicToOrganize()`, função interna de
+`src/lib/supabase/actions.ts`) — `ANTHROPIC_API_KEY` nunca chega ao
+navegador. Modelo `claude-opus-5`, `max_tokens: 500`,
+`output_config: { effort: 'low' }`. Qualquer falha (chave ausente, rede,
+HTTP não-2xx, JSON inválido, resposta sem bloco de texto) retorna `null` em
+silêncio — sem propagar detalhe técnico da Anthropic para o usuário.
+**Validação defensiva da resposta:** `parseOrganizedItem()` nunca confia no
+texto devolvido pela IA — faz `JSON.parse` em try/catch, valida `category`
+e `priority` contra allow-lists fechadas (`Set`), valida `title`
+(obrigatório, não-vazio, ≤200 code points) e `description` (opcional,
+≤500 code points), usando `Array.from(str).length` (code points), mesmo
+critério já usado em `brain_dumps`. Qualquer campo fora do esperado
+descarta a sugestão inteira (`null`), nunca persiste parcialmente.
+**`needs_confirmation` sempre `true`:** a IA só recomenda — nenhuma
+sugestão é tratada como confirmada automaticamente. Não existe ainda
+nenhuma UI para o usuário confirmar/editar/rejeitar; isso fica para uma
+fase futura.
+**`user_id` de `items`:** só de `getClaims().claims.sub` dentro de
+`organizeBrainDump()`, nunca do cliente — mesmo padrão já usado em
+`createBrainDump()`.
+**Padrão de estado reaproveitado do bug da Fase 3:** a transição de
+`organizeStatus` (`idle` → `organizing` → `done`/`failed`) no
+`BrainDumpForm` segue o mesmo padrão já usado para o `rawText` — ajuste
+durante a renderização (comparando a referência do `state` do
+`useActionState`) para disparar a transição para `organizing`, e o
+`useEffect` só faz a chamada assíncrona em si, atualizando o estado dentro
+do `.then()` — nunca `setState` síncrono no corpo do efeito (mesmo motivo
+do lint `react-hooks/set-state-in-effect` já documentado na entrada do
+brain dump).
+**Diagnóstico de uma falha real durante o teste manual:** a organização
+retornou `null` em dois testes reais consecutivos por dois motivos
+distintos, ambos fora do código da aplicação — (1) a chave configurada
+inicialmente não tinha crédito na conta/workspace Anthropic (erro HTTP,
+não bug de request); (2) após trocar a chave, um `400 invalid_request_error`
+momentâneo. Diagnosticado com instrumentação temporária (`console.error`
+marcado `[TEMP-ANTHROPIC-DIAGNOSTIC]`, só com metadados não-sensíveis:
+status HTTP, tipo/mensagem de erro da Anthropic, `stop_reason`,
+presença/tamanho do bloco de texto — nunca a chave, o texto do usuário, o
+prompt ou a resposta da IA) — removida por completo depois do diagnóstico
+confirmado; não sobrou nenhum log temporário no código.
+**Testado manualmente, de ponta a ponta:** brain dump salvo → IA chamada →
+sugestão estruturada exibida em `/entrada` (categoria, título, descrição,
+prioridade) → item persistido (confirmado via
+`supabase inspect db table-stats --linked`, somente leitura).
+**Fora do escopo:** histórico/listagem de items, edição, confirmação/aceite
+pelo usuário, priorização (Eisenhower), agenda/plano do dia, nenhuma tela
+nova.
+
+---
+
 ### Adoção da Supabase CLI para migrations
 
 **Decisão:** `supabase` como devDependency local (`npm install --save-dev

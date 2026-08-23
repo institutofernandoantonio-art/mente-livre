@@ -156,6 +156,19 @@ nomes implicitamente.
   sem detalhe do Postgres/Supabase. A aplicação só usa `INSERT` nesta
   fase — sem leitura/histórico, edição ou exclusão na UI. Ver
   `docs/DECISIONS.md` para o detalhamento completo.
+- **Organização por IA (`items`, Fase 4):** RLS explícita por operação,
+  mesmo padrão das demais tabelas; `brain_dump_id` é `unique` (no máximo 1
+  item por brain dump). `user_id` de `items` nunca vem do cliente — só de
+  `getClaims().claims.sub` dentro de `organizeBrainDump()`. A chamada à
+  Anthropic (`ANTHROPIC_API_KEY`) roda só no servidor; a resposta da IA é
+  validada campo a campo (JSON bem formado, `category`/`priority` contra
+  allow-lists fechadas, tamanhos máximos) antes de ser persistida ou
+  exibida — nunca confia no texto bruto devolvido pelo modelo.
+  `needs_confirmation` é sempre `true`: a IA só recomenda, nada é tratado
+  como confirmado automaticamente. Falha na organização (rede, chave
+  ausente, resposta inválida) nunca afeta o brain dump já salvo nem expõe
+  detalhe técnico ao usuário. Ver `docs/DECISIONS.md` para o detalhamento
+  completo.
 
 ## Segredos e variáveis de ambiente
 

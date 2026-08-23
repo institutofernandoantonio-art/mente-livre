@@ -143,7 +143,7 @@ privilégio mínimo, segredos, teste de isolamento) estão em
       oficial" acima).
 - [ ] Fase 2 — Autenticação e banco
 - [x] Fase 3 — Brain dump por texto
-- [ ] Fase 4 — Organização por IA
+- [x] Fase 4 — Organização por IA (mínima)
 - [ ] Fase 5 — Priorização
 - [ ] Fase 6 — Planejamento do dia
 - [ ] Fase 7 — Hoje + Foco + Conclusão
@@ -226,6 +226,32 @@ privilégio mínimo, segredos, teste de isolamento) estão em
     das demais tabelas), mas seu teste de isolamento fica para quando uma
     tela de leitura existir. Nenhuma funcionalidade de leitura foi criada
     só para viabilizar esse teste.
+- Fase 4 (concluída, mínima):
+  - [x] tabela `items` (`supabase/migrations/20260823200438_create_items.sql`),
+        RLS explícita por operação, mesmo padrão das demais tabelas.
+        Relação 1 `brain_dump` → no máximo 1 `item` (`unique(brain_dump_id)`).
+        Campos: `category`, `title`, `description` (opcional), `priority`
+        (opcional), `needs_confirmation` (sempre `true` nesta fase).
+  - [x] `organizeBrainDump()` (`src/lib/supabase/actions.ts`), chamada pelo
+        `BrainDumpForm` logo após um brain dump salvo com sucesso — etapa
+        independente do salvamento: falha na organização nunca desfaz nem
+        compromete o brain dump já persistido, e mostra mensagem amigável
+        genérica ("Não consegui organizar agora."), nunca detalhe técnico.
+  - [x] Chamada à Anthropic (`claude-opus-5`, `fetch` direto, sem SDK) só no
+        servidor; `ANTHROPIC_API_KEY` nunca chega ao navegador. Resposta da
+        IA validada por completo (JSON bem formado, `category`/`priority`
+        contra allow-lists fechadas, tamanhos máximos de `title`/
+        `description`) antes de persistir ou exibir — nunca confia na
+        resposta bruta.
+  - [x] `user_id` de `items` vem só de `getClaims().claims.sub`, nunca do
+        cliente.
+  - [x] Testado manualmente de ponta a ponta: brain dump salvo → IA chamada
+        → sugestão estruturada exibida em `/entrada` (categoria, título,
+        descrição, prioridade) → item persistido no banco.
+  - **Fora do escopo desta fase:** nenhuma tela nova, histórico/listagem de
+    items, edição, confirmação/aceite pelo usuário (`needs_confirmation`
+    fica `true` e sem UI para mudar isso ainda), priorização (Eisenhower),
+    agenda/plano do dia.
 - **Pendente do usuário:** os outros 9 arquivos de imagem das telas de
   referência (para arquivar em `docs/design-references/` com os nomes já
   reservados no catálogo — a tela 01 já está resolvida). Confirmar também

@@ -44,9 +44,31 @@ const MFA_NEXT_ALLOWED_PATHS = new Set(['/entrada', '/redefinir-senha']);
 export type CreateBrainDumpState = {
   error: string | null;
   success: boolean;
+  brainDumpId: string | null;
 };
 
 const RAW_TEXT_MAX_LENGTH = 10000;
+
+export type OrganizedItem = {
+  category: string;
+  title: string;
+  description: string | null;
+  priority: string | null;
+};
+
+const ITEM_CATEGORIES = new Set(['tarefa', 'compromisso', 'ideia', 'lembrete', 'outro']);
+const ITEM_PRIORITIES = new Set(['alta', 'média', 'baixa']);
+const ITEM_TITLE_MAX_LENGTH = 200;
+const ITEM_DESCRIPTION_MAX_LENGTH = 500;
+
+const ORGANIZE_SYSTEM_PROMPT = `Você categoriza um pensamento curto de um usuário em uma sugestão estruturada para um app de produtividade. Responda SOMENTE com um objeto JSON válido, sem nenhum texto antes ou depois, exatamente neste formato:
+{"category":"tarefa|compromisso|ideia|lembrete|outro","title":"...","description":"..." ou null,"priority":"alta|média|baixa" ou null}
+
+Regras:
+- "category": escolha a que melhor descreve o pensamento, só entre os valores listados.
+- "title": título curto e claro, poucas palavras.
+- "description": só preencha se agregar algo além do título; senão, null.
+- "priority": só sugira se fizer sentido para esse tipo de pensamento; senão, null.`;
 
 export async function login(_prevState: LoginState, formData: FormData): Promise<LoginState> {
   const email = formData.get('email');
@@ -296,14 +318,18 @@ export async function createBrainDump(
   const rawText = formData.get('raw_text');
 
   if (typeof rawText !== 'string' || rawText.trim().length === 0) {
-    return { error: 'Escreva alguma coisa antes de salvar.', success: false };
+    return { error: 'Escreva alguma coisa antes de salvar.', success: false, brainDumpId: null };
   }
 
   // Array.from() conta por code point, igual ao char_length() do Postgres
   // usado na constraint do banco — rawText.length (UTF-16) divergiria para
   // emoji fora do BMP.
   if (Array.from(rawText).length > RAW_TEXT_MAX_LENGTH) {
-    return { error: 'O texto pode ter no máximo 10.000 caracteres.', success: false };
+    return {
+      error: 'O texto pode ter no máximo 10.000 caracteres.',
+      success: false,
+      brainDumpId: null,
+    };
   }
 
   const supabase = await createClient();
@@ -313,20 +339,195 @@ export async function createBrainDump(
   const userId = claims?.claims.sub;
 
   if (!userId) {
-    return { error: 'Sessão expirada. Atualize a página e tente novamente.', success: false };
+    return {
+      error: 'Sessão expirada. Atualize a página e tente novamente.',
+      success: false,
+      brainDumpId: null,
+    };
   }
 
-  const { error } = await supabase.from('brain_dumps').insert({
-    user_id: userId,
-    raw_text: rawText,
-    source: 'text', // literal no servidor, nunca do formulário
-  });
+  const { data: inserted, error } = await supabase
+    .from('brain_dumps')
+    .insert({
+      user_id: userId,
+      raw_text: rawText,
+      source: 'text', // literal no servidor, nunca do formulário
+    })
+    .select('id')
+    .single();
 
-  if (error) {
+  if (error || !inserted) {
     // Mensagem genérica de propósito, mesmo padrão das demais Server
     // Functions deste arquivo: nunca expõe o detalhe do erro do Supabase.
-    return { error: 'Não foi possível salvar. Tente novamente.', success: false };
+    return { error: 'Não foi possível salvar. Tente novamente.', success: false, brainDumpId: null };
   }
 
-  return { error: null, success: true };
+  // O pensamento já está salvo aqui — a organização por IA (chamada em
+  // seguida, pelo cliente, via organizeBrainDump) é uma etapa independente.
+  // Se ela falhar depois, o brain_dump já persistido não é afetado.
+  return { error: null, success: true, brainDumpId: inserted.id };
+}
+
+function parseOrganizedItem(text: string): OrganizedItem | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+
+  if (typeof parsed !== 'object' || parsed === null) {
+    return null;
+  }
+
+  const { category, title, description, priority } = parsed as Record<string, unknown>;
+
+  if (typeof category !== 'string' || !ITEM_CATEGORIES.has(category)) {
+    return null;
+  }
+
+  if (
+    typeof title !== 'string' ||
+    title.trim().length === 0 ||
+    Array.from(title).length > ITEM_TITLE_MAX_LENGTH
+  ) {
+    return null;
+  }
+
+  if (
+    description !== null &&
+    description !== undefined &&
+    (typeof description !== 'string' || Array.from(description).length > ITEM_DESCRIPTION_MAX_LENGTH)
+  ) {
+    return null;
+  }
+
+  if (priority !== null && priority !== undefined) {
+    if (typeof priority !== 'string' || !ITEM_PRIORITIES.has(priority)) {
+      return null;
+    }
+  }
+
+  return {
+    category,
+    title,
+    description: typeof description === 'string' ? description : null,
+    priority: typeof priority === 'string' ? priority : null,
+  };
+}
+
+async function callAnthropicToOrganize(rawText: string): Promise<OrganizedItem | null> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return null;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-5',
+        max_tokens: 500,
+        output_config: { effort: 'low' },
+        system: ORGANIZE_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: rawText }],
+      }),
+    });
+  } catch {
+    // Falha de rede/timeout ao chamar a Anthropic — tratada como falha
+    // suave, nunca propagada como erro técnico ao usuário.
+    return null;
+  }
+
+  if (!response.ok) {
+    return null;
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return null;
+  }
+
+  if (typeof payload !== 'object' || payload === null || !('content' in payload)) {
+    return null;
+  }
+
+  const content = (payload as { content: unknown }).content;
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const textBlock = content.find(
+    (block): block is { type: 'text'; text: string } =>
+      typeof block === 'object' &&
+      block !== null &&
+      (block as { type?: unknown }).type === 'text' &&
+      typeof (block as { text?: unknown }).text === 'string',
+  );
+
+  if (!textBlock) {
+    return null;
+  }
+
+  // Nunca confia na resposta bruta da IA — só o que passar em
+  // parseOrganizedItem() (JSON válido + valores dentro do permitido) chega
+  // a ser persistido ou devolvido ao cliente.
+  return parseOrganizedItem(textBlock.text.trim());
+}
+
+export async function organizeBrainDump(brainDumpId: string): Promise<OrganizedItem | null> {
+  if (typeof brainDumpId !== 'string' || !brainDumpId) {
+    return null;
+  }
+
+  const supabase = await createClient();
+
+  const { data: claims } = await supabase.auth.getClaims();
+  const userId = claims?.claims.sub;
+  if (!userId) {
+    return null;
+  }
+
+  // RLS já garante que só o dono enxerga a linha — se não vier nada, trata
+  // como falha genérica, sem diferenciar "não existe" de "não é seu".
+  const { data: brainDump, error: brainDumpError } = await supabase
+    .from('brain_dumps')
+    .select('raw_text')
+    .eq('id', brainDumpId)
+    .single();
+
+  if (brainDumpError || !brainDump) {
+    return null;
+  }
+
+  const suggestion = await callAnthropicToOrganize(brainDump.raw_text);
+  if (!suggestion) {
+    return null;
+  }
+
+  const { error: insertError } = await supabase.from('items').insert({
+    user_id: userId,
+    brain_dump_id: brainDumpId,
+    category: suggestion.category,
+    title: suggestion.title,
+    description: suggestion.description,
+    priority: suggestion.priority,
+    needs_confirmation: true,
+  });
+
+  if (insertError) {
+    // unique(brain_dump_id) pode disparar em corridas/repetições — trata
+    // como qualquer outra falha, sem duplicar nem expor detalhe.
+    return null;
+  }
+
+  return suggestion;
 }

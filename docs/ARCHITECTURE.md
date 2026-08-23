@@ -19,8 +19,9 @@ de segurança, ver [`SECURITY.md`](./SECURITY.md).
   Autenticação server-side via `@supabase/ssr` **implementada**: login,
   logout, cadastro, recuperação de senha, OAuth (Google) e MFA (TOTP
   opcional) — ver `DECISIONS.md`.
-- **Anthropic (Claude API)** (Fase 4) — organização por IA, chamada só pelo
-  backend.
+- **Anthropic (Claude API)** (Fase 4, implementada) — organização por IA de
+  um brain dump recém-salvo em sugestão estruturada (`items`), chamada só
+  pelo backend via `fetch` direto (sem SDK).
 - **Vercel** (Fase 10) — deploy.
 
 ## Arquitetura
@@ -90,9 +91,16 @@ fase**, não tudo de uma vez:
   [`supabase/migrations/20260823171808_create_brain_dumps.sql`](../supabase/migrations/20260823171808_create_brain_dumps.sql).
   Só criação (`INSERT`) é usada pela aplicação nesta fase — sem leitura,
   edição ou exclusão na UI ainda (ver `DECISIONS.md`).
-- `items` — **Fase 4.** id, user_id, brain_dump_id, title, original_text,
-  type, priority, estimated_minutes, due_date, due_time, status,
-  needs_confirmation, notes, created_at, updated_at.
+- `items` — **Fase 4, implementada (mínima).** id, user_id, brain_dump_id
+  (`unique`, no máximo 1 item por brain dump), category, title, description,
+  priority, needs_confirmation (sempre `true` nesta fase), created_at.
+  Migration:
+  [`supabase/migrations/20260823200438_create_items.sql`](../supabase/migrations/20260823200438_create_items.sql).
+  Schema reduzido ao necessário para a sugestão da IA — os campos do desenho
+  original da Fase 0 (`type`, `estimated_minutes`, `due_date`, `due_time`,
+  `status`, `notes`, `updated_at`) ficam para quando as fases que os usam
+  (priorização, plano do dia) chegarem, mesmo princípio já aplicado a
+  `brain_dumps`.
 - `daily_plans` — **Fase 6.** id, user_id, plan_date, created_at,
   updated_at.
 - `daily_plan_items` — **Fase 6.** id, plan_id, item_id, position,
