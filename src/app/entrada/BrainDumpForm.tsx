@@ -14,6 +14,18 @@ const initialState: CreateBrainDumpState = { error: null, success: false, brainD
 
 type OrganizeStatus = 'idle' | 'organizing' | 'done' | 'failed';
 
+// Conversão só de apresentação — o banco continua guardando só
+// alta/média/baixa/null (ver docs/DECISIONS.md, Fase 5).
+const PRIORITY_LABELS: Record<string, string> = {
+  alta: 'Fazer primeiro',
+  média: 'Planejar',
+  baixa: 'Pode esperar',
+};
+
+function priorityLabel(priority: string | null): string {
+  return (priority && PRIORITY_LABELS[priority]) || 'Precisa de mais contexto';
+}
+
 export function BrainDumpForm() {
   const [state, formAction, pending] = useActionState(createBrainDump, initialState);
   const [rawText, setRawText] = useState('');
@@ -94,8 +106,11 @@ export function BrainDumpForm() {
           {organizedItem.description && (
             <p className="mt-1 text-ink-soft">{organizedItem.description}</p>
           )}
-          {organizedItem.priority && (
-            <p className="mt-1 text-ink-soft">Prioridade sugerida: {organizedItem.priority}</p>
+          <p className="mt-3 text-sm font-semibold tracking-wide text-ink uppercase">
+            {priorityLabel(organizedItem.priority)}
+          </p>
+          {organizedItem.priorityReason && (
+            <p className="mt-1 text-ink-soft">{organizedItem.priorityReason}</p>
           )}
         </div>
       )}

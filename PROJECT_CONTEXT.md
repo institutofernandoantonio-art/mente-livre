@@ -144,7 +144,7 @@ privilégio mínimo, segredos, teste de isolamento) estão em
 - [ ] Fase 2 — Autenticação e banco
 - [x] Fase 3 — Brain dump por texto
 - [x] Fase 4 — Organização por IA (mínima)
-- [ ] Fase 5 — Priorização
+- [x] Fase 5 — Priorização (mínima)
 - [ ] Fase 6 — Planejamento do dia
 - [ ] Fase 7 — Hoje + Foco + Conclusão
 - [ ] Fase 8 — Resumo do dia
@@ -252,6 +252,32 @@ privilégio mínimo, segredos, teste de isolamento) estão em
     items, edição, confirmação/aceite pelo usuário (`needs_confirmation`
     fica `true` e sem UI para mudar isso ainda), priorização (Eisenhower),
     agenda/plano do dia.
+- Fase 5 (concluída, mínima):
+  - [x] Fluxo completo: FALAR → ORGANIZAR → PRIORIZAR, tudo na mesma
+        chamada à Anthropic da Fase 4 (`callAnthropicToOrganize()`) —
+        nenhuma segunda chamada de IA foi criada.
+  - [x] `items.priority` reaproveitado como único dado de prioridade
+        persistido (`alta`/`média`/`baixa`/`null`) — nenhuma coluna, tabela
+        ou migration nova. A lógica da Matriz de Eisenhower existe só como
+        critério interno do prompt da IA, nunca como estrutura do banco.
+  - [x] `priority_reason` (motivo curto, até 160 code points) adicionado à
+        resposta da IA e ao retorno de `organizeBrainDump()`, só para
+        explicar a recomendação na interface — **nunca persistido** no
+        banco (`insert` em `items` inalterado).
+  - [x] Rótulos de apresentação no `BrainDumpForm`: `alta` → "Fazer
+        primeiro", `média` → "Planejar", `baixa` → "Pode esperar", `null`
+        (ou qualquer valor fora do esperado) → "Precisa de mais contexto".
+        Conversão só de exibição, mesma `/entrada`, mesmo card.
+  - [x] IA continua só recomendando — `needs_confirmation` continua sempre
+        `true`, sem nenhum botão de confirmar/ajustar/aceitar nesta fase.
+  - [x] Testado manualmente com 4 casos reais: prazo explícito → "Fazer
+        primeiro"; pensamento vago ("café") → "Precisa de mais contexto",
+        sem inventar prazo/urgência; importante sem urgência imediata →
+        "Planejar"; sem prazo nem consequência → "Pode esperar".
+  - **Fora do escopo desta fase:** planejamento do dia, agenda, Google
+    Calendar, Time Blocking, notificações, automações, histórico/listagem
+    de items, confirmação/aceite pelo usuário, ranking de vários items,
+    qualquer tela nova.
 - **Pendente do usuário:** os outros 9 arquivos de imagem das telas de
   referência (para arquivar em `docs/design-references/` com os nomes já
   reservados no catálogo — a tela 01 já está resolvida). Confirmar também

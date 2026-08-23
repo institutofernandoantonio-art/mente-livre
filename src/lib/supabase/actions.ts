@@ -54,21 +54,31 @@ export type OrganizedItem = {
   title: string;
   description: string | null;
   priority: string | null;
+  priorityReason: string | null;
 };
 
 const ITEM_CATEGORIES = new Set(['tarefa', 'compromisso', 'ideia', 'lembrete', 'outro']);
 const ITEM_PRIORITIES = new Set(['alta', 'média', 'baixa']);
 const ITEM_TITLE_MAX_LENGTH = 200;
 const ITEM_DESCRIPTION_MAX_LENGTH = 500;
+const PRIORITY_REASON_MAX_LENGTH = 160;
 
 const ORGANIZE_SYSTEM_PROMPT = `Você categoriza um pensamento curto de um usuário em uma sugestão estruturada para um app de produtividade. Responda SOMENTE com um objeto JSON válido, sem nenhum texto antes ou depois, exatamente neste formato:
-{"category":"tarefa|compromisso|ideia|lembrete|outro","title":"...","description":"..." ou null,"priority":"alta|média|baixa" ou null}
+{"category":"tarefa|compromisso|ideia|lembrete|outro","title":"...","description":"..." ou null,"priority":"alta|média|baixa" ou null,"priority_reason":"..." ou null}
 
 Regras:
 - "category": escolha a que melhor descreve o pensamento, só entre os valores listados.
 - "title": título curto e claro, poucas palavras.
 - "description": só preencha se agregar algo além do título; senão, null.
-- "priority": só sugira se fizer sentido para esse tipo de pensamento; senão, null.`;
+
+Para "priority" e "priority_reason", use como referência interna a lógica da Matriz de Eisenhower (importância x urgência), mas NUNCA devolva quadrante — só o nível de prioridade. Considere: prazo explícito, proximidade temporal, impacto/consequência, compromisso com terceiros, importância declarada pelo usuário, e se dá pra adiar sem problema.
+- "alta": há base concreta no texto para atenção prioritária, especialmente prazo próximo, compromisso ou consequência relevante.
+- "média": é importante ou merece planejamento, mas não há urgência suficiente para ser "alta".
+- "baixa": pode esperar, sem consequência evidente a partir do texto.
+- null: não há contexto suficiente no texto para recomendar prioridade com segurança.
+- "priority_reason": frase curta (até 160 caracteres) explicando SOMENTE o motivo da prioridade escolhida, rastreável ao texto do usuário; null se "priority" for null.
+
+Nunca invente prazo, urgência, consequência, compromisso com terceiros ou importância que não estejam no texto ou não sejam claramente dedutíveis dele. Não transforme qualquer pensamento em prioridade alta por padrão.`;
 
 export async function login(_prevState: LoginState, formData: FormData): Promise<LoginState> {
   const email = formData.get('email');
@@ -380,7 +390,8 @@ function parseOrganizedItem(text: string): OrganizedItem | null {
     return null;
   }
 
-  const { category, title, description, priority } = parsed as Record<string, unknown>;
+  const { category, title, description, priority, priority_reason: priorityReasonRaw } =
+    parsed as Record<string, unknown>;
 
   if (typeof category !== 'string' || !ITEM_CATEGORIES.has(category)) {
     return null;
@@ -408,11 +419,27 @@ function parseOrganizedItem(text: string): OrganizedItem | null {
     }
   }
 
+  let priorityReason: string | null = null;
+  if (priorityReasonRaw !== null && priorityReasonRaw !== undefined) {
+    if (typeof priorityReasonRaw !== 'string') {
+      return null;
+    }
+    const trimmed = priorityReasonRaw.trim();
+    if (trimmed.length === 0) {
+      priorityReason = null;
+    } else if (Array.from(trimmed).length > PRIORITY_REASON_MAX_LENGTH) {
+      return null;
+    } else {
+      priorityReason = trimmed;
+    }
+  }
+
   return {
     category,
     title,
     description: typeof description === 'string' ? description : null,
     priority: typeof priority === 'string' ? priority : null,
+    priorityReason,
   };
 }
 

@@ -625,6 +625,56 @@ nova.
 
 ---
 
+### Priorização mínima reaproveitando a chamada da Fase 4 (Fase 5)
+
+**Decisão:** completar o fluxo FALAR → ORGANIZAR → PRIORIZAR sem nenhuma
+migration, tabela, coluna, rota ou Server Action nova, e sem uma segunda
+chamada à Anthropic — a mesma chamada de `callAnthropicToOrganize()` (Fase
+4) passou a devolver também a recomendação de prioridade com motivo.
+**`items.priority` continua sendo o único dado de prioridade persistido**
+(`alta`/`média`/`baixa`/`null`, sem mudança de valores possíveis). A lógica
+da Matriz de Eisenhower (importância × urgência) foi incorporada só como
+critério **interno** do `ORGANIZE_SYSTEM_PROMPT` — a IA nunca devolve
+quadrante, só o nível de prioridade já existente. Critério explícito dado à
+IA: `alta` exige base concreta no texto (prazo próximo, compromisso,
+consequência relevante); `média` é importante/merece planejamento sem
+urgência suficiente para `alta`; `baixa` pode esperar sem consequência
+evidente; `null` quando não há contexto suficiente para recomendar com
+segurança. Instrução explícita para nunca inventar prazo, urgência,
+consequência, compromisso com terceiros ou importância não declarada, e
+para não usar `alta` por padrão.
+**`priority_reason`, novo campo só de resposta, nunca persistido:** a
+mesma resposta JSON da Anthropic passou a incluir `priority_reason` (frase
+curta, até 160 code points, explicando só o motivo da prioridade,
+rastreável ao texto do usuário; `null` se `priority` for `null`).
+`parseOrganizedItem()` valida esse campo com o mesmo padrão defensivo já
+usado nos demais (tipo errado ou acima do limite descarta a sugestão
+inteira; string vazia após `trim()` vira `null`). `priorityReason` viaja
+só entre Anthropic → parser → retorno de `organizeBrainDump()` →
+interface — o `insert` em `items` continua exatamente como na Fase 4, sem
+nenhuma coluna nova.
+**Rótulos de apresentação (`src/app/entrada/BrainDumpForm.tsx`):**
+conversão só de exibição, sem tocar no banco — `alta` → "Fazer primeiro",
+`média` → "Planejar", `baixa` → "Pode esperar", `null` (ou qualquer valor
+fora do esperado) → "Precisa de mais contexto". Substituiu o texto técnico
+"Prioridade sugerida: alta" por um rótulo direto, mais o motivo quando
+existe. Mesma `/entrada`, mesmo card já existente, sem tela nova.
+**IA continua só recomendando:** `needs_confirmation` continua sempre
+`true`, sem nenhum botão de confirmar/ajustar/aceitar nesta fase — decisão
+e execução ficam para fases futuras.
+**Testado manualmente, 4 casos reais, todos aprovados pelo usuário:**
+prazo explícito ("apresentação para sexta-feira") → "Fazer primeiro" com
+motivo citando o prazo; pensamento vago ("café") → "Precisa de mais
+contexto", sem inventar prazo/urgência/consequência; importante sem
+urgência imediata ("organizar documentos este mês") → "Planejar"; sem
+prazo nem consequência ("pesquisar decoração algum dia") → "Pode esperar".
+**Fora do escopo:** planejamento do dia, agenda, Google Calendar, Time
+Blocking, notificações, automações, histórico/listagem de items,
+confirmação/aceite pelo usuário, ranking de vários items simultâneos,
+qualquer tela nova.
+
+---
+
 ### Adoção da Supabase CLI para migrations
 
 **Decisão:** `supabase` como devDependency local (`npm install --save-dev
