@@ -3,6 +3,7 @@ import { Card } from "@/components/ui/Card";
 import { buttonVariants } from "@/components/ui/Button";
 import { createClient } from "@/lib/supabase/server";
 import { logout } from "@/lib/supabase/actions";
+import { connectGoogleCalendar } from "@/lib/google/calendar";
 import { BrainDumpForm } from "./BrainDumpForm";
 
 /**
@@ -10,10 +11,15 @@ import { BrainDumpForm } from "./BrainDumpForm";
  * destino pós-login da Fase 2 (ver docs/DECISIONS.md): mostra a sessão
  * ativa e o logout.
  */
-export default async function EntradaPage() {
+export default async function EntradaPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ calendar?: string }>;
+}) {
   const supabase = await createClient();
   const { data } = await supabase.auth.getClaims();
   const email = typeof data?.claims.email === "string" ? data.claims.email : undefined;
+  const { calendar } = await searchParams;
 
   return (
     <main className="flex flex-1 flex-col items-center justify-center px-6 py-16">
@@ -21,6 +27,17 @@ export default async function EntradaPage() {
         {email && (
           <p className="mb-6 text-center text-sm text-ink-soft">
             Sessão ativa: <span className="font-medium text-ink">{email}</span>
+          </p>
+        )}
+
+        {calendar === "connected" && (
+          <p role="status" className="mb-4 text-center text-sm text-ink-soft">
+            Google Calendar conectado.
+          </p>
+        )}
+        {calendar === "error" && (
+          <p role="alert" className="mb-4 text-center text-sm text-alert-500">
+            Não foi possível conectar ao Google Calendar. Tente novamente.
           </p>
         )}
 
@@ -36,6 +53,13 @@ export default async function EntradaPage() {
             <Link href="/mfa/configurar" className={buttonVariants("ghost")}>
               Configurar autenticação em duas etapas
             </Link>
+          )}
+          {email && (
+            <form action={connectGoogleCalendar}>
+              <button type="submit" className={buttonVariants("ghost")}>
+                Conectar Google Calendar
+              </button>
+            </form>
           )}
           {email && (
             <form action={logout}>
