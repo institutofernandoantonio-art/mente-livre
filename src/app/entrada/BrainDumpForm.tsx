@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useState, useEffect } from 'react';
+import { useActionState, useState, useEffect, useRef } from 'react';
 import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
 import {
@@ -9,6 +9,10 @@ import {
   type CreateBrainDumpState,
   type OrganizedItem,
 } from '@/lib/supabase/actions';
+import {
+  getCalendarPlanningContext,
+  type CalendarPlanningContext,
+} from '@/lib/google/planning-context';
 
 const initialState: CreateBrainDumpState = { error: null, success: false, brainDumpId: null };
 
@@ -26,11 +30,42 @@ function priorityLabel(priority: string | null): string {
   return (priority && PRIORITY_LABELS[priority]) || 'Precisa de mais contexto';
 }
 
+// Redação factual, nunca "você está livre hoje" (só parte do dia pode
+// estar livre) — janelas de 1 dia (hoje/amanhã) só mostram a contagem,
+// sem mencionar "dia livre"; só a janela de 7 dias usa esse texto.
+function describeCalendarContext(context: CalendarPlanningContext): string | null {
+  if (!context) {
+    return null;
+  }
+
+  if (context.windowDays === 1) {
+    if (context.busyBlockCount === 0) {
+      return 'Sem compromissos ocupados nessa janela.';
+    }
+    const plural = context.busyBlockCount === 1 ? '' : 's';
+    return `${context.busyBlockCount} compromisso${plural} ocupado${plural} nessa janela.`;
+  }
+
+  if (context.busyBlockCount === 0) {
+    return `Sem compromissos marcados nos próximos ${context.windowDays} dias.`;
+  }
+
+  return `${context.busyBlockCount} compromisso(s) nos próximos ${context.windowDays} dias${
+    context.hasOpenDay ? ' — ainda há pelo menos um dia livre.' : '.'
+  }`;
+}
+
 export function BrainDumpForm() {
   const [state, formAction, pending] = useActionState(createBrainDump, initialState);
   const [rawText, setRawText] = useState('');
   const [organizeStatus, setOrganizeStatus] = useState<OrganizeStatus>('idle');
   const [organizedItem, setOrganizedItem] = useState<OrganizedItem | null>(null);
+  const [calendarContext, setCalendarContext] = useState<CalendarPlanningContext>(null);
+  // Guarda contra disparo duplicado (ex. Strict Mode): guarda para qual
+  // brainDumpId a consulta de agenda já foi disparada, não só "se já
+  // disparou alguma vez" — permite disparar de novo para um novo
+  // pensamento, mas nunca duas vezes para o mesmo.
+  const calendarFetchedForRef = useRef<string | null>(null);
 
   // O React reseta campos NÃO-controlados de um <form action={...}> sempre
   // que a action termina sem lançar exceção — o que inclui qualquer retorno
@@ -47,6 +82,7 @@ export function BrainDumpForm() {
       if (state.brainDumpId) {
         setOrganizeStatus('organizing');
         setOrganizedItem(null);
+        setCalendarContext(null);
       }
     }
   }
@@ -74,6 +110,36 @@ export function BrainDumpForm() {
       cancelled = true;
     };
   }, [state.success, state.brainDumpId]);
+
+  // Contexto factual de agenda — etapa isolada e opcional, sem IA, que só
+  // dispara depois que o resultado base (organizedItem) já está visível.
+  // Falha/ausência de Calendar nunca aparece como erro: calendarContext
+  // simplesmente continua null e nada extra é exibido.
+  useEffect(() => {
+    if (!organizedItem || !state.brainDumpId) {
+      return;
+    }
+
+    if (calendarFetchedForRef.current === state.brainDumpId) {
+      return;
+    }
+    calendarFetchedForRef.current = state.brainDumpId;
+
+    let cancelled = false;
+    const brainDumpId = state.brainDumpId;
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+
+    getCalendarPlanningContext(brainDumpId, timezone).then((context) => {
+      if (cancelled) return;
+      setCalendarContext(context);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [organizedItem, state.brainDumpId]);
+
+  const calendarContextText = describeCalendarContext(calendarContext);
 
   return (
     <form action={formAction} className="flex w-full flex-col gap-4">
@@ -118,6 +184,14 @@ export function BrainDumpForm() {
                 Plano sugerido
               </p>
               <p className="mt-1 text-ink-soft">{organizedItem.planSuggestion}</p>
+            </>
+          )}
+          {calendarContextText && (
+            <>
+              <p className="mt-3 text-sm font-semibold tracking-wide text-ink uppercase">
+                Agenda
+              </p>
+              <p className="mt-1 text-ink-soft">{calendarContextText}</p>
             </>
           )}
         </div>
