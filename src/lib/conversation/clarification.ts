@@ -85,6 +85,23 @@ function isEventReferenceResolved(ref: EventReference): boolean {
   return ref.resolvedId !== null;
 }
 
+// Evento-ÂNCORA temporal ("antes da reunião") é diferente do evento-ALVO
+// da ação (o `eventReference` de nível superior de cancel_event/
+// reschedule_event, já checado via isEventReferenceResolved sobre esse
+// campo, não sobre este). RECONHECER a relação ('before'/'after') não é
+// o mesmo que RESOLVER a que evento ela se refere: enquanto
+// `eventReference.resolvedId` desse anchor for null, não sabemos "antes
+// de qual reunião", e a intenção não está pronta para seguir — mesmo que
+// o resto da janela pareça reconhecido. Retorna false para qualquer outro
+// kind: só `relative_to_event` carrega uma referência de evento a checar
+// aqui; nenhum outro kind é afetado por este helper.
+function isEventReferenceMissingFromWindow(window: TemporalWindow): boolean {
+  return (
+    window.resolved.kind === 'relative_to_event' &&
+    !isEventReferenceResolved(window.resolved.eventReference)
+  );
+}
+
 // TaskRef (algo descrito agora) é sempre resolvido por definição —
 // EventReference só é resolvido se já tiver um id correspondente.
 function subjectMissingField(subject: IntentSubject): MissingField | null {
@@ -131,6 +148,9 @@ function collectMissingFields(intent: StructuredIntent): MissingField[] {
       if (isTemporalWindowUnresolved(intent.temporalWindow)) {
         fields.push('temporal_window');
       }
+      if (isEventReferenceMissingFromWindow(intent.temporalWindow)) {
+        fields.push('event_reference');
+      }
       return fields;
     }
 
@@ -145,6 +165,13 @@ function collectMissingFields(intent: StructuredIntent): MissingField[] {
         // aqui (ver isTimeMissingFromWindow).
         fields.push('time');
       }
+      if (isEventReferenceMissingFromWindow(window)) {
+        // Independente do if/else-if acima: reconhecer "antes da
+        // reunião" (relative_to_event) não basta se ainda não sabemos
+        // qual reunião — a intenção não pode ficar ready só porque a
+        // relação temporal foi entendida.
+        fields.push('event_reference');
+      }
       // Checado independentemente da janela: mesmo sabendo o dia mas não
       // a hora, já vale perguntar a duração junto, em vez de dois turnos
       // separados — resultado mais completo para o usuário/voz de uma vez.
@@ -158,10 +185,18 @@ function collectMissingFields(intent: StructuredIntent): MissingField[] {
       return fields;
     }
 
-    case 'query_calendar':
+    case 'query_calendar': {
+      const fields: MissingField[] = [];
       // Consultar disponibilidade não exige horário específico — um dia,
       // uma semana ou uma busca por vaga livre já bastam.
-      return isTemporalWindowUnresolved(intent.temporalWindow) ? ['temporal_window'] : [];
+      if (isTemporalWindowUnresolved(intent.temporalWindow)) {
+        fields.push('temporal_window');
+      }
+      if (isEventReferenceMissingFromWindow(intent.temporalWindow)) {
+        fields.push('event_reference');
+      }
+      return fields;
+    }
 
     case 'suggest_time': {
       const fields: MissingField[] = [];
@@ -171,6 +206,9 @@ function collectMissingFields(intent: StructuredIntent): MissingField[] {
       }
       if (isTemporalWindowUnresolved(intent.temporalWindow)) {
         fields.push('temporal_window');
+      }
+      if (isEventReferenceMissingFromWindow(intent.temporalWindow)) {
+        fields.push('event_reference');
       }
       // Sugerir horário sem saber a duração não permite achar um slot que
       // realmente comporte a tarefa.
@@ -191,6 +229,14 @@ function collectMissingFields(intent: StructuredIntent): MissingField[] {
       } else if (isTimeMissingFromWindow(window)) {
         fields.push('time');
       }
+      if (isEventReferenceMissingFromWindow(window)) {
+        // Alvo (eventReference acima) e âncora (dentro da janela) são
+        // referências independentes — ambas podem estar unresolved ao
+        // mesmo tempo. normalizeMissingFields() dedupe garante só UMA
+        // ocorrência de 'event_reference' no resultado final mesmo
+        // quando as duas checagens empurram o mesmo campo.
+        fields.push('event_reference');
+      }
       // O tipo desta variante não tem campo de duration — nada a checar.
       return fields;
     }
@@ -206,6 +252,12 @@ function collectMissingFields(intent: StructuredIntent): MissingField[] {
       }
       if (isTemporalWindowUnresolved(intent.reminderWindow)) {
         fields.push('reminder_time');
+      }
+      if (isEventReferenceMissingFromWindow(intent.reminderWindow)) {
+        // reminderWindow é um TemporalWindow como qualquer outro — pode
+        // ser 'relative_to_event' ("lembra antes da reunião") com o
+        // mesmo gap de âncora não resolvida.
+        fields.push('event_reference');
       }
       return fields;
     }
