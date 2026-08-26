@@ -59,7 +59,17 @@ export type TemporalWindow = {
   resolved:
     | { kind: 'fixed'; start: string; end: string } // início e fim conhecidos (ISO 8601)
     | { kind: 'anchored_start'; start: string } // início conhecido, duração/fim ainda não
-    | { kind: 'relative_day'; day: 'today' | 'tomorrow' }
+    | {
+        kind: 'relative_day';
+        day: 'today' | 'tomorrow';
+        // Hora civil já declarada para esse dia relativo, sem nenhuma data
+        // anexada — "amanhã" continua sem ser convertido para um instante
+        // absoluto (isso exigiria `now`+timezone, responsabilidade de uma
+        // camada futura). `{hour,minute} | null` em vez de dois campos
+        // opcionais separados: hour/minute só existem juntos ou não
+        // existem, nunca um sem o outro.
+        time: { hour: number; minute: number } | null;
+      }
     | { kind: 'next_free_slot'; minDurationMinutes: number | null }
     | { kind: 'relative_to_event'; anchor: 'before' | 'after'; eventReference: EventReference }
     | { kind: 'unresolved' };

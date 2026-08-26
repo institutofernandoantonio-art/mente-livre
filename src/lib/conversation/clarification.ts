@@ -58,12 +58,23 @@ function isTemporalWindowUnresolved(window: TemporalWindow): boolean {
   return window.resolved.kind === 'unresolved';
 }
 
-// "fixed"/"anchored_start" carregam um instante concreto; "relative_day",
-// "next_free_slot" e "relative_to_event" carregam alguma informação real,
-// mas não um horário específico — suficiente para consultar/planejar,
-// insuficiente para descrever um evento com hora marcada.
-function isTemporalWindowTimeSpecific(window: TemporalWindow): boolean {
-  return window.resolved.kind === 'fixed' || window.resolved.kind === 'anchored_start';
+// "Falta hora de relógio?" NÃO é o mesmo que "falta informação temporal
+// suficiente?" — só o segundo importa para a Clarification Policy, e só
+// há exatamente UM kind onde pedir 'time' faz sentido: "relative_day" sem
+// hora ainda resolvida (sabemos o dia, falta só a hora).
+//
+// "fixed"/"anchored_start" já carregam um instante concreto — nada a
+// pedir. "next_free_slot" ("quando eu tiver uma hora livre") e
+// "relative_to_event" ("antes da reunião") são intenções que
+// DELIBERADAMENTE não têm hora de relógio — a ausência de horário fixo é
+// o próprio significado da intenção, não uma lacuna a preencher agora;
+// horário concreto para esses dois só surge depois, via Planning/Calendar
+// resolvendo o slot ou o evento-âncora, nunca perguntando "que horário
+// você prefere?" ao usuário. "unresolved" nunca chega aqui: já é
+// interceptado antes por isTemporalWindowUnresolved (pede
+// 'temporal_window', não 'time').
+function isTimeMissingFromWindow(window: TemporalWindow): boolean {
+  return window.resolved.kind === 'relative_day' && window.resolved.time === null;
 }
 
 function isDurationKnown(duration: Duration | null): boolean {
@@ -128,9 +139,10 @@ function collectMissingFields(intent: StructuredIntent): MissingField[] {
       const window = intent.temporalWindow;
       if (isTemporalWindowUnresolved(window)) {
         fields.push('temporal_window');
-      } else if (!isTemporalWindowTimeSpecific(window)) {
-        // Sabemos algo (um dia, uma busca, um evento-âncora), mas um
-        // evento precisa de um horário concreto, não só um dia.
+      } else if (isTimeMissingFromWindow(window)) {
+        // Só pede 'time' quando sabemos o dia (relative_day) mas ainda
+        // não a hora — next_free_slot/relative_to_event nunca chegam
+        // aqui (ver isTimeMissingFromWindow).
         fields.push('time');
       }
       // Checado independentemente da janela: mesmo sabendo o dia mas não
@@ -176,7 +188,7 @@ function collectMissingFields(intent: StructuredIntent): MissingField[] {
       const window = intent.temporalWindow;
       if (isTemporalWindowUnresolved(window)) {
         fields.push('temporal_window');
-      } else if (!isTemporalWindowTimeSpecific(window)) {
+      } else if (isTimeMissingFromWindow(window)) {
         fields.push('time');
       }
       // O tipo desta variante não tem campo de duration — nada a checar.
