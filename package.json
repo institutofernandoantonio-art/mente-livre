@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:rls": "node tests/security/rls.test.mjs"
+    "test:rls": "node tests/security/rls.test.mjs",
+    "test:conversation-turn": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/conversation-turn.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

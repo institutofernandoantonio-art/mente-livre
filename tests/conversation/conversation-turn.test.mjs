@@ -1,0 +1,516 @@
+// Testes unitários de src/lib/conversation/conversation-turn.ts.
+//
+// Execução: npm run test:conversation-turn
+//
+// Sem framework (nenhum instalado no projeto) — mesmo padrão de
+// tests/security/rls.test.mjs: script node plano, record(name, pass),
+// resumo final, exit code != 0 se algo falhar.
+//
+// Importa o MÓDULO REAL (nenhuma cópia/duplicação de lógica), com a API
+// pública de produção exata (`intent, now, expiresAt` / `answer, now,
+// nextExpiresAt` — nenhum parâmetro extra). As únicas peças substituídas
+// são as quatro funções impuras que o arquivo real importa estaticamente
+// de `./runtime-state-storage`/`./orchestration` — substituídas por
+// dublês via o hook de resolução em tests/support/ (getRuntimeState/
+// replaceRuntimeState/advanceRuntimeState exigiriam Supabase real;
+// resolveClarificationTurn já é testada em sua própria subfase — aqui
+// controlamos só o que ela DEVOLVE, nunca reimplementamos sua lógica).
+//
+// `readFileSync` no final confirma, por inspeção do arquivo-fonte real,
+// que nenhum caminho do módulo referencia código de Execution.
+
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import {
+  resolveFirstConversationalTurn,
+  resolveClarificationConversationalTurn,
+} from '../../src/lib/conversation/conversation-turn.ts';
+import { handlers as storageHandlers } from '../support/fake-runtime-state-storage.mjs';
+import { handlers as orchestrationHandlers } from '../support/fake-orchestration.mjs';
+
+const results = [];
+function record(name, pass, detail) {
+  results.push({ name, pass });
+  const tag = pass ? 'PASS' : 'FAIL';
+  console.log(`[${tag}] ${name}${detail ? ' — ' + detail : ''}`);
+}
+
+async function check(name, fn) {
+  try {
+    await fn();
+    record(name, true);
+  } catch (err) {
+    record(name, false, err.message);
+  }
+}
+
+function neverCalled(name) {
+  return async (...args) => {
+    throw new Error(`${name} não deveria ter sido chamado, foi chamado com ${JSON.stringify(args)}`);
+  };
+}
+
+// Reconfigura os dublês antes de cada teste — nunca deixa handler de um
+// teste anterior vazar para o próximo.
+function setHandlers(overrides = {}) {
+  storageHandlers.getRuntimeState = overrides.getRuntimeState ?? neverCalled('getRuntimeState');
+  storageHandlers.replaceRuntimeState = overrides.replaceRuntimeState ?? neverCalled('replaceRuntimeState');
+  storageHandlers.advanceRuntimeState = overrides.advanceRuntimeState ?? neverCalled('advanceRuntimeState');
+  orchestrationHandlers.resolveClarificationTurn =
+    overrides.resolveClarificationTurn ?? neverCalled('resolveClarificationTurn');
+}
+
+// --- Fixtures reais (nenhum dado pessoal) -----------------------------
+
+const NOW = 1_000_000;
+const EXPIRES_AT = NOW + 5 * 60_000;
+const NEXT_EXPIRES_AT = NOW + 10 * 60_000;
+
+const needsClarificationIntent = {
+  missingFields: [],
+  confidence: 0.9,
+  intentType: 'cancel_event',
+  eventReference: { kind: 'existing_reference', raw: 'a reunião de amanhã', resolvedId: null },
+  calendarAction: 'cancel',
+};
+
+const readyProposableIntent = {
+  missingFields: [],
+  confidence: 0.9,
+  intentType: 'create_task',
+  task: { kind: 'new_task', title: 'Enviar relatório', description: null },
+  temporalWindow: null,
+  duration: { source: 'stated', value: { minutes: 30 }, confidence: 1 },
+  deadline: null,
+};
+
+const readyUnsupportedIntent = {
+  missingFields: [],
+  confidence: 0.9,
+  intentType: 'conversational_question',
+  question: 'Como funciona isso?',
+};
+
+const readyNotMaterializableIntent = {
+  missingFields: [],
+  confidence: 0.9,
+  intentType: 'create_task',
+  task: { kind: 'new_task', title: 'Organizar mudança', description: null },
+  temporalWindow: { expression: 'algum dia', resolved: { kind: 'unresolved' } },
+  duration: null,
+  deadline: null,
+};
+
+function fixtureConversationState(currentQuestion) {
+  return {
+    status: 'awaiting_clarification',
+    pendingIntent: needsClarificationIntent,
+    currentQuestion,
+    createdAt: NOW,
+    expiresAt: EXPIRES_AT,
+  };
+}
+
+function fixtureProposalState() {
+  return {
+    status: 'awaiting_confirmation',
+    proposalId: 'fixture-proposal-id',
+    action: {
+      actionType: 'create_local_task',
+      task: { title: 'x', description: null, deadline: null, duration: null },
+    },
+    createdAt: NOW,
+    expiresAt: EXPIRES_AT,
+  };
+}
+
+function foundClarification(stateId, orchestrationResult) {
+  setHandlers({
+    getRuntimeState: async () => ({
+      status: 'found',
+      value: { stateId, kind: 'clarification', state: fixtureConversationState({ field: 'duration', text: 'x' }) },
+    }),
+    resolveClarificationTurn: async () => orchestrationResult,
+  });
+}
+
+// ============================================================================
+// PRIMEIRO TURNO
+// ============================================================================
+
+await check('1. primeiro turno -> clarification -> replace saved', async () => {
+  let replaceCalls = 0;
+  let capturedNext = null;
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    replaceRuntimeState: async (next) => {
+      replaceCalls++;
+      capturedNext = next;
+      return { status: 'saved', value: { stateId: 'new-id', kind: next.kind, state: next.state } };
+    },
+  });
+
+  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRES_AT);
+
+  assert.equal(result.status, 'clarification_saved');
+  assert.equal(replaceCalls, 1);
+  assert.equal(capturedNext.kind, 'clarification');
+  assert.equal(capturedNext.state.status, 'awaiting_clarification');
+});
+
+await check('2. primeiro turno ready -> proposed -> proposal replace saved', async () => {
+  let replaceCalls = 0;
+  let capturedNext = null;
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    replaceRuntimeState: async (next) => {
+      replaceCalls++;
+      capturedNext = next;
+      return { status: 'saved', value: { stateId: 'new-id', kind: next.kind, state: next.state } };
+    },
+  });
+
+  const result = await resolveFirstConversationalTurn(readyProposableIntent, NOW, EXPIRES_AT);
+
+  assert.equal(result.status, 'proposal_saved');
+  assert.equal(replaceCalls, 1);
+  assert.equal(capturedNext.kind, 'proposal');
+  assert.equal(capturedNext.state.status, 'awaiting_confirmation');
+  assert.equal(typeof capturedNext.state.proposalId, 'string');
+  assert.ok(capturedNext.state.proposalId.length > 0);
+});
+
+await check('3. primeiro turno builder unsupported -> sem escrita', async () => {
+  setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
+
+  const result = await resolveFirstConversationalTurn(readyUnsupportedIntent, NOW, EXPIRES_AT);
+
+  assert.equal(result.status, 'unsupported');
+});
+
+await check('4. primeiro turno builder not_materializable -> sem escrita', async () => {
+  setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
+
+  const result = await resolveFirstConversationalTurn(readyNotMaterializableIntent, NOW, EXPIRES_AT);
+
+  assert.equal(result.status, 'not_materializable');
+});
+
+await check('1b. primeiro turno com state ativo -> already_active, sem escrita', async () => {
+  setHandlers({
+    getRuntimeState: async () => ({
+      status: 'found',
+      value: {
+        stateId: 'existing-id',
+        kind: 'clarification',
+        state: fixtureConversationState({ field: 'duration', text: 'x' }),
+      },
+    }),
+  });
+
+  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRES_AT);
+
+  assert.equal(result.status, 'already_active');
+});
+
+await check('1c. primeiro turno com getRuntimeState error -> erro técnico propagado', async () => {
+  setHandlers({ getRuntimeState: async () => ({ status: 'error' }) });
+
+  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRES_AT);
+
+  assert.equal(result.status, 'error');
+});
+
+// ============================================================================
+// TURNO DE CLARIFICAÇÃO — runtime state ausente/expirado/erro
+// ============================================================================
+
+await check('14. runtime not_found -> no_active_runtime_state, sem chamar orchestration', async () => {
+  setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
+
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'no_active_runtime_state');
+});
+
+await check('15. runtime expired -> runtime_expired, sem chamar orchestration', async () => {
+  setHandlers({ getRuntimeState: async () => ({ status: 'expired' }) });
+
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'runtime_expired');
+});
+
+await check('16. runtime error -> erro técnico, sem chamar orchestration', async () => {
+  setHandlers({ getRuntimeState: async () => ({ status: 'error' }) });
+
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'error');
+});
+
+// ============================================================================
+// TURNO DE CLARIFICAÇÃO — proposal pendente
+// ============================================================================
+
+await check('17. proposal found -> NÃO chama resolveClarificationTurn, sem escrita', async () => {
+  setHandlers({
+    getRuntimeState: async () => ({
+      status: 'found',
+      value: { stateId: 'proposal-id-1', kind: 'proposal', state: fixtureProposalState() },
+    }),
+  });
+
+  const result = await resolveClarificationConversationalTurn('sim', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'proposal_pending');
+});
+
+// ============================================================================
+// TURNO DE CLARIFICAÇÃO — dispatch de resolveClarificationTurn (found + clarification)
+// ============================================================================
+
+await check('9. ambiguous -> nenhuma escrita', async () => {
+  foundClarification('state-A', { status: 'ambiguous', state: fixtureConversationState({ field: 'time', text: 'x' }) });
+
+  const result = await resolveClarificationConversationalTurn('às quatro', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'ambiguous');
+});
+
+await check('10. unrecognized -> nenhuma escrita', async () => {
+  foundClarification('state-A', {
+    status: 'unrecognized',
+    state: fixtureConversationState({ field: 'duration', text: 'x' }),
+  });
+
+  const result = await resolveClarificationConversationalTurn('não sei', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'unrecognized');
+});
+
+await check(
+  '11. reference not_found (orchestration) -> reference_not_found, nunca confundido com storage not_found',
+  async () => {
+    foundClarification('state-A', {
+      status: 'not_found',
+      state: fixtureConversationState({ field: 'event_reference', text: 'x' }),
+    });
+
+    const result = await resolveClarificationConversationalTurn('a reunião de terça', NOW, NEXT_EXPIRES_AT);
+
+    assert.equal(result.status, 'reference_not_found');
+    assert.notEqual(result.status, 'no_active_runtime_state');
+  },
+);
+
+await check('12. orchestration unsupported -> nenhuma escrita', async () => {
+  foundClarification('state-A', {
+    status: 'unsupported',
+    state: fixtureConversationState({ field: 'participant', text: 'x' }),
+  });
+
+  const result = await resolveClarificationConversationalTurn('João', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'unsupported');
+});
+
+await check('13. orchestration error -> erro técnico', async () => {
+  foundClarification('state-A', { status: 'error', state: fixtureConversationState({ field: 'event_reference', text: 'x' }) });
+
+  const result = await resolveClarificationConversationalTurn('a reunião de terça', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'error');
+});
+
+// ============================================================================
+// TURNO DE CLARIFICAÇÃO — awaiting_clarification (advance)
+// ============================================================================
+
+await check('5 e 20. awaiting_clarification -> advance com expectedStateId exato do GET', async () => {
+  const nextConversationState = fixtureConversationState({ field: 'time', text: 'y' });
+  let advanceCalls = 0;
+  let capturedExpectedStateId = null;
+  let capturedNext = null;
+
+  foundClarification('distinctive-state-id-123', {
+    status: 'awaiting_clarification',
+    state: nextConversationState,
+  });
+  storageHandlers.advanceRuntimeState = async (expectedStateId, next) => {
+    advanceCalls++;
+    capturedExpectedStateId = expectedStateId;
+    capturedNext = next;
+    return { status: 'advanced', value: { stateId: 'new-state-id', kind: next.kind, state: next.state } };
+  };
+
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'clarification_saved');
+  assert.equal(advanceCalls, 1);
+  assert.equal(capturedExpectedStateId, 'distinctive-state-id-123');
+  assert.equal(capturedNext.kind, 'clarification');
+  assert.equal(capturedNext.state, nextConversationState);
+});
+
+// ============================================================================
+// TURNO DE CLARIFICAÇÃO — ready (proposed / unsupported / not_materializable)
+// ============================================================================
+
+await check('6 e 16. ready -> proposed -> advance com troca clarification -> proposal', async () => {
+  let advanceCalls = 0;
+  let capturedNext = null;
+  let capturedExpectedStateId = null;
+
+  foundClarification('distinctive-state-id-456', { status: 'ready', intent: readyProposableIntent });
+  storageHandlers.advanceRuntimeState = async (expectedStateId, next) => {
+    advanceCalls++;
+    capturedExpectedStateId = expectedStateId;
+    capturedNext = next;
+    return { status: 'advanced', value: { stateId: 'new-state-id-789', kind: next.kind, state: next.state } };
+  };
+
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'proposal_saved');
+  assert.equal(advanceCalls, 1);
+  assert.equal(capturedExpectedStateId, 'distinctive-state-id-456');
+  // Troca de kind clarification -> proposal no MESMO advance:
+  assert.equal(capturedNext.kind, 'proposal');
+  assert.equal(capturedNext.state.status, 'awaiting_confirmation');
+});
+
+await check('21. proposalId gerado é diferente do stateId antigo e do novo', async () => {
+  let capturedNext = null;
+  foundClarification('old-state-id-111', { status: 'ready', intent: readyProposableIntent });
+  storageHandlers.advanceRuntimeState = async (expectedStateId, next) => {
+    capturedNext = next;
+    return { status: 'advanced', value: { stateId: 'new-state-id-222', kind: next.kind, state: next.state } };
+  };
+
+  await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+
+  const proposalId = capturedNext.state.proposalId;
+  assert.equal(typeof proposalId, 'string');
+  assert.ok(proposalId.length > 0);
+  assert.notEqual(proposalId, 'old-state-id-111');
+  assert.notEqual(proposalId, 'new-state-id-222');
+});
+
+await check('7. ready -> builder unsupported -> nenhuma escrita', async () => {
+  foundClarification('state-A', { status: 'ready', intent: readyUnsupportedIntent });
+
+  const result = await resolveClarificationConversationalTurn('qualquer coisa', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'unsupported');
+});
+
+await check('8. ready -> builder not_materializable -> nenhuma escrita', async () => {
+  foundClarification('state-A', { status: 'ready', intent: readyNotMaterializableIntent });
+
+  const result = await resolveClarificationConversationalTurn('1 hora', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'not_materializable');
+});
+
+// ============================================================================
+// CONFLICT / ERROR NO ADVANCE
+// ============================================================================
+
+await check('18. advance conflict -> nenhuma segunda escrita, nenhum replace', async () => {
+  let advanceCalls = 0;
+  foundClarification('state-A', {
+    status: 'awaiting_clarification',
+    state: fixtureConversationState({ field: 'duration', text: 'x' }),
+  });
+  storageHandlers.advanceRuntimeState = async () => {
+    advanceCalls++;
+    return { status: 'conflict' };
+  };
+  // replaceRuntimeState permanece "unconfigured" (lança) — prova que
+  // nenhum fallback para replace acontece após conflict.
+
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'conflict');
+  assert.equal(advanceCalls, 1);
+});
+
+await check('19. advance error -> erro técnico', async () => {
+  foundClarification('state-A', {
+    status: 'awaiting_clarification',
+    state: fixtureConversationState({ field: 'duration', text: 'x' }),
+  });
+  storageHandlers.advanceRuntimeState = async () => ({ status: 'error' });
+
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(result.status, 'error');
+});
+
+await check('22. duas evoluções concorrentes simuladas: uma advanced, outra conflict', async () => {
+  let callCount = 0;
+  foundClarification('state-A', {
+    status: 'awaiting_clarification',
+    state: fixtureConversationState({ field: 'duration', text: 'x' }),
+  });
+  storageHandlers.advanceRuntimeState = async (expectedStateId, next) => {
+    callCount++;
+    if (callCount === 1) {
+      return { status: 'advanced', value: { stateId: 'state-B', kind: next.kind, state: next.state } };
+    }
+    return { status: 'conflict' };
+  };
+
+  const first = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+  const second = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+
+  assert.equal(first.status, 'clarification_saved');
+  assert.equal(second.status, 'conflict');
+});
+
+// ============================================================================
+// 23. NENHUM CAMINHO EXECUTA AÇÃO REAL — verificação estática do arquivo-fonte
+// ============================================================================
+
+await check('23. arquivo-fonte não referencia nenhum código de Execution/UI/rota', () => {
+  const sourcePath = fileURLToPath(new URL('../../src/lib/conversation/conversation-turn.ts', import.meta.url));
+  const source = readFileSync(sourcePath, 'utf8');
+  // Remove comentários de linha antes de checar — o cabeçalho do módulo
+  // documenta deliberadamente essas ausências em prosa (ex.: "nenhuma
+  // chamada de Calendar"), o que não deve contar como código real.
+  const codeOnly = source
+    .split('\n')
+    .map((line) => line.replace(/\/\/.*$/, ''))
+    .join('\n');
+
+  const forbidden = [
+    '.insert(',
+    '.update(',
+    '.delete(',
+    'Calendar',
+    'Anthropic',
+    'OpenAI',
+    'NextResponse',
+    'createClient(',
+    'service_role',
+    'createAdminClient',
+    'deps',
+    'Deps',
+    '__test',
+    'mock',
+  ];
+  for (const token of forbidden) {
+    assert.ok(!codeOnly.includes(token), `token proibido encontrado no código real do arquivo-fonte: ${token}`);
+  }
+});
+
+// --- Resumo -------------------------------------------------------------
+
+const passed = results.filter((r) => r.pass).length;
+const failed = results.length - passed;
+console.log(`\n${passed} passaram, ${failed} falharam (${results.length} total)`);
+if (failed > 0) {
+  process.exit(1);
+}
