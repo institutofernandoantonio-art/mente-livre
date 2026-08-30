@@ -16,7 +16,8 @@
     "test:intent-extraction": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/intent-extraction.test.mjs",
     "test:conversation-ttl": "node --experimental-strip-types tests/conversation/conversation-ttl.test.mjs",
     "test:conversation-entry": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/conversation-entry.test.mjs",
-    "test:conversation-actions": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/actions.test.mjs"
+    "test:conversation-actions": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/actions.test.mjs",
+    "test:conversation-presentation": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/presentation.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
