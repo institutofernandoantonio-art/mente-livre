@@ -6,7 +6,12 @@ import { buildProposedAction } from './proposed-action';
 import type { ProposedAction } from './proposed-action';
 import { createProposalState, type ProposalState } from './proposal-state';
 import { resolveClarificationTurn } from './orchestration';
-import { getRuntimeState, replaceRuntimeState, advanceRuntimeState } from './runtime-state-storage';
+import {
+  getRuntimeState,
+  replaceRuntimeState,
+  advanceRuntimeState,
+  consumeRuntimeState,
+} from './runtime-state-storage';
 import type { RuntimeStateAdvanceResult } from './runtime-state-storage';
 
 // ============================================================================
@@ -67,6 +72,43 @@ import type { RuntimeStateAdvanceResult } from './runtime-state-storage';
 // replace ali jogaria fora a proteção de CAS exatamente no caminho mais
 // sensível a concorrência (uma resposta stale de outro device sobrescreveria
 // silenciosamente um state mais novo). Nenhuma exceção é implementada aqui.
+//
+// --- CONSUME: terminal sem sucessor (correção do gap de residual) ---------
+//
+// Gap real identificado e corrigido nesta subfase: três status produzidos
+// dentro de `resolveClarificationConversationalTurn` são SEMANTICAMENTE
+// TERMINAIS — nenhuma resposta futura do usuário pode transformar o MESMO
+// `pendingIntent` já persistido em algo materializável sem um novo turno
+// de NLU — mas antes desta correção eram devolvidos sem nenhuma escrita,
+// deixando a clarification row intacta (até 24h de TTL) e fazendo TODA
+// mensagem seguinte continuar sendo tratada como resposta à mesma pergunta
+// zumbi, mesmo sendo um pedido novo e completamente não relacionado:
+//
+// - orchestration `unsupported` (nenhum resolver para o `field` pendente,
+//   ou uma referência estruturalmente impossível — ver orchestration.ts);
+// - builder `unsupported` (`buildProposedAction`: `intentType` que nunca
+//   materializa, ex. `conversational_question`);
+// - builder `not_materializable` (`buildProposedAction`: `create_task` com
+//   `temporalWindow`/`deadline`/`duration` não resolvidos o suficiente).
+//
+// Os três agora chamam `consumeRuntimeState(expectedStateId, now)` — o
+// MESMO `expectedStateId` já obtido do `getRuntimeState(now)` desta mesma
+// execução, nunca um novo id gerado/aceito/relido — antes de retornar,
+// via o helper `consumeAndReturn` abaixo. Resultado externo em caso de
+// sucesso (`consumed`) permanece EXATAMENTE o status terminal original
+// (`unsupported`/`not_materializable`) — o consume nunca é revelado ao
+// chamador. `conflict` (outra requisição já avançou/consumiu a mesma row
+// entre a leitura e este ponto) e `error` seguem a mesma disciplina
+// anti-TOCTOU já usada em `translateAdvanceResult`: zero retry, zero
+// requery, zero fallback para `replace`.
+//
+// NUNCA consomem (permanecem exatamente como antes desta correção,
+// porque uma resposta futura genuinamente pode mudar o resultado):
+// `ambiguous`, `unrecognized`, `reference_not_found` (not_found da
+// Reference Resolution), `error` (falha técnica, não terminal de
+// domínio). `awaiting_clarification` e `ready` -> `proposed` continuam
+// usando exclusivamente `advanceRuntimeState` — nunca consomem, porque
+// ambos têm um PRÓXIMO estado real a persistir.
 //
 // --- stateId vs proposalId --------------------------------------------
 //
@@ -259,7 +301,8 @@ export async function resolveClarificationConversationalTurn(
       return { status: 'reference_not_found' };
 
     case 'unsupported':
-      return { status: 'unsupported' };
+      // Terminal — ver "CONSUME: terminal sem sucessor" no cabeçalho.
+      return consumeAndReturn(expectedStateId, now, { status: 'unsupported' });
 
     case 'error':
       return { status: 'error' };
@@ -281,9 +324,10 @@ export async function resolveClarificationConversationalTurn(
 
       switch (buildResult.status) {
         case 'unsupported':
-          return { status: 'unsupported' };
+          // Terminal — ver "CONSUME: terminal sem sucessor" no cabeçalho.
+          return consumeAndReturn(expectedStateId, now, { status: 'unsupported' });
         case 'not_materializable':
-          return { status: 'not_materializable' };
+          return consumeAndReturn(expectedStateId, now, { status: 'not_materializable' });
         case 'proposed': {
           const proposalId = crypto.randomUUID();
           const proposalState: ProposalState = createProposalState(
@@ -323,6 +367,31 @@ function translateAdvanceResult(
 ): ClarificationTurnPersistenceResult {
   switch (result.status) {
     case 'advanced':
+      return onSuccess;
+    case 'conflict':
+      return { status: 'conflict' };
+    case 'error':
+      return { status: 'error' };
+  }
+}
+
+// Espelha exatamente `translateAdvanceResult` acima, mas para os 3 pontos
+// terminais-sem-sucessor documentados em "CONSUME: terminal sem sucessor"
+// no cabeçalho do arquivo. `expectedStateId`/`now` são sempre os mesmos já
+// recebidos/lidos por `resolveClarificationConversationalTurn` nesta
+// execução — nunca um novo id gerado, aceito de fora, ou relido. `onSuccess`
+// é o status terminal ORIGINAL (`unsupported`/`not_materializable`), devolvido
+// só quando o consume de fato remove a row — nunca revela ao chamador que um
+// consume aconteceu. `conflict`/`error` nunca disparam retry, requery, ou
+// fallback para `replace`/`advance` — mesma disciplina anti-TOCTOU.
+async function consumeAndReturn(
+  expectedStateId: string,
+  now: number,
+  onSuccess: ClarificationTurnPersistenceResult,
+): Promise<ClarificationTurnPersistenceResult> {
+  const consumeResult = await consumeRuntimeState(expectedStateId, now);
+  switch (consumeResult.status) {
+    case 'consumed':
       return onSuccess;
     case 'conflict':
       return { status: 'conflict' };

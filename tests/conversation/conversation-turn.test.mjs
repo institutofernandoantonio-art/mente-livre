@@ -58,6 +58,11 @@ function setHandlers(overrides = {}) {
   storageHandlers.getRuntimeState = overrides.getRuntimeState ?? neverCalled('getRuntimeState');
   storageHandlers.replaceRuntimeState = overrides.replaceRuntimeState ?? neverCalled('replaceRuntimeState');
   storageHandlers.advanceRuntimeState = overrides.advanceRuntimeState ?? neverCalled('advanceRuntimeState');
+  // Default "neverCalled": qualquer teste que NÃO configure consumeRuntimeState
+  // explicitamente está, por construção, provando "zero consume" para aquele
+  // cenário — se a produção chamasse consume inesperadamente, o teste falharia
+  // alto e claro em vez de passar por acaso.
+  storageHandlers.consumeRuntimeState = overrides.consumeRuntimeState ?? neverCalled('consumeRuntimeState');
   orchestrationHandlers.resolveClarificationTurn =
     overrides.resolveClarificationTurn ?? neverCalled('resolveClarificationTurn');
 }
@@ -333,7 +338,7 @@ await check('16. runtime error -> erro técnico, sem chamar orchestration', asyn
 // TURNO DE CLARIFICAÇÃO — proposal pendente
 // ============================================================================
 
-await check('17. proposal found -> NÃO chama resolveClarificationTurn, sem escrita', async () => {
+await check('17. proposal found -> NÃO chama resolveClarificationTurn, sem escrita, zero consume', async () => {
   setHandlers({
     getRuntimeState: async () => ({
       status: 'found',
@@ -350,15 +355,17 @@ await check('17. proposal found -> NÃO chama resolveClarificationTurn, sem escr
 // TURNO DE CLARIFICAÇÃO — dispatch de resolveClarificationTurn (found + clarification)
 // ============================================================================
 
-await check('9. ambiguous -> nenhuma escrita', async () => {
+await check('9. ambiguous -> nenhuma escrita, zero consume (não terminal: resposta futura pode resolver)', async () => {
   foundClarification('state-A', { status: 'ambiguous', state: fixtureConversationState({ field: 'time', text: 'x' }) });
+  // consumeRuntimeState permanece "neverCalled" (default de setHandlers) —
+  // se a produção chamasse consume aqui, este teste falharia alto e claro.
 
   const result = await resolveClarificationConversationalTurn('às quatro', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'ambiguous');
 });
 
-await check('10. unrecognized -> nenhuma escrita', async () => {
+await check('10. unrecognized -> nenhuma escrita, zero consume (não terminal)', async () => {
   foundClarification('state-A', {
     status: 'unrecognized',
     state: fixtureConversationState({ field: 'duration', text: 'x' }),
@@ -370,7 +377,7 @@ await check('10. unrecognized -> nenhuma escrita', async () => {
 });
 
 await check(
-  '11. reference not_found (orchestration) -> reference_not_found, nunca confundido com storage not_found',
+  '11. reference not_found (orchestration) -> reference_not_found, zero consume (não terminal), nunca confundido com storage not_found',
   async () => {
     foundClarification('state-A', {
       status: 'not_found',
@@ -384,18 +391,50 @@ await check(
   },
 );
 
-await check('12. orchestration unsupported -> nenhuma escrita', async () => {
+await check(
+  '12. orchestration unsupported -> consome o runtime com o EXACT stateId/now, status original preservado',
+  async () => {
+    let consumeCalls = 0;
+    let capturedStateId = null;
+    let capturedNow = null;
+    foundClarification('distinctive-terminal-state-id-3', {
+      status: 'unsupported',
+      state: fixtureConversationState({ field: 'participant', text: 'x' }),
+    });
+    storageHandlers.consumeRuntimeState = async (expectedStateId, now) => {
+      consumeCalls++;
+      capturedStateId = expectedStateId;
+      capturedNow = now;
+      return { status: 'consumed', value: { stateId: expectedStateId, kind: 'clarification', state: {} } };
+    };
+
+    const result = await resolveClarificationConversationalTurn('João', NOW, EXPIRATIONS);
+
+    assert.equal(result.status, 'unsupported');
+    assert.equal(consumeCalls, 1);
+    assert.equal(capturedStateId, 'distinctive-terminal-state-id-3');
+    assert.equal(capturedNow, NOW);
+  },
+);
+
+await check('12c. orchestration unsupported -> consume conflict -> conflict, zero segunda chamada', async () => {
+  let consumeCalls = 0;
   foundClarification('state-A', {
     status: 'unsupported',
     state: fixtureConversationState({ field: 'participant', text: 'x' }),
   });
+  storageHandlers.consumeRuntimeState = async () => {
+    consumeCalls++;
+    return { status: 'conflict' };
+  };
 
   const result = await resolveClarificationConversationalTurn('João', NOW, EXPIRATIONS);
 
-  assert.equal(result.status, 'unsupported');
+  assert.deepEqual(result, { status: 'conflict' });
+  assert.equal(consumeCalls, 1);
 });
 
-await check('13. orchestration error -> erro técnico', async () => {
+await check('13. orchestration error -> erro técnico, zero consume (falha técnica, não terminal de domínio)', async () => {
   foundClarification('state-A', { status: 'error', state: fixtureConversationState({ field: 'event_reference', text: 'x' }) });
 
   const result = await resolveClarificationConversationalTurn('a reunião de terça', NOW, EXPIRATIONS);
@@ -407,7 +446,7 @@ await check('13. orchestration error -> erro técnico', async () => {
 // TURNO DE CLARIFICAÇÃO — awaiting_clarification (advance)
 // ============================================================================
 
-await check('5 e 20. awaiting_clarification -> advance com expectedStateId exato do GET', async () => {
+await check('5 e 20. awaiting_clarification -> advance com expectedStateId exato do GET, zero consume', async () => {
   const nextConversationState = fixtureConversationState({ field: 'time', text: 'y' });
   let advanceCalls = 0;
   let capturedExpectedStateId = null;
@@ -455,7 +494,7 @@ await check('5b. awaiting_clarification: nenhum campo externo vaza no resultado'
 // TURNO DE CLARIFICAÇÃO — ready (proposed / unsupported / not_materializable)
 // ============================================================================
 
-await check('6 e 16. ready -> proposed -> advance com troca clarification -> proposal', async () => {
+await check('6 e 16. ready -> proposed -> advance com troca clarification -> proposal, zero consume', async () => {
   let advanceCalls = 0;
   let capturedNext = null;
   let capturedExpectedStateId = null;
@@ -503,20 +542,89 @@ await check('21. proposalId gerado é diferente do stateId antigo e do novo', as
   assert.notEqual(proposalId, 'new-state-id-222');
 });
 
-await check('7. ready -> builder unsupported -> nenhuma escrita', async () => {
+await check(
+  '7. ready -> builder unsupported -> consome o runtime com o EXACT stateId/now, status original preservado',
+  async () => {
+    let consumeCalls = 0;
+    let capturedStateId = null;
+    let capturedNow = null;
+    foundClarification('distinctive-terminal-state-id-1', { status: 'ready', intent: readyUnsupportedIntent });
+    storageHandlers.consumeRuntimeState = async (expectedStateId, now) => {
+      consumeCalls++;
+      capturedStateId = expectedStateId;
+      capturedNow = now;
+      return { status: 'consumed', value: { stateId: expectedStateId, kind: 'clarification', state: {} } };
+    };
+
+    const result = await resolveClarificationConversationalTurn('qualquer coisa', NOW, EXPIRATIONS);
+
+    assert.equal(result.status, 'unsupported');
+    assert.equal(consumeCalls, 1);
+    assert.equal(capturedStateId, 'distinctive-terminal-state-id-1');
+    assert.equal(capturedNow, NOW);
+    // Consume bem-sucedido nunca vaza no DTO externo — só `status`.
+    assert.deepEqual(Object.keys(result), ['status']);
+  },
+);
+
+await check(
+  '8. ready -> builder not_materializable -> consome o runtime com o EXACT stateId/now, status original preservado',
+  async () => {
+    let consumeCalls = 0;
+    let capturedStateId = null;
+    let capturedNow = null;
+    foundClarification('distinctive-terminal-state-id-2', {
+      status: 'ready',
+      intent: readyNotMaterializableIntent,
+    });
+    storageHandlers.consumeRuntimeState = async (expectedStateId, now) => {
+      consumeCalls++;
+      capturedStateId = expectedStateId;
+      capturedNow = now;
+      return { status: 'consumed', value: { stateId: expectedStateId, kind: 'clarification', state: {} } };
+    };
+
+    const result = await resolveClarificationConversationalTurn('1 hora', NOW, EXPIRATIONS);
+
+    assert.equal(result.status, 'not_materializable');
+    assert.equal(consumeCalls, 1);
+    assert.equal(capturedStateId, 'distinctive-terminal-state-id-2');
+    assert.equal(capturedNow, NOW);
+  },
+);
+
+await check('7c. ready -> builder unsupported -> consume conflict -> conflict, zero fallback/segunda tentativa', async () => {
+  let consumeCalls = 0;
   foundClarification('state-A', { status: 'ready', intent: readyUnsupportedIntent });
+  storageHandlers.consumeRuntimeState = async () => {
+    consumeCalls++;
+    return { status: 'conflict' };
+  };
+  // advanceRuntimeState/replaceRuntimeState permanecem "neverCalled" —
+  // prova que nenhum fallback acontece após o conflict do consume.
 
   const result = await resolveClarificationConversationalTurn('qualquer coisa', NOW, EXPIRATIONS);
 
-  assert.equal(result.status, 'unsupported');
+  assert.deepEqual(result, { status: 'conflict' });
+  assert.equal(consumeCalls, 1);
 });
 
-await check('8. ready -> builder not_materializable -> nenhuma escrita', async () => {
+await check('7d. ready -> builder unsupported -> consume error -> error, nunca mascarado como unsupported', async () => {
+  foundClarification('state-A', { status: 'ready', intent: readyUnsupportedIntent });
+  storageHandlers.consumeRuntimeState = async () => ({ status: 'error' });
+
+  const result = await resolveClarificationConversationalTurn('qualquer coisa', NOW, EXPIRATIONS);
+
+  assert.deepEqual(result, { status: 'error' });
+});
+
+await check('8c. ready -> builder not_materializable -> consume conflict -> conflict', async () => {
   foundClarification('state-A', { status: 'ready', intent: readyNotMaterializableIntent });
+  storageHandlers.consumeRuntimeState = async () => ({ status: 'conflict' });
 
   const result = await resolveClarificationConversationalTurn('1 hora', NOW, EXPIRATIONS);
 
-  assert.equal(result.status, 'not_materializable');
+  assert.deepEqual(result, { status: 'conflict' });
 });
 
 // ============================================================================
