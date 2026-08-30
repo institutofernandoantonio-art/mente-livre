@@ -8,17 +8,22 @@
 // Importa o MÓDULO REAL, e através dele a Confirmation Policy REAL
 // (`resolveProposalConfirmation`, de confirmation.ts) — nenhuma cópia do
 // vocabulário/normalização/decisão confirmed-vs-cancelled é reimplementada
-// aqui. A única peça substituída é `runtime-state-storage.ts`
-// (getRuntimeState/consumeRuntimeState exigiriam Supabase real),
-// via o mesmo dublê já usado por conversation-turn.test.mjs
-// (tests/support/fake-runtime-state-storage.mjs), estendido com
-// `consumeRuntimeState`.
+// aqui. Duas peças são substituídas: `runtime-state-storage.ts`
+// (getRuntimeState/consumeRuntimeState exigiriam Supabase real), via o
+// mesmo dublê já usado por conversation-turn.test.mjs
+// (tests/support/fake-runtime-state-storage.mjs); e
+// `local-task-execution.ts` (executeCreateLocalTask exigiria Supabase
+// real), via tests/support/fake-local-task-execution.mjs — ambos
+// redirecionados só neste processo de teste (ver
+// tests/support/ts-extension-loader.mjs), nunca alterando a forma como
+// proposal-turn.ts importa essas dependências em produção.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolveProposalConversationalTurn } from '../../src/lib/conversation/proposal-turn.ts';
 import { handlers as storageHandlers } from '../support/fake-runtime-state-storage.mjs';
+import { handlers as executorHandlers } from '../support/fake-local-task-execution.mjs';
 
 const results = [];
 function record(name, pass, detail) {
@@ -47,6 +52,7 @@ function setHandlers(overrides = {}) {
   storageHandlers.replaceRuntimeState = overrides.replaceRuntimeState ?? neverCalled('replaceRuntimeState');
   storageHandlers.advanceRuntimeState = overrides.advanceRuntimeState ?? neverCalled('advanceRuntimeState');
   storageHandlers.consumeRuntimeState = overrides.consumeRuntimeState ?? neverCalled('consumeRuntimeState');
+  executorHandlers.executeCreateLocalTask = overrides.executeCreateLocalTask ?? neverCalled('executeCreateLocalTask');
 }
 
 // --- Fixtures reais (nenhum dado pessoal) -----------------------------
@@ -62,6 +68,18 @@ function fixtureProposalState(expiresAt = PROPOSAL_EXPIRES_AT) {
       actionType: 'create_local_task',
       task: { title: 'Enviar relatório', description: null, deadline: null, duration: null },
     },
+    createdAt: NOW,
+    expiresAt,
+  };
+}
+
+const VALID_ITEM_UUID = '11111111-2222-4333-8444-555555555555';
+
+function fixtureProposalStateWithTask(task, expiresAt = PROPOSAL_EXPIRES_AT) {
+  return {
+    status: 'awaiting_confirmation',
+    proposalId: 'fixture-proposal-id-999',
+    action: { actionType: 'create_local_task', task },
     createdAt: NOW,
     expiresAt,
   };
@@ -313,22 +331,272 @@ await check('17. replay simulado: uma tentativa consumed, segunda conflict', asy
 });
 
 // ============================================================================
-// CONFIRMED — bloqueado
+// CONFIRMED — executa via executeCreateLocalTask
 // ============================================================================
 
-await check('18, 19 e 20. confirmed -> NÃO chama consume/advance/replace', async () => {
-  // Todos os três handlers de mutação permanecem "unconfigured" (lançam).
-  // Se proposal-turn.ts chamasse qualquer um deles no caminho `confirmed`,
-  // o teste falharia com uma exceção em vez do status esperado.
-  foundProposal('state-J', PROPOSAL_EXPIRES_AT);
-  const result = await resolveProposalConversationalTurn('sim', NOW);
-  assert.equal(result.status, 'confirmation_requires_execution');
+const FULL_TASK = {
+  title: 'Enviar relatório',
+  description: 'Relatório mensal',
+  deadline: { at: '2026-09-01T12:00:00.000Z', source: 'stated' },
+  duration: { minutes: 30, source: 'inferred' },
+};
+
+function foundProposalWithTask(stateId, task, expiresAt = PROPOSAL_EXPIRES_AT) {
+  setHandlers({
+    getRuntimeState: async () => ({
+      status: 'found',
+      value: { stateId, kind: 'proposal', state: fixtureProposalStateWithTask(task, expiresAt) },
+    }),
+  });
+}
+
+function capturingExecutor(responder) {
+  const calls = [];
+  executorHandlers.executeCreateLocalTask = async (input) => {
+    calls.push(input);
+    return responder(input);
+  };
+  return calls;
+}
+
+await check('18. confirmed chama o executor exatamente 1 vez', async () => {
+  foundProposalWithTask('state-J', FULL_TASK);
+  const calls = capturingExecutor(() => ({ status: 'created', itemId: VALID_ITEM_UUID }));
+  await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(calls.length, 1);
 });
 
-await check('21. confirmed -> confirmation_requires_execution (boundary explícito)', async () => {
-  foundProposal('state-K', PROPOSAL_EXPIRES_AT);
-  const result = await resolveProposalConversationalTurn('confirma', NOW);
-  assert.equal(result.status, 'confirmation_requires_execution');
+await check('19. confirmed usa expectedStateId exato da leitura runtime', async () => {
+  foundProposalWithTask('distinctive-state-id-999', FULL_TASK);
+  const calls = capturingExecutor(() => ({ status: 'created', itemId: VALID_ITEM_UUID }));
+  await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(calls[0].expectedStateId, 'distinctive-state-id-999');
+});
+
+await check('20. confirmed usa proposalId exato do ProposalState (nunca o stateId)', async () => {
+  foundProposalWithTask('state-K', FULL_TASK);
+  const calls = capturingExecutor(() => ({ status: 'created', itemId: VALID_ITEM_UUID }));
+  await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(calls[0].proposalId, 'fixture-proposal-id-999');
+  assert.notEqual(calls[0].proposalId, calls[0].expectedStateId);
+});
+
+await check('21. confirmed usa a task exata do ProposedAction persistido (mesma referência de valores)', async () => {
+  foundProposalWithTask('state-L', FULL_TASK);
+  const calls = capturingExecutor(() => ({ status: 'created', itemId: VALID_ITEM_UUID }));
+  await resolveProposalConversationalTurn('sim', NOW);
+  assert.deepEqual(calls[0].task, FULL_TASK);
+});
+
+await check('22. confirmed usa o mesmo now recebido pela função (nenhum Date.now() interno)', async () => {
+  foundProposalWithTask('state-M', FULL_TASK);
+  const calls = capturingExecutor(() => ({ status: 'created', itemId: VALID_ITEM_UUID }));
+  const distinctiveNow = NOW + 1234; // ainda dentro da janela de validade da proposta (< PROPOSAL_EXPIRES_AT)
+  await resolveProposalConversationalTurn('sim', distinctiveNow);
+  assert.equal(calls[0].now, distinctiveNow);
+});
+
+await check('23. executor recebe SOMENTE {expectedStateId,proposalId,task,now} — nada externo', async () => {
+  foundProposalWithTask('state-N', FULL_TASK);
+  const calls = capturingExecutor(() => ({ status: 'created', itemId: VALID_ITEM_UUID }));
+  await resolveProposalConversationalTurn('sim', NOW);
+  assert.deepEqual(Object.keys(calls[0]).sort(), ['expectedStateId', 'now', 'proposalId', 'task']);
+});
+
+await check('24. created -> confirmed', async () => {
+  foundProposalWithTask('state-O', FULL_TASK);
+  capturingExecutor(() => ({ status: 'created', itemId: VALID_ITEM_UUID }));
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(result.status, 'confirmed');
+});
+
+await check('25. created retorna o itemId exato devolvido pelo executor', async () => {
+  foundProposalWithTask('state-P', FULL_TASK);
+  capturingExecutor(() => ({ status: 'created', itemId: VALID_ITEM_UUID }));
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.deepEqual(result, { status: 'confirmed', itemId: VALID_ITEM_UUID });
+});
+
+await check('26. conflict do executor -> conflict', async () => {
+  foundProposalWithTask('state-Q', FULL_TASK);
+  capturingExecutor(() => ({ status: 'conflict' }));
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.deepEqual(result, { status: 'conflict' });
+});
+
+await check('27. error do executor -> error', async () => {
+  foundProposalWithTask('state-R', FULL_TASK);
+  capturingExecutor(() => ({ status: 'error' }));
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.deepEqual(result, { status: 'error' });
+});
+
+await check('28. executor lançando exceção propaga (rejeita), mesma convenção do resto do módulo', async () => {
+  foundProposalWithTask('state-S', FULL_TASK);
+  executorHandlers.executeCreateLocalTask = async () => {
+    throw new Error('falha inesperada fora do contrato de retorno');
+  };
+  await assert.rejects(
+    () => resolveProposalConversationalTurn('sim', NOW),
+    /falha inesperada fora do contrato de retorno/,
+  );
+});
+
+await check('29. confirmed NÃO chama consumeRuntimeState', async () => {
+  // consumeRuntimeState permanece "neverCalled" (setHandlers/foundProposalWithTask
+  // não o sobrescrevem) — se proposal-turn.ts o chamasse no caminho
+  // `confirmed`, o teste falharia com uma exceção em vez do status
+  // esperado. Checkpoint crítico: a RPC atômica já remove a runtime row —
+  // um segundo consume aqui quebraria a garantia de atomicidade.
+  foundProposalWithTask('state-T', FULL_TASK);
+  capturingExecutor(() => ({ status: 'created', itemId: VALID_ITEM_UUID }));
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(result.status, 'confirmed');
+});
+
+await check('30 e 31. confirmed NÃO chama advanceRuntimeState nem replaceRuntimeState', async () => {
+  // Ambos permanecem "neverCalled" por padrão de setHandlers — mesma
+  // lógica do teste anterior.
+  foundProposalWithTask('state-U', FULL_TASK);
+  capturingExecutor(() => ({ status: 'created', itemId: VALID_ITEM_UUID }));
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(result.status, 'confirmed');
+});
+
+await check('32. conflict (confirmed) NÃO faz re-query (getRuntimeState chamado 1 vez)', async () => {
+  let getCalls = 0;
+  setHandlers({
+    getRuntimeState: async () => {
+      getCalls++;
+      return {
+        status: 'found',
+        value: { stateId: 'state-V', kind: 'proposal', state: fixtureProposalStateWithTask(FULL_TASK) },
+      };
+    },
+    executeCreateLocalTask: async () => ({ status: 'conflict' }),
+  });
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(result.status, 'conflict');
+  assert.equal(getCalls, 1);
+});
+
+await check('33. error (confirmed) NÃO faz re-query (getRuntimeState chamado 1 vez)', async () => {
+  let getCalls = 0;
+  setHandlers({
+    getRuntimeState: async () => {
+      getCalls++;
+      return {
+        status: 'found',
+        value: { stateId: 'state-W', kind: 'proposal', state: fixtureProposalStateWithTask(FULL_TASK) },
+      };
+    },
+    executeCreateLocalTask: async () => ({ status: 'error' }),
+  });
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(result.status, 'error');
+  assert.equal(getCalls, 1);
+});
+
+await check('34. ambiguous NÃO chama o executor', async () => {
+  foundProposalWithTask('state-X', FULL_TASK);
+  const result = await resolveProposalConversationalTurn('talvez', NOW);
+  assert.equal(result.status, 'confirmation_ambiguous');
+});
+
+await check('35. unrecognized NÃO chama o executor', async () => {
+  foundProposalWithTask('state-Y', FULL_TASK);
+  const result = await resolveProposalConversationalTurn('me explica melhor', NOW);
+  assert.equal(result.status, 'confirmation_unrecognized');
+});
+
+await check('36. proposta expirada (policy) NÃO chama o executor', async () => {
+  foundProposalWithTask('state-Z', FULL_TASK, NOW); // expiresAt === now
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(result.status, 'runtime_expired');
+});
+
+await check('37. clarification_pending NÃO chama o executor', async () => {
+  setHandlers({
+    getRuntimeState: async () => ({
+      status: 'found',
+      value: { stateId: 'clarif-2', kind: 'clarification', state: fixtureConversationState() },
+    }),
+  });
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(result.status, 'clarification_pending');
+});
+
+await check('38. runtime not_found NÃO chama o executor', async () => {
+  setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(result.status, 'no_active_runtime_state');
+});
+
+await check('39. runtime error NÃO chama o executor', async () => {
+  setHandlers({ getRuntimeState: async () => ({ status: 'error' }) });
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(result.status, 'error');
+});
+
+await check('40. actionType não suportada (defensivo, hoje inalcançável) -> error, zero executor', async () => {
+  // ProposedAction real só tem `create_local_task` — este fixture usa um
+  // actionType arbitrário só para exercitar o guard defensivo descrito no
+  // cabeçalho de proposal-turn.ts. Testável só porque este arquivo é JS
+  // puro (sem checagem de tipos); em TypeScript real este branch é
+  // inalcançável hoje.
+  setHandlers({
+    getRuntimeState: async () => ({
+      status: 'found',
+      value: {
+        stateId: 'state-AA',
+        kind: 'proposal',
+        state: {
+          status: 'awaiting_confirmation',
+          proposalId: 'proposal-unsupported',
+          action: { actionType: 'create_calendar_event', task: FULL_TASK },
+          createdAt: NOW,
+          expiresAt: PROPOSAL_EXPIRES_AT,
+        },
+      },
+    }),
+  });
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.equal(result.status, 'error');
+});
+
+// ============================================================================
+// 41. TESTE DE REPLAY LÓGICO — confirmação bem-sucedida não executa 2x
+// ============================================================================
+
+await check('41. replay: primeira chamada confirmed, segunda vê runtime ausente (RPC já consumiu)', async () => {
+  let getCallCount = 0;
+  let executorCallCount = 0;
+  setHandlers({
+    getRuntimeState: async () => {
+      getCallCount++;
+      if (getCallCount === 1) {
+        return {
+          status: 'found',
+          value: { stateId: 'state-BB', kind: 'proposal', state: fixtureProposalStateWithTask(FULL_TASK) },
+        };
+      }
+      // Segunda leitura: a RPC atômica já removeu a runtime row junto com
+      // a criação do item — nenhuma simulação de banco real necessária,
+      // só o fake refletindo o estado pós-commit esperado.
+      return { status: 'not_found' };
+    },
+    executeCreateLocalTask: async () => {
+      executorCallCount++;
+      return { status: 'created', itemId: VALID_ITEM_UUID };
+    },
+  });
+
+  const first = await resolveProposalConversationalTurn('sim', NOW);
+  const second = await resolveProposalConversationalTurn('sim', NOW);
+
+  assert.deepEqual(first, { status: 'confirmed', itemId: VALID_ITEM_UUID });
+  assert.equal(second.status, 'no_active_runtime_state');
+  assert.equal(executorCallCount, 1);
 });
 
 // ============================================================================
@@ -342,22 +610,37 @@ const codeOnly = source
   .map((line) => line.replace(/\/\/.*$/, ''))
   .join('\n');
 
-await check('22, 23 e 24. nenhuma Execution/item/Calendar no código real', () => {
+await check('22, 23 e 24. nenhuma Execution direta/item/Calendar/admin/timestamp/id gerado no código real', () => {
   const forbidden = [
     '.insert(',
     '.update(',
     '.delete(',
+    "from('items')",
     'Calendar',
     'Anthropic',
     'OpenAI',
     'NextResponse',
     'service_role',
     'createAdminClient',
+    'SUPABASE_SECRET_KEY',
     'items',
+    'supabase',
+    'Date.now(',
+    'crypto.randomUUID(',
   ];
   for (const token of forbidden) {
     assert.ok(!codeOnly.includes(token), `token proibido encontrado: ${token}`);
   }
+});
+
+await check('26b. confirmation_requires_execution não existe mais no código real', () => {
+  assert.ok(!codeOnly.includes('confirmation_requires_execution'));
+});
+
+await check('26c. usa a abstração ./local-task-execution, nunca a RPC/Supabase diretamente', () => {
+  assert.ok(codeOnly.includes("from './local-task-execution'"));
+  assert.ok(codeOnly.includes('executeCreateLocalTask('));
+  assert.ok(!codeOnly.includes('confirm_create_local_task'));
 });
 
 await check('25. API não recebe userId/stateId/proposalId externos', () => {

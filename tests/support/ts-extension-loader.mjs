@@ -27,11 +27,22 @@
 //    motivo: depende de `next/headers`) — redirecionado, pelo mesmo
 //    mecanismo, para fake-supabase-server.mjs.
 //
+//    `proposal-turn.ts` importa estaticamente `./local-task-execution`
+//    (que, através de `../supabase/server`, também depende de
+//    `next/headers`) — redirecionado para fake-local-task-execution.mjs.
+//    Specifier exato (`./local-task-execution`, o literal escrito em
+//    proposal-turn.ts), nunca colide com
+//    tests/conversation/local-task-execution.test.mjs, que importa o
+//    módulo real por um caminho relativo diferente
+//    (`../../src/lib/conversation/local-task-execution.ts`) — uma string
+//    de specifier distinta, nunca encontrada por este Map.
+//
 // API 100% nativa do Node (`node:module`), nenhuma dependência nova.
 const REDIRECTS = new Map([
   ['./runtime-state-storage', new URL('./fake-runtime-state-storage.mjs', import.meta.url).href],
   ['./orchestration', new URL('./fake-orchestration.mjs', import.meta.url).href],
   ['../supabase/server', new URL('./fake-supabase-server.mjs', import.meta.url).href],
+  ['./local-task-execution', new URL('./fake-local-task-execution.mjs', import.meta.url).href],
 ]);
 
 export async function resolve(specifier, context, nextResolve) {

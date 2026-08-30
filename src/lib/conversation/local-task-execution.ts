@@ -9,10 +9,10 @@ import type { ProposedAction } from './proposed-action';
 // (supabase/migrations/20260826140000_create_confirm_create_local_task_function.sql).
 //
 // Módulo IRMÃO de proposal-turn.ts/confirmation.ts, não uma extensão de
-// nenhum deles. Nesta subfase, deliberadamente NÃO é importado por
-// proposal-turn.ts — o caminho `confirmed` continua bloqueado lá,
-// retornando `confirmation_requires_execution`. Conectar os dois é uma
-// subfase futura e separada.
+// nenhum deles. Usado por proposal-turn.ts para executar, via a RPC
+// atômica, uma proposta `create_local_task` já confirmada pela
+// Confirmation Policy — nunca chamado diretamente por nenhuma outra
+// camada.
 //
 // Este módulo NUNCA:
 // - decide se uma proposta foi confirmada/cancelada (isso é
