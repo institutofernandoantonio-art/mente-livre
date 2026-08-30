@@ -157,6 +157,36 @@ await check('1. primeiro turno -> clarification -> replace saved', async () => {
   assert.equal(replaceCalls, 1);
   assert.equal(capturedNext.kind, 'clarification');
   assert.equal(capturedNext.state.status, 'awaiting_clarification');
+  // A `question` do resultado deve vir EXATAMENTE da ConversationState
+  // recém-criada (needsClarificationIntent é cancel_event sem
+  // eventReference resolvida -> campo pendente é 'event_reference').
+  assert.equal(result.question, capturedNext.state.currentQuestion.text);
+  assert.equal(result.question, 'Qual tarefa ou compromisso você quer dizer?');
+});
+
+await check('1e. primeiro turno clarification: nenhum campo externo (stateId/userId/field) vaza no resultado', async () => {
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    replaceRuntimeState: async (next) => ({
+      status: 'saved',
+      value: { stateId: 'new-id', kind: next.kind, state: next.state },
+    }),
+  });
+
+  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRES_AT);
+
+  assert.deepEqual(Object.keys(result).sort(), ['question', 'status']);
+});
+
+await check('1f. primeiro turno clarification: replace falha -> error, sem question', async () => {
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    replaceRuntimeState: async () => ({ status: 'error' }),
+  });
+
+  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRES_AT);
+
+  assert.deepEqual(result, { status: 'error' });
 });
 
 await check('2. primeiro turno ready -> proposed -> proposal replace saved', async () => {
@@ -179,6 +209,39 @@ await check('2. primeiro turno ready -> proposed -> proposal replace saved', asy
   assert.equal(capturedNext.state.status, 'awaiting_confirmation');
   assert.equal(typeof capturedNext.state.proposalId, 'string');
   assert.ok(capturedNext.state.proposalId.length > 0);
+  // `action` retornada deve ser EXATAMENTE a ação que originou a
+  // ProposalState persistida — mesma referência, não uma reconstrução.
+  assert.equal(result.action, capturedNext.state.action);
+  assert.deepEqual(result.action, {
+    actionType: 'create_local_task',
+    task: { title: 'Enviar relatório', description: null, deadline: null, duration: { minutes: 30, source: 'stated' } },
+  });
+});
+
+await check('2b. primeiro turno proposal: proposalId NÃO aparece no resultado', async () => {
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    replaceRuntimeState: async (next) => ({
+      status: 'saved',
+      value: { stateId: 'new-id', kind: next.kind, state: next.state },
+    }),
+  });
+
+  const result = await resolveFirstConversationalTurn(readyProposableIntent, NOW, EXPIRES_AT);
+
+  assert.deepEqual(Object.keys(result).sort(), ['action', 'status']);
+  assert.ok(!('proposalId' in result));
+});
+
+await check('2c. primeiro turno proposal: replace falha -> error, sem action', async () => {
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    replaceRuntimeState: async () => ({ status: 'error' }),
+  });
+
+  const result = await resolveFirstConversationalTurn(readyProposableIntent, NOW, EXPIRES_AT);
+
+  assert.deepEqual(result, { status: 'error' });
 });
 
 await check('3. primeiro turno builder unsupported -> sem escrita', async () => {
@@ -352,6 +415,24 @@ await check('5 e 20. awaiting_clarification -> advance com expectedStateId exato
   assert.equal(capturedExpectedStateId, 'distinctive-state-id-123');
   assert.equal(capturedNext.kind, 'clarification');
   assert.equal(capturedNext.state, nextConversationState);
+  // `question` deve vir do estado que ACABOU de ser avançado (o novo
+  // currentQuestion, campo 'time'), nunca do estado antigo (campo
+  // 'duration', usado por foundClarification/fixtureConversationState).
+  assert.equal(result.question, 'y');
+  assert.equal(result.question, nextConversationState.currentQuestion.text);
+});
+
+await check('5b. awaiting_clarification: nenhum campo externo vaza no resultado', async () => {
+  const nextConversationState = fixtureConversationState({ field: 'time', text: 'y' });
+  foundClarification('state-A', { status: 'awaiting_clarification', state: nextConversationState });
+  storageHandlers.advanceRuntimeState = async (expectedStateId, next) => ({
+    status: 'advanced',
+    value: { stateId: 'new-state-id', kind: next.kind, state: next.state },
+  });
+
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+
+  assert.deepEqual(Object.keys(result).sort(), ['question', 'status']);
 });
 
 // ============================================================================
@@ -379,6 +460,14 @@ await check('6 e 16. ready -> proposed -> advance com troca clarification -> pro
   // Troca de kind clarification -> proposal no MESMO advance:
   assert.equal(capturedNext.kind, 'proposal');
   assert.equal(capturedNext.state.status, 'awaiting_confirmation');
+  // `action` retornada é EXATAMENTE a ação que originou a ProposalState
+  // persistida no mesmo advance — mesma referência.
+  assert.equal(result.action, capturedNext.state.action);
+  assert.deepEqual(result.action, {
+    actionType: 'create_local_task',
+    task: { title: 'Enviar relatório', description: null, deadline: null, duration: { minutes: 30, source: 'stated' } },
+  });
+  assert.deepEqual(Object.keys(result).sort(), ['action', 'status']);
 });
 
 await check('21. proposalId gerado é diferente do stateId antigo e do novo', async () => {
@@ -418,7 +507,7 @@ await check('8. ready -> builder not_materializable -> nenhuma escrita', async (
 // CONFLICT / ERROR NO ADVANCE
 // ============================================================================
 
-await check('18. advance conflict -> nenhuma segunda escrita, nenhum replace', async () => {
+await check('18. advance conflict -> nenhuma segunda escrita, nenhum replace, sem question', async () => {
   let advanceCalls = 0;
   foundClarification('state-A', {
     status: 'awaiting_clarification',
@@ -433,8 +522,17 @@ await check('18. advance conflict -> nenhuma segunda escrita, nenhum replace', a
 
   const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
 
-  assert.equal(result.status, 'conflict');
+  assert.deepEqual(result, { status: 'conflict' });
   assert.equal(advanceCalls, 1);
+});
+
+await check('18b. ready -> proposed -> advance conflict -> conflict, sem action', async () => {
+  foundClarification('state-A', { status: 'ready', intent: readyProposableIntent });
+  storageHandlers.advanceRuntimeState = async () => ({ status: 'conflict' });
+
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+
+  assert.deepEqual(result, { status: 'conflict' });
 });
 
 await check('19. advance error -> erro técnico', async () => {

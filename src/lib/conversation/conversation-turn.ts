@@ -3,6 +3,7 @@ import 'server-only';
 import type { StructuredIntent } from './types';
 import { createConversationState } from './state';
 import { buildProposedAction } from './proposed-action';
+import type { ProposedAction } from './proposed-action';
 import { createProposalState, type ProposalState } from './proposal-state';
 import { resolveClarificationTurn } from './orchestration';
 import { getRuntimeState, replaceRuntimeState, advanceRuntimeState } from './runtime-state-storage';
@@ -83,17 +84,36 @@ import type { RuntimeStateAdvanceResult } from './runtime-state-storage';
 // "estados impossíveis por operação" que o resto desta pilha (ver os 4
 // result types de runtime-state-storage.ts) já evita deliberadamente.
 
+// `clarification_saved`/`proposal_saved` carregam dado mínimo de
+// apresentação — sempre extraído do MESMO objeto em memória que já foi
+// (ou está prestes a ser, no mesmo await) persistido, nunca de uma
+// releitura de runtime nem de uma reconstrução paralela:
+//
+// - `question`: `currentQuestion.text` da `ConversationState` recém-
+//   criada/avançada. Só a string (nunca o `ClarificationQuestion` inteiro
+//   nem `field`) — texto 100% determinístico e genérico por campo (ver
+//   clarification-questions.ts: "nunca personalizada com conteúdo do
+//   intent... para nunca arriscar vazar conteúdo real"), nunca derivado
+//   de dado do usuário. Presente SÓ quando a escrita (`replace`/`advance`)
+//   já confirmou sucesso — nunca antecipado, nunca presente em `conflict`.
+// - `action`: o próprio `ProposedAction` retornado por
+//   `buildProposedAction` (mesma referência que originou a
+//   `ProposalState` persistida, nunca reconstruído). Shape real
+//   (proposed-action.ts) não contém `proposalId`/`userId`/`stateId`/
+//   nenhum identificador interno — só `actionType` e `task` (title/
+//   description/deadline/duration), dado de domínio já seguro para uma
+//   futura camada de apresentação. Presente SÓ após escrita bem-sucedida.
 export type FirstTurnResult =
-  | { status: 'clarification_saved' }
-  | { status: 'proposal_saved' }
+  | { status: 'clarification_saved'; question: string }
+  | { status: 'proposal_saved'; action: ProposedAction }
   | { status: 'already_active' }
   | { status: 'unsupported' }
   | { status: 'not_materializable' }
   | { status: 'error' };
 
 export type ClarificationTurnPersistenceResult =
-  | { status: 'clarification_saved' }
-  | { status: 'proposal_saved' }
+  | { status: 'clarification_saved'; question: string }
+  | { status: 'proposal_saved'; action: ProposedAction }
   | { status: 'no_active_runtime_state' }
   | { status: 'runtime_expired' }
   | { status: 'proposal_pending' }
@@ -129,7 +149,9 @@ export async function resolveFirstConversationalTurn(
 
   if (conversationState !== null) {
     const saved = await replaceRuntimeState({ kind: 'clarification', state: conversationState }, now);
-    return saved.status === 'saved' ? { status: 'clarification_saved' } : { status: 'error' };
+    return saved.status === 'saved'
+      ? { status: 'clarification_saved', question: conversationState.currentQuestion.text }
+      : { status: 'error' };
   }
 
   // createConversationState devolveu null: a intenção já está `ready`.
@@ -144,7 +166,9 @@ export async function resolveFirstConversationalTurn(
       const proposalId = crypto.randomUUID();
       const proposalState: ProposalState = createProposalState(buildResult.action, proposalId, now, expiresAt);
       const saved = await replaceRuntimeState({ kind: 'proposal', state: proposalState }, now);
-      return saved.status === 'saved' ? { status: 'proposal_saved' } : { status: 'error' };
+      return saved.status === 'saved'
+        ? { status: 'proposal_saved', action: buildResult.action }
+        : { status: 'error' };
     }
   }
 }
@@ -211,7 +235,10 @@ export async function resolveClarificationConversationalTurn(
         { kind: 'clarification', state: turnResult.state },
         now,
       );
-      return translateAdvanceResult(advanceResult, 'clarification_saved');
+      return translateAdvanceResult(advanceResult, {
+        status: 'clarification_saved',
+        question: turnResult.state.currentQuestion.text,
+      });
     }
 
     case 'ready': {
@@ -235,7 +262,10 @@ export async function resolveClarificationConversationalTurn(
             { kind: 'proposal', state: proposalState },
             now,
           );
-          return translateAdvanceResult(advanceResult, 'proposal_saved');
+          return translateAdvanceResult(advanceResult, {
+            status: 'proposal_saved',
+            action: buildResult.action,
+          });
         }
       }
     }
@@ -243,18 +273,22 @@ export async function resolveClarificationConversationalTurn(
 }
 
 // Traduz o resultado genérico de uma escrita CAS para o vocabulário deste
-// módulo. `conflict` nunca dispara fallback para replace, nunca uma
-// segunda escrita, nunca uma re-query só para explicar a causa (ver
-// mapeamento da subfase anterior — risco de TOCTOU) — qualquer
+// módulo. `onSuccess` já vem pronto de quem chama (com `question`/`action`
+// extraídos do MESMO objeto que acabou de ser passado para o `advance`) —
+// só é devolvido no ramo `advanced`; `conflict`/`error` nunca carregam
+// `question`/`action`, mesmo que já tenham sido computados em memória
+// antes desta chamada. `conflict` nunca dispara fallback para replace,
+// nunca uma segunda escrita, nunca uma re-query só para explicar a causa
+// (ver mapeamento da subfase anterior — risco de TOCTOU) — qualquer
 // ProposalState/ConversationState construída apenas em memória até este
 // ponto é simplesmente descartada.
 function translateAdvanceResult(
   result: RuntimeStateAdvanceResult,
-  successStatus: 'clarification_saved' | 'proposal_saved',
+  onSuccess: ClarificationTurnPersistenceResult,
 ): ClarificationTurnPersistenceResult {
   switch (result.status) {
     case 'advanced':
-      return { status: successStatus };
+      return onSuccess;
     case 'conflict':
       return { status: 'conflict' };
     case 'error':
