@@ -7,8 +7,9 @@
 // resumo final, exit code != 0 se algo falhar.
 //
 // Importa o MÓDULO REAL (nenhuma cópia/duplicação de lógica), com a API
-// pública de produção exata (`intent, now, expiresAt` / `answer, now,
-// nextExpiresAt` — nenhum parâmetro extra). As únicas peças substituídas
+// pública de produção exata (`intent, now, expirations` / `answer, now,
+// expirations`, onde `expirations` é `{clarificationExpiresAt,
+// proposalExpiresAt}` — nenhum parâmetro extra). As únicas peças substituídas
 // são as quatro funções impuras que o arquivo real importa estaticamente
 // de `./runtime-state-storage`/`./orchestration` — substituídas por
 // dublês via o hook de resolução em tests/support/ (getRuntimeState/
@@ -64,8 +65,23 @@ function setHandlers(overrides = {}) {
 // --- Fixtures reais (nenhum dado pessoal) -----------------------------
 
 const NOW = 1_000_000;
+// Expiração de um state JÁ ARMAZENADO usada só dentro dos fixtures abaixo
+// (fixtureConversationState/fixtureProposalState) — conceito diferente das
+// expirações passadas como ARGUMENTO nas chamadas às funções reais.
 const EXPIRES_AT = NOW + 5 * 60_000;
-const NEXT_EXPIRES_AT = NOW + 10 * 60_000;
+
+// Expirações distintas (A !== B) passadas como argumento em TODAS as
+// chamadas a resolveFirstConversationalTurn/resolveClarificationConversationalTurn
+// — deliberadamente diferentes uma da outra (espelhando a política real:
+// 24h para clarificação, 30min para proposta) para que qualquer regressão
+// que volte a usar um único timestamp para os dois campos seja detectada
+// pelos testes (ver 24 e 25).
+const CLARIFICATION_EXPIRES_AT = NOW + 24 * 60 * 60 * 1000; // A
+const PROPOSAL_EXPIRES_AT = NOW + 30 * 60 * 1000; // B
+const EXPIRATIONS = {
+  clarificationExpiresAt: CLARIFICATION_EXPIRES_AT,
+  proposalExpiresAt: PROPOSAL_EXPIRES_AT,
+};
 
 const needsClarificationIntent = {
   missingFields: [],
@@ -151,7 +167,7 @@ await check('1. primeiro turno -> clarification -> replace saved', async () => {
     },
   });
 
-  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRES_AT);
+  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'clarification_saved');
   assert.equal(replaceCalls, 1);
@@ -173,7 +189,7 @@ await check('1e. primeiro turno clarification: nenhum campo externo (stateId/use
     }),
   });
 
-  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRES_AT);
+  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRATIONS);
 
   assert.deepEqual(Object.keys(result).sort(), ['question', 'status']);
 });
@@ -184,7 +200,7 @@ await check('1f. primeiro turno clarification: replace falha -> error, sem quest
     replaceRuntimeState: async () => ({ status: 'error' }),
   });
 
-  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRES_AT);
+  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRATIONS);
 
   assert.deepEqual(result, { status: 'error' });
 });
@@ -201,7 +217,7 @@ await check('2. primeiro turno ready -> proposed -> proposal replace saved', asy
     },
   });
 
-  const result = await resolveFirstConversationalTurn(readyProposableIntent, NOW, EXPIRES_AT);
+  const result = await resolveFirstConversationalTurn(readyProposableIntent, NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'proposal_saved');
   assert.equal(replaceCalls, 1);
@@ -227,7 +243,7 @@ await check('2b. primeiro turno proposal: proposalId NÃO aparece no resultado',
     }),
   });
 
-  const result = await resolveFirstConversationalTurn(readyProposableIntent, NOW, EXPIRES_AT);
+  const result = await resolveFirstConversationalTurn(readyProposableIntent, NOW, EXPIRATIONS);
 
   assert.deepEqual(Object.keys(result).sort(), ['action', 'status']);
   assert.ok(!('proposalId' in result));
@@ -239,7 +255,7 @@ await check('2c. primeiro turno proposal: replace falha -> error, sem action', a
     replaceRuntimeState: async () => ({ status: 'error' }),
   });
 
-  const result = await resolveFirstConversationalTurn(readyProposableIntent, NOW, EXPIRES_AT);
+  const result = await resolveFirstConversationalTurn(readyProposableIntent, NOW, EXPIRATIONS);
 
   assert.deepEqual(result, { status: 'error' });
 });
@@ -247,7 +263,7 @@ await check('2c. primeiro turno proposal: replace falha -> error, sem action', a
 await check('3. primeiro turno builder unsupported -> sem escrita', async () => {
   setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
 
-  const result = await resolveFirstConversationalTurn(readyUnsupportedIntent, NOW, EXPIRES_AT);
+  const result = await resolveFirstConversationalTurn(readyUnsupportedIntent, NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'unsupported');
 });
@@ -255,7 +271,7 @@ await check('3. primeiro turno builder unsupported -> sem escrita', async () => 
 await check('4. primeiro turno builder not_materializable -> sem escrita', async () => {
   setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
 
-  const result = await resolveFirstConversationalTurn(readyNotMaterializableIntent, NOW, EXPIRES_AT);
+  const result = await resolveFirstConversationalTurn(readyNotMaterializableIntent, NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'not_materializable');
 });
@@ -272,7 +288,7 @@ await check('1b. primeiro turno com state ativo -> already_active, sem escrita',
     }),
   });
 
-  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRES_AT);
+  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'already_active');
 });
@@ -280,7 +296,7 @@ await check('1b. primeiro turno com state ativo -> already_active, sem escrita',
 await check('1c. primeiro turno com getRuntimeState error -> erro técnico propagado', async () => {
   setHandlers({ getRuntimeState: async () => ({ status: 'error' }) });
 
-  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRES_AT);
+  const result = await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'error');
 });
@@ -292,7 +308,7 @@ await check('1c. primeiro turno com getRuntimeState error -> erro técnico propa
 await check('14. runtime not_found -> no_active_runtime_state, sem chamar orchestration', async () => {
   setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
 
-  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'no_active_runtime_state');
 });
@@ -300,7 +316,7 @@ await check('14. runtime not_found -> no_active_runtime_state, sem chamar orches
 await check('15. runtime expired -> runtime_expired, sem chamar orchestration', async () => {
   setHandlers({ getRuntimeState: async () => ({ status: 'expired' }) });
 
-  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'runtime_expired');
 });
@@ -308,7 +324,7 @@ await check('15. runtime expired -> runtime_expired, sem chamar orchestration', 
 await check('16. runtime error -> erro técnico, sem chamar orchestration', async () => {
   setHandlers({ getRuntimeState: async () => ({ status: 'error' }) });
 
-  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'error');
 });
@@ -325,7 +341,7 @@ await check('17. proposal found -> NÃO chama resolveClarificationTurn, sem escr
     }),
   });
 
-  const result = await resolveClarificationConversationalTurn('sim', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('sim', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'proposal_pending');
 });
@@ -337,7 +353,7 @@ await check('17. proposal found -> NÃO chama resolveClarificationTurn, sem escr
 await check('9. ambiguous -> nenhuma escrita', async () => {
   foundClarification('state-A', { status: 'ambiguous', state: fixtureConversationState({ field: 'time', text: 'x' }) });
 
-  const result = await resolveClarificationConversationalTurn('às quatro', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('às quatro', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'ambiguous');
 });
@@ -348,7 +364,7 @@ await check('10. unrecognized -> nenhuma escrita', async () => {
     state: fixtureConversationState({ field: 'duration', text: 'x' }),
   });
 
-  const result = await resolveClarificationConversationalTurn('não sei', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('não sei', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'unrecognized');
 });
@@ -361,7 +377,7 @@ await check(
       state: fixtureConversationState({ field: 'event_reference', text: 'x' }),
     });
 
-    const result = await resolveClarificationConversationalTurn('a reunião de terça', NOW, NEXT_EXPIRES_AT);
+    const result = await resolveClarificationConversationalTurn('a reunião de terça', NOW, EXPIRATIONS);
 
     assert.equal(result.status, 'reference_not_found');
     assert.notEqual(result.status, 'no_active_runtime_state');
@@ -374,7 +390,7 @@ await check('12. orchestration unsupported -> nenhuma escrita', async () => {
     state: fixtureConversationState({ field: 'participant', text: 'x' }),
   });
 
-  const result = await resolveClarificationConversationalTurn('João', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('João', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'unsupported');
 });
@@ -382,7 +398,7 @@ await check('12. orchestration unsupported -> nenhuma escrita', async () => {
 await check('13. orchestration error -> erro técnico', async () => {
   foundClarification('state-A', { status: 'error', state: fixtureConversationState({ field: 'event_reference', text: 'x' }) });
 
-  const result = await resolveClarificationConversationalTurn('a reunião de terça', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('a reunião de terça', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'error');
 });
@@ -408,7 +424,7 @@ await check('5 e 20. awaiting_clarification -> advance com expectedStateId exato
     return { status: 'advanced', value: { stateId: 'new-state-id', kind: next.kind, state: next.state } };
   };
 
-  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'clarification_saved');
   assert.equal(advanceCalls, 1);
@@ -430,7 +446,7 @@ await check('5b. awaiting_clarification: nenhum campo externo vaza no resultado'
     value: { stateId: 'new-state-id', kind: next.kind, state: next.state },
   });
 
-  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
 
   assert.deepEqual(Object.keys(result).sort(), ['question', 'status']);
 });
@@ -452,7 +468,7 @@ await check('6 e 16. ready -> proposed -> advance com troca clarification -> pro
     return { status: 'advanced', value: { stateId: 'new-state-id-789', kind: next.kind, state: next.state } };
   };
 
-  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'proposal_saved');
   assert.equal(advanceCalls, 1);
@@ -478,7 +494,7 @@ await check('21. proposalId gerado é diferente do stateId antigo e do novo', as
     return { status: 'advanced', value: { stateId: 'new-state-id-222', kind: next.kind, state: next.state } };
   };
 
-  await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+  await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
 
   const proposalId = capturedNext.state.proposalId;
   assert.equal(typeof proposalId, 'string');
@@ -490,7 +506,7 @@ await check('21. proposalId gerado é diferente do stateId antigo e do novo', as
 await check('7. ready -> builder unsupported -> nenhuma escrita', async () => {
   foundClarification('state-A', { status: 'ready', intent: readyUnsupportedIntent });
 
-  const result = await resolveClarificationConversationalTurn('qualquer coisa', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('qualquer coisa', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'unsupported');
 });
@@ -498,7 +514,7 @@ await check('7. ready -> builder unsupported -> nenhuma escrita', async () => {
 await check('8. ready -> builder not_materializable -> nenhuma escrita', async () => {
   foundClarification('state-A', { status: 'ready', intent: readyNotMaterializableIntent });
 
-  const result = await resolveClarificationConversationalTurn('1 hora', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('1 hora', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'not_materializable');
 });
@@ -520,7 +536,7 @@ await check('18. advance conflict -> nenhuma segunda escrita, nenhum replace, se
   // replaceRuntimeState permanece "unconfigured" (lança) — prova que
   // nenhum fallback para replace acontece após conflict.
 
-  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
 
   assert.deepEqual(result, { status: 'conflict' });
   assert.equal(advanceCalls, 1);
@@ -530,7 +546,7 @@ await check('18b. ready -> proposed -> advance conflict -> conflict, sem action'
   foundClarification('state-A', { status: 'ready', intent: readyProposableIntent });
   storageHandlers.advanceRuntimeState = async () => ({ status: 'conflict' });
 
-  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
 
   assert.deepEqual(result, { status: 'conflict' });
 });
@@ -542,7 +558,7 @@ await check('19. advance error -> erro técnico', async () => {
   });
   storageHandlers.advanceRuntimeState = async () => ({ status: 'error' });
 
-  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+  const result = await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
 
   assert.equal(result.status, 'error');
 });
@@ -561,12 +577,100 @@ await check('22. duas evoluções concorrentes simuladas: uma advanced, outra co
     return { status: 'conflict' };
   };
 
-  const first = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
-  const second = await resolveClarificationConversationalTurn('30 minutos', NOW, NEXT_EXPIRES_AT);
+  const first = await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
+  const second = await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
 
   assert.equal(first.status, 'clarification_saved');
   assert.equal(second.status, 'conflict');
 });
+
+// ============================================================================
+// 24-25. TESTES CRÍTICOS — clarificationExpiresAt (A) e proposalExpiresAt (B)
+// nunca trocados entre os dois caminhos. Usam CLARIFICATION_EXPIRES_AT !==
+// PROPOSAL_EXPIRES_AT deliberadamente (ver definição de EXPIRATIONS acima) —
+// se alguém voltar a usar um único timestamp para os dois campos, pelo
+// menos uma das asserções abaixo falha.
+// ============================================================================
+
+await check('24. first-turn: clarification usa A, proposal usa B — nunca trocados', async () => {
+  // Caminho clarification
+  let capturedClarification = null;
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    replaceRuntimeState: async (next) => {
+      capturedClarification = next;
+      return { status: 'saved', value: { stateId: 'new-id', kind: next.kind, state: next.state } };
+    },
+  });
+  await resolveFirstConversationalTurn(needsClarificationIntent, NOW, EXPIRATIONS);
+  assert.equal(capturedClarification.state.expiresAt, CLARIFICATION_EXPIRES_AT);
+  assert.notEqual(capturedClarification.state.expiresAt, PROPOSAL_EXPIRES_AT);
+
+  // Caminho proposal
+  let capturedProposal = null;
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    replaceRuntimeState: async (next) => {
+      capturedProposal = next;
+      return { status: 'saved', value: { stateId: 'new-id', kind: next.kind, state: next.state } };
+    },
+  });
+  await resolveFirstConversationalTurn(readyProposableIntent, NOW, EXPIRATIONS);
+  assert.equal(capturedProposal.state.expiresAt, PROPOSAL_EXPIRES_AT);
+  assert.notEqual(capturedProposal.state.expiresAt, CLARIFICATION_EXPIRES_AT);
+});
+
+await check(
+  '25. continued turn: orchestration recebe A (clarification), ProposalState persistida usa B (proposal) — nunca trocados',
+  async () => {
+    // Caminho awaiting_clarification: captura o 4º argumento (nextExpiresAt)
+    // realmente recebido por resolveClarificationTurn.
+    let capturedOrchestrationExpiresAt = null;
+    setHandlers({
+      getRuntimeState: async () => ({
+        status: 'found',
+        value: {
+          stateId: 'state-A',
+          kind: 'clarification',
+          state: fixtureConversationState({ field: 'duration', text: 'x' }),
+        },
+      }),
+      resolveClarificationTurn: async (state, answer, now, nextExpiresAt) => {
+        capturedOrchestrationExpiresAt = nextExpiresAt;
+        return { status: 'awaiting_clarification', state: fixtureConversationState({ field: 'time', text: 'y' }) };
+      },
+    });
+    storageHandlers.advanceRuntimeState = async (expectedStateId, next) => ({
+      status: 'advanced',
+      value: { stateId: 'new-id', kind: next.kind, state: next.state },
+    });
+    await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
+    assert.equal(capturedOrchestrationExpiresAt, CLARIFICATION_EXPIRES_AT);
+    assert.notEqual(capturedOrchestrationExpiresAt, PROPOSAL_EXPIRES_AT);
+
+    // Caminho ready -> proposal: captura o expiresAt persistido na
+    // ProposalState via advanceRuntimeState.
+    let capturedProposalNext = null;
+    setHandlers({
+      getRuntimeState: async () => ({
+        status: 'found',
+        value: {
+          stateId: 'state-B',
+          kind: 'clarification',
+          state: fixtureConversationState({ field: 'duration', text: 'x' }),
+        },
+      }),
+      resolveClarificationTurn: async () => ({ status: 'ready', intent: readyProposableIntent }),
+    });
+    storageHandlers.advanceRuntimeState = async (expectedStateId, next) => {
+      capturedProposalNext = next;
+      return { status: 'advanced', value: { stateId: 'new-id', kind: next.kind, state: next.state } };
+    };
+    await resolveClarificationConversationalTurn('30 minutos', NOW, EXPIRATIONS);
+    assert.equal(capturedProposalNext.state.expiresAt, PROPOSAL_EXPIRES_AT);
+    assert.notEqual(capturedProposalNext.state.expiresAt, CLARIFICATION_EXPIRES_AT);
+  },
+);
 
 // ============================================================================
 // 23. NENHUM CAMINHO EXECUTA AÇÃO REAL — verificação estática do arquivo-fonte

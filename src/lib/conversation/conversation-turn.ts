@@ -38,12 +38,26 @@ import type { RuntimeStateAdvanceResult } from './runtime-state-storage';
 // Imports normais e estáticos das dependências reais — sem parâmetro de
 // injeção, sem `import()` dinâmico condicionado a ambiente de teste. A
 // API pública tem exatamente os argumentos conceituais já aprovados
-// (`intent`/`now`/`expiresAt` e `answer`/`now`/`nextExpiresAt`), nada
+// (`intent`/`now`/`expirations` e `answer`/`now`/`expirations`), nada
 // exposto só para viabilizar teste — a infraestrutura de teste (ver
 // `tests/support/`) resolve isso inteiramente por fora deste arquivo, via
 // um hook de resolução de módulos do Node que redireciona, só durante os
 // testes, `./runtime-state-storage`/`./orchestration` para dublês —
 // código de produção nunca muda de forma para acomodar um test runner.
+//
+// --- `ConversationExpirations`: dois TTLs, nunca um só ---------------------
+//
+// Correção de um gap real identificado no mapeamento da subfase anterior:
+// um único `expiresAt` não consegue expressar simultaneamente a política
+// V1 (24h para clarificação, 30min para proposta — ver
+// conversation-ttl.ts), porque QUAL dos dois caminhos será tomado só é
+// decidido DEPOIS que o argumento já foi passado (o resultado de
+// `createConversationState`/`evaluateClarification`/orchestration só é
+// conhecido em runtime). `conversation-turn.ts` continua sem saber nada
+// sobre a POLÍTICA em si — não importa `conversation-ttl.ts`, não calcula
+// nada, só recebe os dois timestamps absolutos já prontos do caller (a
+// futura camada de entry/dispatcher) e escolhe o campo certo para cada
+// chamada de construtor, exatamente como já fazia com um valor só.
 //
 // --- REPLACE vs ADVANCE: regra central herdada do mapeamento anterior -----
 //
@@ -103,6 +117,17 @@ import type { RuntimeStateAdvanceResult } from './runtime-state-storage';
 //   nenhum identificador interno — só `actionType` e `task` (title/
 //   description/deadline/duration), dado de domínio já seguro para uma
 //   futura camada de apresentação. Presente SÓ após escrita bem-sucedida.
+
+// `ConversationExpirations`: só os dois timestamps absolutos — nunca
+// `userId`/`stateId`/`proposalId`/client/payload de runtime. Quem monta
+// este objeto (a futura camada de entry) é responsável por gerá-los (ex.:
+// via `getClarificationExpiresAt(now)`/`getProposalExpiresAt(now)` de
+// conversation-ttl.ts) — este módulo só consome.
+export type ConversationExpirations = {
+  clarificationExpiresAt: number;
+  proposalExpiresAt: number;
+};
+
 export type FirstTurnResult =
   | { status: 'clarification_saved'; question: string }
   | { status: 'proposal_saved'; action: ProposedAction }
@@ -131,7 +156,7 @@ export type ClarificationTurnPersistenceResult =
 export async function resolveFirstConversationalTurn(
   intent: StructuredIntent,
   now: number,
-  expiresAt: number,
+  expirations: ConversationExpirations,
 ): Promise<FirstTurnResult> {
   const current = await getRuntimeState(now);
   if (current.status === 'error') {
@@ -145,7 +170,7 @@ export async function resolveFirstConversationalTurn(
   // current.status é 'not_found' ou 'expired': nada ativo a preservar —
   // criação inicial usa replace.
 
-  const conversationState = createConversationState(intent, now, expiresAt);
+  const conversationState = createConversationState(intent, now, expirations.clarificationExpiresAt);
 
   if (conversationState !== null) {
     const saved = await replaceRuntimeState({ kind: 'clarification', state: conversationState }, now);
@@ -164,7 +189,12 @@ export async function resolveFirstConversationalTurn(
       return { status: 'not_materializable' };
     case 'proposed': {
       const proposalId = crypto.randomUUID();
-      const proposalState: ProposalState = createProposalState(buildResult.action, proposalId, now, expiresAt);
+      const proposalState: ProposalState = createProposalState(
+        buildResult.action,
+        proposalId,
+        now,
+        expirations.proposalExpiresAt,
+      );
       const saved = await replaceRuntimeState({ kind: 'proposal', state: proposalState }, now);
       return saved.status === 'saved'
         ? { status: 'proposal_saved', action: buildResult.action }
@@ -178,7 +208,7 @@ export async function resolveFirstConversationalTurn(
 export async function resolveClarificationConversationalTurn(
   answer: string,
   now: number,
-  nextExpiresAt: number,
+  expirations: ConversationExpirations,
 ): Promise<ClarificationTurnPersistenceResult> {
   const current = await getRuntimeState(now);
 
@@ -201,7 +231,12 @@ export async function resolveClarificationConversationalTurn(
   }
 
   const expectedStateId = current.value.stateId;
-  const turnResult = await resolveClarificationTurn(current.value.state, answer, now, nextExpiresAt);
+  const turnResult = await resolveClarificationTurn(
+    current.value.state,
+    answer,
+    now,
+    expirations.clarificationExpiresAt,
+  );
 
   switch (turnResult.status) {
     case 'expired':
@@ -255,7 +290,7 @@ export async function resolveClarificationConversationalTurn(
             buildResult.action,
             proposalId,
             now,
-            nextExpiresAt,
+            expirations.proposalExpiresAt,
           );
           const advanceResult = await advanceRuntimeState(
             expectedStateId,
