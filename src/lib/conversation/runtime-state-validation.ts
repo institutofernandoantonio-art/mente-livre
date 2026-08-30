@@ -332,7 +332,14 @@ function hasValidBaseIntentFields(value: Record<string, unknown>): boolean {
   return isMissingFieldArray(value.missingFields) && isValidConfidence(value.confidence);
 }
 
-function isValidStructuredIntent(value: unknown): value is StructuredIntent {
+// Exportada para reaproveitamento pela futura fronteira de NLU
+// (intent-extraction.ts, ainda não implementada — ver relatório de
+// mapeamento da subfase correspondente): a saída bruta de um extrator de
+// linguagem natural é tão não confiável quanto um payload JSONB lido do
+// banco, então o MESMO type guard estrutural serve para as duas
+// fronteiras, sem duplicar uma segunda validação quase idêntica. Nenhuma
+// lógica foi alterada — só a visibilidade do símbolo.
+export function isValidStructuredIntent(value: unknown): value is StructuredIntent {
   if (!isPlainObject(value)) return false;
   if (!hasValidBaseIntentFields(value)) return false;
 
