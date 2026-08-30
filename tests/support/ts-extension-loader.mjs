@@ -37,12 +37,27 @@
 //    (`../../src/lib/conversation/local-task-execution.ts`) — uma string
 //    de specifier distinta, nunca encontrada por este Map.
 //
+//    `conversation-entry.ts` importa estaticamente `./conversation-turn`,
+//    `./proposal-turn` e `./intent-extraction` (os três, transitivamente,
+//    dependem de `next/headers`/Anthropic) — redirecionados, pelo mesmo
+//    mecanismo, para fake-conversation-turn.mjs/fake-proposal-turn.mjs/
+//    fake-intent-extraction.mjs. Mesmo cuidado de especificidade: cada um
+//    desses três módulos tem seu PRÓPRIO arquivo de teste, que os importa
+//    por caminhos relativos `../../src/...` diferentes do specifier
+//    `./conversation-turn`/`./proposal-turn`/`./intent-extraction` escrito
+//    dentro de conversation-entry.ts — nunca colidem. `./conversation-ttl`
+//    (também importado por conversation-entry.ts) NÃO é redirecionado —
+//    é 100% puro, sem `next/headers`, carregado real nos testes.
+//
 // API 100% nativa do Node (`node:module`), nenhuma dependência nova.
 const REDIRECTS = new Map([
   ['./runtime-state-storage', new URL('./fake-runtime-state-storage.mjs', import.meta.url).href],
   ['./orchestration', new URL('./fake-orchestration.mjs', import.meta.url).href],
   ['../supabase/server', new URL('./fake-supabase-server.mjs', import.meta.url).href],
   ['./local-task-execution', new URL('./fake-local-task-execution.mjs', import.meta.url).href],
+  ['./conversation-turn', new URL('./fake-conversation-turn.mjs', import.meta.url).href],
+  ['./proposal-turn', new URL('./fake-proposal-turn.mjs', import.meta.url).href],
+  ['./intent-extraction', new URL('./fake-intent-extraction.mjs', import.meta.url).href],
 ]);
 
 export async function resolve(specifier, context, nextResolve) {
