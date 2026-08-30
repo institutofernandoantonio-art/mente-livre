@@ -18,6 +18,9 @@ export default function ConversaPage() {
         </Card>
 
         <div className="mt-6 flex flex-col items-center gap-3">
+          <Link href="/tarefas" className={buttonVariants('secondary')}>
+            Minhas tarefas
+          </Link>
           <Link href="/entrada" className={buttonVariants('secondary')}>
             Voltar para entrada
           </Link>
