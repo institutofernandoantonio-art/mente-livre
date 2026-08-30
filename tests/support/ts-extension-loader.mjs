@@ -49,6 +49,15 @@
 //    (também importado por conversation-entry.ts) NÃO é redirecionado —
 //    é 100% puro, sem `next/headers`, carregado real nos testes.
 //
+//    `actions.ts` (Server Action pública) importa estaticamente
+//    `./conversation-entry` (que, transitivamente, depende de
+//    `next/headers`/Anthropic) — redirecionado, pelo mesmo mecanismo, para
+//    fake-conversation-entry.mjs. Mesmo cuidado de especificidade:
+//    tests/conversation/conversation-entry.test.mjs importa o módulo real
+//    por um caminho relativo diferente
+//    (`../../src/lib/conversation/conversation-entry.ts`) — specifier
+//    distinto, nunca encontrado por este Map.
+//
 // API 100% nativa do Node (`node:module`), nenhuma dependência nova.
 const REDIRECTS = new Map([
   ['./runtime-state-storage', new URL('./fake-runtime-state-storage.mjs', import.meta.url).href],
@@ -58,6 +67,7 @@ const REDIRECTS = new Map([
   ['./conversation-turn', new URL('./fake-conversation-turn.mjs', import.meta.url).href],
   ['./proposal-turn', new URL('./fake-proposal-turn.mjs', import.meta.url).href],
   ['./intent-extraction', new URL('./fake-intent-extraction.mjs', import.meta.url).href],
+  ['./conversation-entry', new URL('./fake-conversation-entry.mjs', import.meta.url).href],
 ]);
 
 export async function resolve(specifier, context, nextResolve) {
