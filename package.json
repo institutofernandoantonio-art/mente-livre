@@ -12,7 +12,8 @@
     "test:confirmation": "node --experimental-strip-types tests/conversation/confirmation.test.mjs",
     "test:runtime-state-validation": "node --experimental-strip-types tests/conversation/runtime-state-validation.test.mjs",
     "test:proposal-turn": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/proposal-turn.test.mjs",
-    "test:local-task-execution": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/local-task-execution.test.mjs"
+    "test:local-task-execution": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/local-task-execution.test.mjs",
+    "test:intent-extraction": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/intent-extraction.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
