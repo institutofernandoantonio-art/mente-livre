@@ -107,9 +107,13 @@ check('9. zero admin client / service role', () => {
   }
 });
 
-check("10. consulta a tabela 'items' com filtro explícito por user_id", () => {
+check("10. consulta a tabela 'items' com filtro explícito por user_id e needs_confirmation=false", () => {
   assert.ok(pageCode.includes("from('items')"));
   assert.ok(pageCode.includes(".eq('user_id', userId)"));
+  // Sem isso, a listagem misturaria sugestões nunca confirmadas do fluxo
+  // antigo de brain dump com tarefas conversacionais reais (ver
+  // relatório de mapeamento desta subfase).
+  assert.ok(pageCode.includes(".eq('needs_confirmation', false)"));
 });
 
 check('11. read-only: zero insert/update/delete/upsert/rpc em todo o arquivo', () => {
@@ -119,16 +123,20 @@ check('11. read-only: zero insert/update/delete/upsert/rpc em todo o arquivo', (
   }
 });
 
-check('12. zero ids internos expostos como texto (proposalId/brainDumpId) — só "id" como key do React', () => {
+check('12. zero ids internos expostos como texto (proposalId/brainDumpId) — "id" só como key/argumento de action', () => {
   assert.ok(!pageCode.includes('proposalId'));
   assert.ok(!pageCode.includes('proposal_id'));
   assert.ok(!pageCode.includes('brainDumpId'));
   assert.ok(!pageCode.includes('brain_dump_id'));
-  // `task.id` aparece EXATAMENTE 1 vez em todo o arquivo, e é a key do
-  // React — nunca renderizado como texto visível em nenhum outro lugar.
+  // `task.id` aparece EXATAMENTE 2 vezes em todo o arquivo: key do React
+  // e argumento do form bound — nunca renderizado como texto visível.
   const occurrences = pageCode.split('task.id').length - 1;
-  assert.equal(occurrences, 1, 'task.id deve aparecer exatamente 1 vez (só como key)');
+  assert.equal(occurrences, 2, 'task.id deve aparecer exatamente 2 vezes (key + bind da action)');
   assert.ok(pageCode.includes('key={task.id}'));
+  assert.ok(pageCode.includes('completeTaskAction.bind(null, task.id)'));
+  // Nenhuma das duas ocorrências está dentro de um nó de texto renderizado
+  // (ex.: `>{task.id}<`) — ambas são atributo/argumento, nunca conteúdo.
+  assert.ok(!/>\s*\{task\.id\}\s*</.test(pageCode));
 });
 
 check('13. estado vazio usa EmptyState existente, erro usa ErrorState existente (nenhum componente novo)', () => {
@@ -168,7 +176,32 @@ check('17. ConversationPanel.tsx não foi alterado nesta subfase (byte-for-byte)
   assert.equal(diff, '', 'ConversationPanel.tsx foi modificado — esperado zero diff');
 });
 
-check("18. /conversa ganhou só um link de navegação para '/tarefas', nada mais", () => {
+check('18b. página importa completeTaskAction de ./actions, nunca implementa mutação própria', () => {
+  assert.ok(pageCode.includes("from './actions'"));
+  assert.ok(pageCode.includes('completeTaskAction'));
+  // page.tsx nunca chama .update/.delete/.upsert/.rpc diretamente — a
+  // única mutação da rota vive inteiramente em actions.ts (teste 11 já
+  // confirma zero mutação em page.tsx). `completeTaskAction` precisa ser
+  // importado de `./actions` (não definido localmente) porque só uma
+  // função exportada de um módulo `'use server'` pode ser passada como
+  // `action` de um `<form>` — uma função comum declarada dentro do
+  // próprio Server Component é rejeitada pelo React nesse ponto
+  // específico (erro real reproduzido no teste manual desta subfase).
+  assert.ok(!/function completeTaskAction/.test(pageCode), 'completeTaskAction não deve ser definido em page.tsx');
+});
+
+check('18c. botão "Concluir" só aparece para task.status === \'pending\' (completed/cancelled não têm botão)', () => {
+  assert.ok(pageCode.includes("task.status === 'pending'"));
+  // O `<form>` com a action bound deve estar dentro do bloco condicionado
+  // a esse status — checagem estrutural mínima: a condição aparece antes
+  // do form bound no mesmo trecho.
+  const conditionIndex = pageCode.indexOf("task.status === 'pending'");
+  const formIndex = pageCode.indexOf('completeTaskAction.bind(null, task.id)');
+  assert.ok(conditionIndex !== -1 && formIndex !== -1);
+  assert.ok(conditionIndex < formIndex, 'form bound deve estar dentro do bloco condicionado a status pending');
+});
+
+check("19. /conversa ganhou só um link de navegação para '/tarefas', nada mais", () => {
   assert.ok(conversaPageCode.includes("href=\"/tarefas\"") || conversaPageCode.includes("href='/tarefas'"));
   // Nenhuma lógica conversacional nova vazou para o Server Component.
   const forbidden = ['sendConversationMessage', 'getConversationPresentationState', 'getRuntimeState', "from('items')"];

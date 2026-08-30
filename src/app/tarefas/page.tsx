@@ -2,9 +2,10 @@ import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { buttonVariants } from '@/components/ui/Button';
+import { Button, buttonVariants } from '@/components/ui/Button';
 import { createClient } from '@/lib/supabase/server';
 import { statusLabel, formatDeadline } from './presentation';
+import { completeTaskAction } from './actions';
 
 // ============================================================================
 // Listagem read-only de tarefas — fecha o ciclo mínimo da V1: CRIAR → VER.
@@ -22,14 +23,26 @@ import { statusLabel, formatDeadline } from './presentation';
 //   segurança, e o filtro explícito `.eq('user_id', userId)` abaixo é
 //   reforço em profundidade, mesmo padrão já usado em
 //   `reference-resolution.ts`/`planning-context.ts`;
-// - muta nada — a única operação é um `select`, nunca
-//   insert/update/delete/upsert/rpc;
+// - muta nada NESTE arquivo — a única operação de leitura é um `select`,
+//   nunca insert/update/delete/upsert/rpc; a única mutação real da rota
+//   (`pending → completed`) vive inteiramente em `./actions.ts`;
 // - expõe `proposalId`/`brainDumpId`/`userId`/nenhum id interno — só
 //   `title`/`status` (já humanizado)/prazo (já formatado). `id` é lido só
-//   como `key` do React (nunca renderizado como texto), mesma disciplina
-//   já usada para `id` visual em `ConversationPanel.tsx`;
+//   como `key` do React e como argumento do form bound (nunca renderizado
+//   como texto), mesma disciplina já usada para `id` visual em
+//   `ConversationPanel.tsx`;
 // - altera o fluxo conversacional — `ConversationPanel.tsx` permanece
 //   intocado; a única ligação é um link de navegação em `/conversa`.
+//
+// `needs_confirmation = false`: filtro novo desta subfase — sem ele, a
+// listagem misturava tarefas conversacionais reais (`needs_confirmation:
+// false`) com sugestões do fluxo antigo de brain dump nunca confirmadas
+// pelo usuário (`needs_confirmation: true`, ver `actions.ts` de
+// `supabase/actions.ts`: "a IA só recomenda, nada é executado
+// automaticamente"). `/tarefas` agora representa só itens operacionais
+// já confirmados — nunca filtrado por `category`, que sozinho não
+// bastaria (brain dumps de categoria `tarefa` também têm
+// `needs_confirmation: true`).
 //
 // Ordenação: `created_at DESC` (mais recentes primeiro) — única e simples,
 // sem nenhuma lógica de prioridade/Eisenhower nesta subfase.
@@ -55,6 +68,7 @@ export default async function TarefasPage() {
       .from('items')
       .select('id, title, status, deadline_at')
       .eq('user_id', userId)
+      .eq('needs_confirmation', false)
       .order('created_at', { ascending: false });
 
     if (error || data === null) {
@@ -89,6 +103,13 @@ export default async function TarefasPage() {
                   <p className="font-medium text-ink">{task.title}</p>
                   <p className="mt-1 text-sm text-ink-soft">{statusLabel(task.status)}</p>
                   {deadlineText && <p className="mt-1 text-sm text-ink-soft">Prazo: {deadlineText}</p>}
+                  {task.status === 'pending' && (
+                    <form action={completeTaskAction.bind(null, task.id)} className="mt-3">
+                      <Button type="submit" variant="secondary">
+                        Concluir
+                      </Button>
+                    </form>
+                  )}
                 </div>
               );
             })}
