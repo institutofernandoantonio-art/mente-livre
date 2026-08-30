@@ -46,6 +46,9 @@ export default async function EntradaPage({
         </Card>
 
         <div className="mt-6 flex flex-col items-center gap-3">
+          <Link href="/conversa" className={buttonVariants("secondary")}>
+            Conversar com o Mente Livre
+          </Link>
           <Link href="/" className={buttonVariants("secondary")}>
             Voltar ao início
           </Link>

@@ -26,9 +26,14 @@ export default function WelcomePage() {
       <div className="flex-1 md:hidden" aria-hidden="true" />
 
       <div className="w-full max-w-sm md:mt-10">
-        <Link href="/entrada" className={buttonVariants("primary", "w-full")}>
+        <Link href="/conversa" className={buttonVariants("primary", "w-full")}>
           Começar
         </Link>
+        <div className="mt-3 flex justify-center">
+          <Link href="/entrada" className={buttonVariants("ghost")}>
+            Organizar pensamentos
+          </Link>
+        </div>
       </div>
     </main>
   );

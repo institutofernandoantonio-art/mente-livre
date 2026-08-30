@@ -238,12 +238,37 @@ check("25. '/conversa' está em AAL2_REQUIRED_PATHS", () => {
   assert.ok(match[1].includes("'/redefinir-senha'"));
 });
 
-check('26. /entrada não foi alterada nesta subfase (byte-for-byte)', () => {
-  const diff = execSync('git diff -- src/app/entrada', { cwd: fileURLToPath(new URL('../..', import.meta.url)) })
-    .toString()
-    .trim();
-  assert.equal(diff, '', 'src/app/entrada foi modificada — esperado zero diff');
-});
+check(
+  '26. /entrada: BrainDumpForm.tsx byte-for-byte intacto; page.tsx só ganhou o link de navegação para /conversa (subfase de navegação/descoberta da V1), nenhuma outra linha tocada',
+  () => {
+    const root = fileURLToPath(new URL('../..', import.meta.url));
+
+    const brainDumpDiff = execSync('git diff -- src/app/entrada/BrainDumpForm.tsx', { cwd: root })
+      .toString()
+      .trim();
+    assert.equal(brainDumpDiff, '', 'BrainDumpForm.tsx foi modificado — esperado zero diff');
+
+    const pageDiff = execSync('git diff -- src/app/entrada/page.tsx', { cwd: root }).toString();
+    const addedLines = pageDiff.split('\n').filter((line) => line.startsWith('+') && !line.startsWith('+++'));
+    const removedLines = pageDiff.split('\n').filter((line) => line.startsWith('-') && !line.startsWith('---'));
+
+    // A regra desta subfase é estritamente aditiva: nenhuma linha removida,
+    // e a única linha nova de verdade é o link para /conversa — nunca uma
+    // reescrita de lógica existente.
+    assert.equal(removedLines.length, 0, 'nenhuma linha deveria ser removida de entrada/page.tsx');
+    assert.ok(
+      addedLines.some((line) => line.includes('href="/conversa"')),
+      'linha adicionada com o link para /conversa não encontrada',
+    );
+
+    const forbidden = ['.from(', '.insert(', '.update(', '.delete(', 'createBrainDump', 'organizeBrainDump'];
+    for (const line of addedLines) {
+      for (const token of forbidden) {
+        assert.ok(!line.includes(token), `linha adicionada contém lógica indevida: ${token}`);
+      }
+    }
+  },
+);
 
 // ============================================================================
 // 27-31. REGRESSÃO DO BUG "bootstrap preso em Strict Mode"
