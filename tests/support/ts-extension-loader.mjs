@@ -22,10 +22,16 @@
 //    fake-runtime-state-storage.mjs/fake-orchestration.mjs — o arquivo de
 //    produção nunca sabe disso e nunca muda.
 //
+//    `local-task-execution.ts` importa estaticamente `../supabase/server`
+//    (mesmo módulo real já usado por runtime-state-storage.ts, mesmo
+//    motivo: depende de `next/headers`) — redirecionado, pelo mesmo
+//    mecanismo, para fake-supabase-server.mjs.
+//
 // API 100% nativa do Node (`node:module`), nenhuma dependência nova.
 const REDIRECTS = new Map([
   ['./runtime-state-storage', new URL('./fake-runtime-state-storage.mjs', import.meta.url).href],
   ['./orchestration', new URL('./fake-orchestration.mjs', import.meta.url).href],
+  ['../supabase/server', new URL('./fake-supabase-server.mjs', import.meta.url).href],
 ]);
 
 export async function resolve(specifier, context, nextResolve) {
