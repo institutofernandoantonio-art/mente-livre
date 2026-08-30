@@ -62,7 +62,7 @@ export async function proxy(request: NextRequest) {
   // Rotas que exigem AAL2 quando a conta tiver um fator TOTP verificado
   // (/redefinir-senha inclusive — sem isso, o link de recuperação por
   // e-mail sozinho bastaria para trocar a senha de uma conta com MFA).
-  const AAL2_REQUIRED_PATHS = new Set(['/entrada', '/redefinir-senha']);
+  const AAL2_REQUIRED_PATHS = new Set(['/entrada', '/redefinir-senha', '/conversa']);
 
   const pathname = request.nextUrl.pathname;
   const needsSession = SESSION_REQUIRED_PATHS.has(pathname) || AAL2_REQUIRED_PATHS.has(pathname);
