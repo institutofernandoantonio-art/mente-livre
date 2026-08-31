@@ -130,14 +130,16 @@ check('12. zero ids internos expostos como texto (proposalId/brainDumpId) — "i
   assert.ok(!pageCode.includes('proposal_id'));
   assert.ok(!pageCode.includes('brainDumpId'));
   assert.ok(!pageCode.includes('brain_dump_id'));
-  // `task.id` aparece EXATAMENTE 2 vezes em todo o arquivo: key do React
-  // e argumento do form bound — nunca renderizado como texto visível.
+  // `task.id` aparece EXATAMENTE 3 vezes em todo o arquivo: key do React,
+  // argumento do bind de completeTaskAction, argumento do bind de
+  // cancelTaskAction — nunca renderizado como texto visível.
   const occurrences = pageCode.split('task.id').length - 1;
-  assert.equal(occurrences, 2, 'task.id deve aparecer exatamente 2 vezes (key + bind da action)');
+  assert.equal(occurrences, 3, 'task.id deve aparecer exatamente 3 vezes (key + 2 binds de action)');
   assert.ok(pageCode.includes('key={task.id}'));
   assert.ok(pageCode.includes('completeTaskAction.bind(null, task.id)'));
-  // Nenhuma das duas ocorrências está dentro de um nó de texto renderizado
-  // (ex.: `>{task.id}<`) — ambas são atributo/argumento, nunca conteúdo.
+  assert.ok(pageCode.includes('cancelTaskAction.bind(null, task.id)'));
+  // Nenhuma das três ocorrências está dentro de um nó de texto renderizado
+  // (ex.: `>{task.id}<`) — todas são atributo/argumento, nunca conteúdo.
   assert.ok(!/>\s*\{task\.id\}\s*</.test(pageCode));
 });
 
@@ -260,29 +262,44 @@ check(
   },
 );
 
-check('18b. página importa completeTaskAction de ./actions, nunca implementa mutação própria', () => {
+check('18b. página importa completeTaskAction/cancelTaskAction de ./actions, nunca implementa mutação própria', () => {
   assert.ok(pageCode.includes("from './actions'"));
   assert.ok(pageCode.includes('completeTaskAction'));
+  assert.ok(pageCode.includes('cancelTaskAction'));
   // page.tsx nunca chama .update/.delete/.upsert/.rpc diretamente — a
   // única mutação da rota vive inteiramente em actions.ts (teste 11 já
-  // confirma zero mutação em page.tsx). `completeTaskAction` precisa ser
-  // importado de `./actions` (não definido localmente) porque só uma
+  // confirma zero mutação em page.tsx). Ambos os wrappers precisam ser
+  // importados de `./actions` (não definidos localmente) porque só uma
   // função exportada de um módulo `'use server'` pode ser passada como
   // `action` de um `<form>` — uma função comum declarada dentro do
   // próprio Server Component é rejeitada pelo React nesse ponto
-  // específico (erro real reproduzido no teste manual desta subfase).
+  // específico (erro real reproduzido no teste manual da subfase de
+  // conclusão de tarefa).
   assert.ok(!/function completeTaskAction/.test(pageCode), 'completeTaskAction não deve ser definido em page.tsx');
+  assert.ok(!/function cancelTaskAction/.test(pageCode), 'cancelTaskAction não deve ser definido em page.tsx');
 });
 
-check('18c. botão "Concluir" só aparece para task.status === \'pending\' (completed/cancelled não têm botão)', () => {
-  assert.ok(pageCode.includes("task.status === 'pending'"));
-  // O `<form>` com a action bound deve estar dentro do bloco condicionado
-  // a esse status — checagem estrutural mínima: a condição aparece antes
-  // do form bound no mesmo trecho.
-  const conditionIndex = pageCode.indexOf("task.status === 'pending'");
-  const formIndex = pageCode.indexOf('completeTaskAction.bind(null, task.id)');
-  assert.ok(conditionIndex !== -1 && formIndex !== -1);
-  assert.ok(conditionIndex < formIndex, 'form bound deve estar dentro do bloco condicionado a status pending');
+check(
+  '18c. botões "Concluir"/"Cancelar" só aparecem para task.status === \'pending\' (completed/cancelled não têm nenhum botão)',
+  () => {
+    assert.ok(pageCode.includes("task.status === 'pending'"));
+    // Só 1 ocorrência da condição — os dois forms (Concluir/Cancelar)
+    // compartilham o MESMO bloco condicional, nunca duas checagens
+    // independentes que poderiam divergir.
+    const occurrences = pageCode.split("task.status === 'pending'").length - 1;
+    assert.equal(occurrences, 1, "task.status === 'pending' deve aparecer exatamente 1 vez");
+
+    const conditionIndex = pageCode.indexOf("task.status === 'pending'");
+    const completeFormIndex = pageCode.indexOf('completeTaskAction.bind(null, task.id)');
+    const cancelFormIndex = pageCode.indexOf('cancelTaskAction.bind(null, task.id)');
+    assert.ok(conditionIndex !== -1 && completeFormIndex !== -1 && cancelFormIndex !== -1);
+    assert.ok(conditionIndex < completeFormIndex, 'form de Concluir deve estar dentro do bloco condicionado a pending');
+    assert.ok(conditionIndex < cancelFormIndex, 'form de Cancelar deve estar dentro do bloco condicionado a pending');
+  },
+);
+
+check('18d. botão "Cancelar" usa variant ghost (visualmente secundário/discreto, sem redesign)', () => {
+  assert.ok(/variant="ghost">\s*Cancelar/.test(pageCode), 'botão Cancelar deve usar variant="ghost"');
 });
 
 check("19. /conversa ganhou só um link de navegação para '/tarefas', nada mais", () => {

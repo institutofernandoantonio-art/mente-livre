@@ -5,7 +5,7 @@ import { ErrorState } from '@/components/ui/ErrorState';
 import { Button, buttonVariants } from '@/components/ui/Button';
 import { createClient } from '@/lib/supabase/server';
 import { statusLabel, formatDeadline } from './presentation';
-import { completeTaskAction } from './actions';
+import { completeTaskAction, cancelTaskAction } from './actions';
 
 // ============================================================================
 // Listagem read-only de tarefas — fecha o ciclo mínimo da V1: CRIAR → VER.
@@ -24,8 +24,9 @@ import { completeTaskAction } from './actions';
 //   reforço em profundidade, mesmo padrão já usado em
 //   `reference-resolution.ts`/`planning-context.ts`;
 // - muta nada NESTE arquivo — a única operação de leitura é um `select`,
-//   nunca insert/update/delete/upsert/rpc; a única mutação real da rota
-//   (`pending → completed`) vive inteiramente em `./actions.ts`;
+//   nunca insert/update/delete/upsert/rpc; as únicas mutações reais da
+//   rota (`pending → completed`, `pending → cancelled`) vivem
+//   inteiramente em `./actions.ts`;
 // - expõe `proposalId`/`brainDumpId`/`userId`/nenhum id interno — só
 //   `title`/`status` (já humanizado)/prazo (já formatado). `id` é lido só
 //   como `key` do React e como argumento do form bound (nunca renderizado
@@ -104,11 +105,18 @@ export default async function TarefasPage() {
                   <p className="mt-1 text-sm text-ink-soft">{statusLabel(task.status)}</p>
                   {deadlineText && <p className="mt-1 text-sm text-ink-soft">Prazo: {deadlineText}</p>}
                   {task.status === 'pending' && (
-                    <form action={completeTaskAction.bind(null, task.id)} className="mt-3">
-                      <Button type="submit" variant="secondary">
-                        Concluir
-                      </Button>
-                    </form>
+                    <div className="mt-3 flex gap-2">
+                      <form action={completeTaskAction.bind(null, task.id)}>
+                        <Button type="submit" variant="secondary">
+                          Concluir
+                        </Button>
+                      </form>
+                      <form action={cancelTaskAction.bind(null, task.id)}>
+                        <Button type="submit" variant="ghost">
+                          Cancelar
+                        </Button>
+                      </form>
+                    </div>
                   )}
                 </div>
               );

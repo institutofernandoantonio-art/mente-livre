@@ -1,5 +1,5 @@
-// Auditoria estática de src/app/tarefas/actions.ts (Server Action
-// `completeTask`).
+// Auditoria estática de src/app/tarefas/actions.ts (Server Actions
+// `completeTask`/`cancelTask`).
 //
 // Execução: npm run test:tasks-actions
 //
@@ -114,14 +114,14 @@ check('9. zero leitura prévia — .from(\'items\') encadeia DIRETO em .update(,
   );
 });
 
-check('10. exatamente 1 chamada de update em todo o arquivo (zero retry)', () => {
+check('10. exatamente 2 chamadas de update em todo o arquivo (1 de completeTask + 1 de cancelTask, zero retry em cada)', () => {
   const occurrences = codeOnly.split('.update(').length - 1;
-  assert.equal(occurrences, 1, 'deve haver exatamente 1 chamada a .update(');
+  assert.equal(occurrences, 2, 'deve haver exatamente 2 chamadas a .update( (completeTask + cancelTask)');
 });
 
-check('11. zero segunda query explicativa (só 1 uso de .from() em todo o arquivo)', () => {
+check("11. zero segunda query explicativa (exatamente 2 usos de .from('items') em todo o arquivo — 1 por transição)", () => {
   const occurrences = codeOnly.split(".from('items')").length - 1;
-  assert.equal(occurrences, 1, 'deve haver exatamente 1 uso de .from(\'items\')');
+  assert.equal(occurrences, 2, 'deve haver exatamente 2 usos de .from(\'items\') (completeTask + cancelTask)');
 });
 
 check('12. zero admin client / service role / RPC / mutações proibidas', () => {
@@ -140,15 +140,16 @@ check('12. zero admin client / service role / RPC / mutações proibidas', () =>
   }
 });
 
-check("13. revalidatePath('/tarefas') presente e ocorre SOMENTE no ramo de sucesso (após o check de not_found)", () => {
+check("13. revalidatePath('/tarefas') presente em AMBAS as transições e ocorre SOMENTE no ramo de sucesso de cada uma (após o check de not_found)", () => {
   assert.ok(codeOnly.includes("revalidatePath('/tarefas')"));
   const notFoundIndex = codeOnly.indexOf("if (data === null)");
   const revalidateIndex = codeOnly.indexOf("revalidatePath('/tarefas')");
   assert.ok(notFoundIndex !== -1 && revalidateIndex !== -1);
   assert.ok(revalidateIndex > notFoundIndex, 'revalidatePath deve vir depois do branch not_found, nunca antes');
-  // Exatamente 1 chamada — nunca revalidado em not_found/error.
+  // Exatamente 2 chamadas — 1 por transição (completeTask/cancelTask),
+  // nunca revalidado em not_found/error de nenhuma delas.
   const occurrences = codeOnly.split('revalidatePath(').length - 1;
-  assert.equal(occurrences, 1);
+  assert.equal(occurrences, 2);
 });
 
 check('14. exceptions inesperadas mapeadas para error via catch estreito, nunca logadas cruas', () => {
@@ -196,6 +197,126 @@ check('19. completeTaskAction só delega para completeTask e descarta o resultad
   assert.ok(match, 'corpo de completeTaskAction não encontrado');
   const body = match[1];
   assert.ok(body.includes('await completeTask(taskId)'));
+  const forbidden = ['.update(', '.delete(', '.upsert(', '.rpc(', "from('items')"];
+  for (const token of forbidden) {
+    assert.ok(!body.includes(token), `mutação indevida encontrada dentro do wrapper: ${token}`);
+  }
+});
+
+// ============================================================================
+// 20-34. cancelTask/cancelTaskAction — espelha 1-19 de completeTask, agora
+// isolado à seção do arquivo que começa em `cancelTask` (checks
+// específicos de filtro/estrutura usam `cancelSection`, nunca o arquivo
+// inteiro, para nunca dar falso-positivo por causa da função irmã).
+// ============================================================================
+
+const cancelTaskIndex = codeOnly.indexOf('export async function cancelTask(');
+const cancelSection = cancelTaskIndex === -1 ? '' : codeOnly.slice(cancelTaskIndex);
+
+check("20. CancelTaskResult tem exatamente os 3 status esperados, nenhum a mais", () => {
+  const match = codeOnly.match(/export type CancelTaskResult =([^;]*);/);
+  assert.ok(match, 'tipo CancelTaskResult não encontrado');
+  const body = match[1];
+  for (const status of ['cancelled', 'not_found', 'error']) {
+    assert.ok(body.includes(`'${status}'`), `status ausente: ${status}`);
+  }
+  // Nunca 'completed' — cancelar e concluir são transições independentes,
+  // nunca cruzadas (ver teste 31/32).
+  for (const forbidden of ['completed', 'forbidden', 'already_completed', 'needs_confirmation']) {
+    assert.ok(!body.includes(`'${forbidden}'`), `status indevido encontrado: ${forbidden}`);
+  }
+});
+
+check('21. assinatura pública de cancelTask aceita SÓ "taskId: string"', () => {
+  const match = codeOnly.match(/export async function cancelTask\(([^)]*)\)/s);
+  assert.ok(match, 'assinatura pública não encontrada');
+  const params = match[1].trim();
+  assert.equal(params, 'taskId: string', 'assinatura deve ter exatamente um parâmetro: taskId: string');
+});
+
+check('22. input inválido (taskId vazio/não-string) é checado ANTES de qualquer chamada a createClient() em cancelTask', () => {
+  const invalidCheckIndex = cancelSection.indexOf('isNonBlankString(taskId)');
+  const createClientCallIndex = cancelSection.indexOf('await createClient()');
+  assert.ok(invalidCheckIndex !== -1, 'checagem de input inválido não encontrada em cancelTask');
+  assert.ok(createClientCallIndex !== -1, 'chamada a createClient() não encontrada em cancelTask');
+  assert.ok(invalidCheckIndex < createClientCallIndex, 'input deve ser validado antes de qualquer I/O');
+});
+
+check('23. cancelTask usa createClient() normal + getClaims(), userId de claims.sub', () => {
+  assert.ok(cancelSection.includes('await createClient()'));
+  assert.ok(cancelSection.includes('supabase.auth.getClaims()'));
+  assert.ok(cancelSection.includes('claims?.claims.sub'));
+});
+
+check('24. ausência de userId -> error, antes de qualquer update, em cancelTask', () => {
+  const userIdCheckIndex = cancelSection.indexOf('if (!userId)');
+  const updateCallIndex = cancelSection.indexOf(".update({ status: 'cancelled' })");
+  assert.ok(userIdCheckIndex !== -1 && updateCallIndex !== -1);
+  assert.ok(userIdCheckIndex < updateCallIndex);
+});
+
+check('25. update de cancelTask tem exatamente os 4 filtros exigidos: id, user_id, status=pending, needs_confirmation=false', () => {
+  assert.ok(cancelSection.includes(".eq('id', taskId)"));
+  assert.ok(cancelSection.includes(".eq('user_id', userId)"));
+  assert.ok(cancelSection.includes(".eq('status', 'pending')"));
+  assert.ok(cancelSection.includes(".eq('needs_confirmation', false)"));
+});
+
+check("26. update de cancelTask usa .select('id').maybeSingle()", () => {
+  assert.ok(cancelSection.includes(".select('id')"));
+  assert.ok(cancelSection.includes('.maybeSingle()'));
+});
+
+check("27. zero leitura prévia em cancelTask — .from('items') encadeia DIRETO em .update(", () => {
+  assert.ok(
+    /\.from\('items'\)\s*\.update\(/.test(cancelSection),
+    "'.from(\'items\')' deve encadear diretamente em '.update(' dentro de cancelTask",
+  );
+});
+
+check('28. exatamente 1 chamada de update dentro de cancelTask (zero retry)', () => {
+  // cancelSection inclui cancelTaskAction também, mas esse wrapper nunca
+  // chama .update( (ver teste 34) — então esta contagem já é exclusiva de
+  // cancelTask.
+  const occurrences = cancelSection.split('.update(').length - 1;
+  assert.equal(occurrences, 1, 'deve haver exatamente 1 chamada a .update( dentro de cancelTask');
+});
+
+check("29. zero segunda query explicativa dentro de cancelTask (só 1 uso de .from('items'))", () => {
+  const occurrences = cancelSection.split(".from('items')").length - 1;
+  assert.equal(occurrences, 1, 'deve haver exatamente 1 uso de .from(\'items\') dentro de cancelTask');
+});
+
+check("30. revalidatePath('/tarefas') dentro de cancelTask ocorre SOMENTE no ramo de sucesso", () => {
+  const notFoundIndex = cancelSection.indexOf('if (data === null)');
+  const revalidateIndex = cancelSection.indexOf("revalidatePath('/tarefas')");
+  assert.ok(notFoundIndex !== -1 && revalidateIndex !== -1);
+  assert.ok(revalidateIndex > notFoundIndex, 'revalidatePath deve vir depois do branch not_found, nunca antes');
+});
+
+check('31. cancelTask nunca usa status "completed" — as duas transições nunca se cruzam', () => {
+  assert.ok(!cancelSection.includes("'completed'"), 'cancelTask não deveria referenciar o status completed');
+});
+
+check('32. completeTask nunca usa status "cancelled" — as duas transições nunca se cruzam (direção oposta)', () => {
+  const completeSection = codeOnly.slice(
+    codeOnly.indexOf('export async function completeTask('),
+    codeOnly.indexOf('export async function completeTaskAction('),
+  );
+  assert.ok(!completeSection.includes("'cancelled'"), 'completeTask não deveria referenciar o status cancelled');
+});
+
+check('33. cancelTaskAction exportado com assinatura (taskId: string): Promise<void>', () => {
+  const match = codeOnly.match(/export async function cancelTaskAction\(([^)]*)\): Promise<void> \{([^}]*)\}/);
+  assert.ok(match, 'cancelTaskAction não encontrado com a assinatura esperada');
+  assert.equal(match[1].trim(), 'taskId: string');
+});
+
+check('34. cancelTaskAction só delega para cancelTask e descarta o resultado, nunca reimplementa mutação', () => {
+  const match = codeOnly.match(/export async function cancelTaskAction\([^)]*\): Promise<void> \{([^}]*)\}/);
+  assert.ok(match, 'corpo de cancelTaskAction não encontrado');
+  const body = match[1];
+  assert.ok(body.includes('await cancelTask(taskId)'));
   const forbidden = ['.update(', '.delete(', '.upsert(', '.rpc(', "from('items')"];
   for (const token of forbidden) {
     assert.ok(!body.includes(token), `mutação indevida encontrada dentro do wrapper: ${token}`);

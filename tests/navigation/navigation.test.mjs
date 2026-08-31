@@ -138,10 +138,29 @@ check('8. /tarefas continua com acesso para /conversa', () => {
   assert.ok(tarefasCode.includes('href="/conversa"') || tarefasCode.includes("href='/conversa'"));
 });
 
-check('9. tarefas/page.tsx não foi alterado nesta subfase (byte-for-byte)', () => {
-  const diff = byteDiffIsEmpty('src/app/tarefas/page.tsx');
-  assert.equal(diff, '', 'src/app/tarefas/page.tsx foi modificado — esperado zero diff');
-});
+// Nota histórica: a versão anterior deste teste exigia zero diff em
+// tarefas/page.tsx — válido enquanto nenhuma subfase posterior tinha
+// motivo legítimo para tocá-lo. A subfase de cancelamento de tarefa
+// autoriza explicitamente uma mudança nele (botão "Cancelar" +
+// cancelTaskAction, ao lado de "Concluir"); a asserção de "byte-for-byte"
+// ficou obsoleta por isso, não por vazamento de escopo real. Reescrita
+// para checar o CONTEÚDO relevante à navegação (a auditoria detalhada da
+// listagem/mutação já é feita por tarefas.test.mjs, testes 7-12/18b-18d) —
+// aqui só confirma que o essencial do grafo de navegação e a ausência de
+// lógica de domínio nova continuam intactos.
+check(
+  '9. tarefas/page.tsx: única mudança permitida é o botão Cancelar/cancelTaskAction — navegação e ausência de lógica nova preservadas',
+  () => {
+    assert.ok(tarefasCode.includes('href="/conversa"'), 'link de volta para /conversa ausente');
+    assert.ok(tarefasCode.includes("from './actions'"));
+    assert.ok(tarefasCode.includes('completeTaskAction'));
+    assert.ok(tarefasCode.includes('cancelTaskAction'));
+    const forbidden = ['createAdminClient', 'service_role', '.insert(', '.delete(', '.upsert(', '.rpc('];
+    for (const token of forbidden) {
+      assert.ok(!tarefasCode.includes(token), `token proibido encontrado: ${token}`);
+    }
+  },
+);
 
 // ============================================================================
 // 10-13. Componentes/lógica que esta subfase NUNCA deveria tocar
@@ -245,10 +264,30 @@ check('15. src/app/layout.tsx intacto — nenhuma navbar/sidebar global criada',
   assert.equal(diff, '', 'src/app/layout.tsx foi modificado — esperado zero diff');
 });
 
-check('16. src/app/tarefas/actions.ts (Server Action de concluir) intacto — zero Server Action nova', () => {
-  const diff = byteDiffIsEmpty('src/app/tarefas/actions.ts');
-  assert.equal(diff, '', 'src/app/tarefas/actions.ts foi modificado — esperado zero diff');
-});
+// Nota histórica: a versão anterior deste teste exigia zero diff em
+// tarefas/actions.ts — válido enquanto nenhuma subfase posterior tinha
+// motivo legítimo para tocá-lo. A subfase de cancelamento de tarefa
+// autoriza explicitamente uma segunda Server Action nele (`cancelTask`/
+// `cancelTaskAction`, espelhando `completeTask`); a asserção de
+// "byte-for-byte" ficou obsoleta por isso. Reescrita para permitir
+// EXATAMENTE essas duas novas exportações, mantendo a proibição de
+// admin/service_role/RPC — a auditoria estrutural completa (filtros,
+// zero pre-read, etc.) já é feita por tasks-actions.test.mjs.
+check(
+  '16. src/app/tarefas/actions.ts: única mudança permitida é a Server Action cancelTask/cancelTaskAction — zero admin/service_role/RPC',
+  () => {
+    const actionsCode = readCodeOnly('../../src/app/tarefas/actions.ts');
+    assert.ok(actionsCode.includes('export async function cancelTask('));
+    assert.ok(actionsCode.includes('export async function cancelTaskAction('));
+    // completeTask continua existindo e intocado em espírito — mesma
+    // assinatura pública de sempre.
+    assert.ok(actionsCode.includes('export async function completeTask('));
+    const forbidden = ['createAdminClient', 'service_role', '.rpc(', '.insert(', '.delete(', '.upsert('];
+    for (const token of forbidden) {
+      assert.ok(!actionsCode.includes(token), `token proibido encontrado: ${token}`);
+    }
+  },
+);
 
 // ============================================================================
 // 17-18. Nenhuma rota removida + grafo de navegação alcançável sem URL
