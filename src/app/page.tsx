@@ -29,11 +29,6 @@ export default function WelcomePage() {
         <Link href="/conversa" className={buttonVariants("primary", "w-full")}>
           Começar
         </Link>
-        <div className="mt-3 flex justify-center">
-          <Link href="/entrada" className={buttonVariants("ghost")}>
-            Organizar pensamentos
-          </Link>
-        </div>
       </div>
     </main>
   );

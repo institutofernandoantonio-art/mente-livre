@@ -4,7 +4,10 @@
 // os links visíveis do produto:
 //
 //   / → /conversa → /tarefas → (voltar) → /conversa
-//                 ↖ /entrada ↗ (acesso secundário nos dois sentidos)
+//         /entrada → /conversa (acesso de volta, mas /entrada deixou de
+//         ser divulgado a partir da home — ver decisão de produto da
+//         subfase correspondente: /entrada continua existindo e funcional,
+//         só não é mais o caminho principal/descoberto a partir de /)
 //
 // Execução: node tests/navigation/navigation.test.mjs (sem flags — nenhum
 // import de módulo .ts é feito aqui, só leitura de texto).
@@ -67,7 +70,9 @@ const tarefasCode = readCodeOnly('../../src/app/tarefas/page.tsx');
 const panelCode = readCodeOnly('../../src/app/conversa/ConversationPanel.tsx');
 
 // ============================================================================
-// 1-2. HOME — CTA principal para /conversa + acesso secundário a /entrada
+// 1-2. HOME — só a CTA principal para /conversa (sem oferecer /entrada como
+// caminho principal — decisão de produto: /entrada continua existindo e
+// funcional, só deixa de ser divulgada a partir da home)
 // ============================================================================
 
 check('1. CTA principal de / aponta para /conversa (nunca mais para /entrada)', () => {
@@ -75,12 +80,15 @@ check('1. CTA principal de / aponta para /conversa (nunca mais para /entrada)', 
   assert.ok(primaryMatch, 'CTA primária apontando para /conversa não encontrada');
 });
 
-check('2. home mantém acesso secundário (ghost) para /entrada, sem novo componente', () => {
-  assert.ok(homeCode.includes('href="/entrada"'), 'link para /entrada ausente na home');
-  assert.ok(
-    /<Link href="\/entrada" className=\{buttonVariants\("ghost"\)\}>/.test(homeCode),
-    'link para /entrada deve usar buttonVariants("ghost") já existente, nenhum componente novo',
-  );
+// Nota histórica: a versão anterior deste teste exigia a PRESENÇA de um
+// link secundário "Organizar pensamentos" (/entrada) na home — correto
+// enquanto essa era a decisão de produto vigente. A subfase de "destino de
+// /entrada" decidiu o oposto: /entrada deixa de ser oferecida como caminho
+// principal a partir da home (mas continua existindo e funcional via URL
+// direta ou a partir de /conversa — ver testes 4/6/18). Reescrito para
+// provar a AUSÊNCIA do link, não mais a presença.
+check('2. home NÃO oferece mais /entrada como caminho — zero link/menção a /entrada, zero componente de navegação novo', () => {
+  assert.ok(!homeCode.includes('/entrada'), 'home ainda referencia /entrada — deveria ter sido removido');
   // Nenhum import novo de componente de navegação (Navbar/Sidebar/Menu).
   const forbiddenImports = ['Navbar', 'Sidebar', 'BottomNavigation', 'Menu'];
   for (const token of forbiddenImports) {
