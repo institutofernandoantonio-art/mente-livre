@@ -137,6 +137,80 @@ check('14. error -> mensagem genérica, clearInput FALSE (preserva input)', () =
 });
 
 // ============================================================================
+// 14b-14g. calendar_information -> texto curto e determinístico por
+// status/scope, clearInput true, zero segunda chamada a LLM (texto fixo,
+// nunca gerado a partir de conteúdo variável)
+// ============================================================================
+
+check('14b. calendar_information day+busy -> "Você tem compromissos nesse dia."', () => {
+  const effect = mapEntryResultToUiEffect({
+    status: 'calendar_information',
+    result: { status: 'busy', scope: 'day', busyBlockCount: 2 },
+  });
+  assert.deepEqual(effect, {
+    message: { role: 'assistant', kind: 'text', text: 'Você tem compromissos nesse dia.' },
+    clearInput: true,
+  });
+});
+
+check('14c. calendar_information day+available -> "Não encontrei horários ocupados nesse dia."', () => {
+  const effect = mapEntryResultToUiEffect({
+    status: 'calendar_information',
+    result: { status: 'available', scope: 'day' },
+  });
+  assert.deepEqual(effect, {
+    message: { role: 'assistant', kind: 'text', text: 'Não encontrei horários ocupados nesse dia.' },
+    clearInput: true,
+  });
+});
+
+check('14d. calendar_information hour+busy -> "Esse horário está ocupado na sua agenda."', () => {
+  const effect = mapEntryResultToUiEffect({
+    status: 'calendar_information',
+    result: { status: 'busy', scope: 'hour', busyBlockCount: 1 },
+  });
+  assert.deepEqual(effect, {
+    message: { role: 'assistant', kind: 'text', text: 'Esse horário está ocupado na sua agenda.' },
+    clearInput: true,
+  });
+});
+
+check('14e. calendar_information hour+available -> "Não encontrei compromisso nesse horário."', () => {
+  const effect = mapEntryResultToUiEffect({
+    status: 'calendar_information',
+    result: { status: 'available', scope: 'hour' },
+  });
+  assert.deepEqual(effect, {
+    message: { role: 'assistant', kind: 'text', text: 'Não encontrei compromisso nesse horário.' },
+    clearInput: true,
+  });
+});
+
+check('14f. calendar_information unsupported_window -> mensagem própria, nunca reaproveita UNSUPPORTED_TEXT de tarefas', () => {
+  const effect = mapEntryResultToUiEffect({ status: 'calendar_information', result: { status: 'unsupported_window' } });
+  assert.deepEqual(effect, {
+    message: { role: 'assistant', kind: 'text', text: 'Por enquanto, só consigo checar sua agenda para hoje ou amanhã.' },
+    clearInput: true,
+  });
+});
+
+check('14g. calendar_information error -> mensagem genérica de Calendar, nunca afirma "não conectado" sem evidência', () => {
+  const effect = mapEntryResultToUiEffect({ status: 'calendar_information', result: { status: 'error' } });
+  assert.deepEqual(effect, {
+    message: { role: 'assistant', kind: 'text', text: 'Não consegui consultar seu Google Calendar agora.' },
+    clearInput: true,
+  });
+});
+
+check('14h. calendar_information: busyBlockCount nunca aparece no texto (não melhora a UX pedida nesta fatia)', () => {
+  const effect = mapEntryResultToUiEffect({
+    status: 'calendar_information',
+    result: { status: 'busy', scope: 'day', busyBlockCount: 7 },
+  });
+  assert.ok(!effect.message.text.includes('7'));
+});
+
+// ============================================================================
 // 15-19. FORMATAÇÃO DE PREVIEW (visual, nunca lógica)
 // ============================================================================
 
@@ -179,6 +253,7 @@ function readCodeOnly(relativePath) {
 const panelCode = readCodeOnly('../../src/app/conversa/ConversationPanel.tsx');
 const pageCode = readCodeOnly('../../src/app/conversa/page.tsx');
 const proxyCode = readCodeOnly('../../src/proxy.ts');
+const entradaPageCode = readCodeOnly('../../src/app/entrada/page.tsx');
 
 check('20. ConversationPanel chama getConversationPresentationState e sendConversationMessage', () => {
   assert.ok(panelCode.includes("from '@/lib/conversation/actions'"));
@@ -229,6 +304,61 @@ check('24. página /conversa renderiza ConversationPanel sem lógica conversacio
   }
 });
 
+// ============================================================================
+// 24b-24g. ConversationPanel: captura/envio de timezone (query_calendar
+// read-only) — única responsabilidade nova do componente nesta subfase.
+// ============================================================================
+
+check('24b. ConversationPanel captura o timezone real do browser via Intl.DateTimeFormat().resolvedOptions().timeZone', () => {
+  assert.ok(panelCode.includes('Intl.DateTimeFormat().resolvedOptions().timeZone'));
+});
+
+check('24c. timezone é enviado como 2º argumento de sendConversationMessage(text, timezone)', () => {
+  assert.ok(/sendConversationMessage\(\s*text\s*,\s*timezone\s*\)/.test(panelCode));
+});
+
+check('24d. zero persistência de timezone — nenhum localStorage/sessionStorage/cookie/contexto global novo', () => {
+  const forbidden = ['localStorage', 'sessionStorage', 'document.cookie', 'createContext', 'useContext'];
+  for (const token of forbidden) {
+    assert.ok(!panelCode.includes(token), `token proibido encontrado: ${token}`);
+  }
+});
+
+check('24e. zero token/lógica de Calendar no client — só a API global Intl, nunca um import de Calendar', () => {
+  const forbidden = [
+    'getGoogleCalendarBusyTimes',
+    'calendar-query',
+    "from '@/lib/google",
+    'access_token',
+    'refresh_token',
+    'GOOGLE_CLIENT',
+  ];
+  for (const token of forbidden) {
+    assert.ok(!panelCode.includes(token), `token proibido encontrado: ${token}`);
+  }
+  // "Calendar" (substantivo) continua ausente do código real — só aparece
+  // em prosa de comentário, já removida por readCodeOnly (ver teste 21).
+  assert.ok(!panelCode.includes('Calendar'));
+});
+
+check('24f. nenhum componente novo criado — nextId/MessageBubble/ProposalPreview continuam as únicas funções de nível superior', () => {
+  const matches = [...panelCode.matchAll(/^function (\w+)/gm)].map((m) => m[1]);
+  assert.deepEqual(
+    matches.sort(),
+    ['MessageBubble', 'ProposalPreview', 'nextId'].sort(),
+    'nenhuma função de nível superior nova deveria existir além das 3 já aprovadas',
+  );
+});
+
+check('24g. timezone só existe dentro de handleSubmit — nunca em useState/useEffect/props', () => {
+  assert.ok(!panelCode.includes('useState<string | null>'));
+  assert.ok(!/timezone\s*,\s*setTimezone/.test(panelCode));
+  const occurrences = panelCode.split('timezone').length - 1;
+  // 2 ocorrências reais no código: a declaração (`const timezone = ...`) e
+  // o uso no envio (`sendConversationMessage(text, timezone)`).
+  assert.equal(occurrences, 2, 'timezone deve aparecer exatamente 2 vezes no código real (declaração + uso)');
+});
+
 check("25. '/conversa' está em AAL2_REQUIRED_PATHS", () => {
   const match = proxyCode.match(/AAL2_REQUIRED_PATHS\s*=\s*new Set\(\[([^\]]*)\]\)/);
   assert.ok(match, 'AAL2_REQUIRED_PATHS não encontrado');
@@ -238,8 +368,17 @@ check("25. '/conversa' está em AAL2_REQUIRED_PATHS", () => {
   assert.ok(match[1].includes("'/redefinir-senha'"));
 });
 
+// Nota histórica: a versão anterior deste teste checava a presença do link
+// para /conversa via `git diff` das linhas ADICIONADAS em entrada/page.tsx
+// — válido só enquanto aquela mudança (subfase de navegação/descoberta da
+// V1) ainda estava sem commit. Depois do commit isolado correspondente
+// (2bb4cad), `git diff` desse arquivo passa a ser vazio por definição (o
+// arquivo já É o HEAD), então uma asserção baseada em "linha adicionada no
+// diff atual" fica estruturalmente inatingível para sempre — não uma falha
+// de regressão real. Reescrito para checar o CONTEÚDO do arquivo (estável
+// independentemente do estado do git/commit) em vez do diff.
 check(
-  '26. /entrada: BrainDumpForm.tsx byte-for-byte intacto; page.tsx só ganhou o link de navegação para /conversa (subfase de navegação/descoberta da V1), nenhuma outra linha tocada',
+  '26. /entrada: BrainDumpForm.tsx byte-for-byte intacto; page.tsx contém o link já commitado para /conversa e não tem diff nesta subfase',
   () => {
     const root = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -248,25 +387,36 @@ check(
       .trim();
     assert.equal(brainDumpDiff, '', 'BrainDumpForm.tsx foi modificado — esperado zero diff');
 
-    const pageDiff = execSync('git diff -- src/app/entrada/page.tsx', { cwd: root }).toString();
-    const addedLines = pageDiff.split('\n').filter((line) => line.startsWith('+') && !line.startsWith('+++'));
-    const removedLines = pageDiff.split('\n').filter((line) => line.startsWith('-') && !line.startsWith('---'));
+    // Nesta subfase (query_calendar read-only), /entrada/page.tsx não deve
+    // ser tocado — zero diff é a prova correta, não a ausência de linhas
+    // adicionadas (que hoje é sempre vazia, tenha ou não diff real).
+    const pageDiff = execSync('git diff -- src/app/entrada/page.tsx', { cwd: root }).toString().trim();
+    assert.equal(pageDiff, '', 'src/app/entrada/page.tsx foi modificado nesta subfase — esperado zero diff');
 
-    // A regra desta subfase é estritamente aditiva: nenhuma linha removida,
-    // e a única linha nova de verdade é o link para /conversa — nunca uma
-    // reescrita de lógica existente.
-    assert.equal(removedLines.length, 0, 'nenhuma linha deveria ser removida de entrada/page.tsx');
+    // O link para /conversa (da subfase de navegação, já commitado em
+    // 2bb4cad) continua presente no CONTEÚDO real do arquivo — checagem
+    // estável para sempre, nunca depende de o commit estar ou não no
+    // working tree.
     assert.ok(
-      addedLines.some((line) => line.includes('href="/conversa"')),
-      'linha adicionada com o link para /conversa não encontrada',
+      /<Link href="\/conversa" className=\{buttonVariants\("secondary"\)\}>/.test(entradaPageCode),
+      'link para /conversa ausente de entrada/page.tsx',
     );
 
+    // Nenhuma lógica de BrainDump/Calendar/MFA/logout foi alterada — mesmo
+    // vocabulário proibido de antes, agora aplicado ao arquivo inteiro
+    // (zero diff já garante que nada mudou; isto reforça que o conteúdo
+    // real nunca teve essas mutações, independente de diff).
     const forbidden = ['.from(', '.insert(', '.update(', '.delete(', 'createBrainDump', 'organizeBrainDump'];
-    for (const line of addedLines) {
-      for (const token of forbidden) {
-        assert.ok(!line.includes(token), `linha adicionada contém lógica indevida: ${token}`);
-      }
+    for (const token of forbidden) {
+      assert.ok(!entradaPageCode.includes(token), `lógica indevida encontrada em entrada/page.tsx: ${token}`);
     }
+    // Lógica existente (BrainDump/Calendar/MFA/logout) continua presente e
+    // intacta — mesma prova positiva já usada no teste 5 de
+    // navigation.test.mjs, reafirmada aqui.
+    assert.ok(entradaPageCode.includes('<BrainDumpForm'));
+    assert.ok(entradaPageCode.includes('connectGoogleCalendar'));
+    assert.ok(entradaPageCode.includes('href="/mfa/configurar"'));
+    assert.ok(entradaPageCode.includes('logout'));
   },
 );
 

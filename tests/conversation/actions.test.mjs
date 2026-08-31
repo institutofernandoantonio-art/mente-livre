@@ -80,7 +80,7 @@ await check('1. delega para handleConversationMessage exatamente 1 vez, com o te
   });
 
   await withFixedNow(async () => {
-    await sendConversationMessage('comprar leite amanhã');
+    await sendConversationMessage('comprar leite amanhã', 'America/Sao_Paulo');
   });
 
   assert.equal(calls, 1);
@@ -95,7 +95,52 @@ await check('2. now é gerado no servidor via Date.now(), nunca recebido de fora
   });
 
   await withFixedNow(async () => {
-    await sendConversationMessage('qualquer texto');
+    await sendConversationMessage('qualquer texto', 'America/Sao_Paulo');
+  });
+
+  assert.equal(capturedNow, FIXED_NOW);
+});
+
+// ============================================================================
+// 1c-1e. TIMEZONE — repassada verbatim, nunca validada nesta camada
+// ============================================================================
+
+await check('1c. timezone válida repassada verbatim ao dispatcher (2º argumento)', async () => {
+  let capturedTimezone = null;
+  setHandler(async (text, now, timezone) => {
+    capturedTimezone = timezone;
+    return { status: 'needs_input' };
+  });
+
+  await sendConversationMessage('tenho algo amanhã?', 'America/Sao_Paulo');
+
+  assert.equal(capturedTimezone, 'America/Sao_Paulo');
+});
+
+await check('1d. timezone inválida (string vazia) ainda repassada ao dispatcher — validação real fica em calendar-query.ts, nunca aqui', async () => {
+  let capturedTimezone = null;
+  setHandler(async (text, now, timezone) => {
+    capturedTimezone = timezone;
+    return { status: 'needs_input' };
+  });
+
+  const result = await sendConversationMessage('oi', '');
+
+  assert.equal(capturedTimezone, '');
+  // Resultado seguro, nunca um throw — esta camada não decide "válida ou
+  // não", só transporta.
+  assert.deepEqual(result, { status: 'needs_input' });
+});
+
+await check('1e. browser continua sem controlar now mesmo quando timezone é fornecida', async () => {
+  let capturedNow = null;
+  setHandler(async (text, now) => {
+    capturedNow = now;
+    return { status: 'needs_input' };
+  });
+
+  await withFixedNow(async () => {
+    await sendConversationMessage('qualquer texto', 'Europe/Lisbon');
   });
 
   assert.equal(capturedNow, FIXED_NOW);
@@ -127,6 +172,7 @@ await check('3. texto com espaços/acentos/pontuação atravessa exatamente como
 const DTO_SCENARIOS = [
   { status: 'clarification_required', question: 'Quanto tempo você quer reservar?' },
   { status: 'proposal_ready', action: VALID_ACTION },
+  { status: 'calendar_information', result: { status: 'available', scope: 'day' } },
   { status: 'confirmed', itemId: 'item-uuid-123' },
   { status: 'cancelled' },
   { status: 'needs_input' },
@@ -212,16 +258,22 @@ await check('7. importa SOMENTE ./conversation-entry de src/lib/conversation/ (z
   assert.ok(codeOnly.includes("from './conversation-entry'"));
 });
 
-await check("8. assinatura pública aceita SÓ 'text: string' — sem now/ids internos como parâmetro", () => {
+await check("8. assinatura pública aceita SÓ 'text: string, timezone: string' — sem now/ids internos como parâmetro", () => {
   // Escopo deliberadamente restrito à LISTA DE PARÂMETROS da função
   // exportada — nunca ao arquivo inteiro, onde `Date.now()` aparece
   // legitimamente no corpo (ver comentário do cabeçalho da action) e
-  // geraria falso positivo num grep ingênuo por "now".
+  // geraria falso positivo num grep ingênuo por "now". `timezone`
+  // adicionado nesta subfase (query_calendar read-only) — contexto do
+  // cliente, nunca dado de autorização (ver cabeçalho do arquivo).
   const signatureMatch = codeOnly.match(/export async function sendConversationMessage\(([^)]*)\)/s);
   assert.ok(signatureMatch, 'assinatura pública não encontrada');
   const params = signatureMatch[1].trim();
 
-  assert.equal(params, 'text: string', 'assinatura deve ter exatamente um parâmetro: text: string');
+  assert.equal(
+    params,
+    'text: string, timezone: string',
+    'assinatura deve ter exatamente dois parâmetros: text: string, timezone: string',
+  );
   assert.ok(!/\bnow\b/i.test(params));
   assert.ok(!/stateId/i.test(params));
   assert.ok(!/proposalId/i.test(params));
@@ -241,7 +293,7 @@ await check('10. catch estreito envolve SOMENTE a chamada ao dispatcher', () => 
   );
   assert.ok(bodyMatch, 'corpo da função pública não encontrado');
   const body = bodyMatch[1];
-  assert.ok(/try\s*{\s*return await handleConversationMessage\(text, now\);\s*}\s*catch/.test(body));
+  assert.ok(/try\s*{\s*return await handleConversationMessage\(text, now, timezone\);\s*}\s*catch/.test(body));
 });
 
 // --- Resumo -------------------------------------------------------------

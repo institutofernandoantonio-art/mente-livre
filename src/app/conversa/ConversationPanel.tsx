@@ -18,12 +18,19 @@ import {
 // ============================================================================
 // Painel conversacional mínimo — o único Client Component desta rota.
 //
-// Transport boundary consumida: SOMENTE `sendConversationMessage(text)`
-// (envio) e `getConversationPresentationState()` (bootstrap na montagem) —
-// os dois únicos pontos públicos já aprovados nas subfases anteriores.
-// Nenhum outro import de `src/lib/conversation/` além desses dois, do type
+// Transport boundary consumida: SOMENTE `sendConversationMessage(text,
+// timezone)` (envio) e `getConversationPresentationState()` (bootstrap na
+// montagem) — os dois únicos pontos públicos já aprovados. Nenhum outro
+// import de `src/lib/conversation/` além desses dois, do type
 // `ProposedAction` (só para tipar o preview) e do helper puro
 // `presentation-ui.ts` (mapeamento DTO→UI, sem lógica de domínio).
+//
+// `timezone` (novo nesta subfase, query_calendar read-only): capturado via
+// `Intl.DateTimeFormat().resolvedOptions().timeZone` (API global do
+// browser, não um import de Calendar) a cada envio — nunca persistido
+// (localStorage/contexto global/estado do componente), nunca validado
+// aqui (validação real vive em `calendar-query.ts`, a única camada que
+// precisa dele). Mesma técnica já usada por `BrainDumpForm.tsx`.
 //
 // Este componente NUNCA:
 // - importa Supabase/`conversation-entry` internals/`runtime-state-storage`/
@@ -149,7 +156,13 @@ export function ConversationPanel() {
     setPending(true);
 
     try {
-      const result = await sendConversationMessage(text);
+      // Timezone real do browser — necessário para query_calendar resolver
+      // "hoje"/"amanhã" corretamente (o NLU nunca recebe timezone, só um
+      // `now` em UTC — ver calendar-query.ts). Nunca persistido
+      // (localStorage/contexto global): recalculado a cada envio, mesmo
+      // padrão já usado por BrainDumpForm.tsx.
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const result = await sendConversationMessage(text, timezone);
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
       if (clearInput) {

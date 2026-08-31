@@ -86,6 +86,8 @@ function readCodeOnly(relativePath) {
 const pageCode = readCodeOnly('../../src/app/tarefas/page.tsx');
 const proxyCode = readCodeOnly('../../src/proxy.ts');
 const conversaPageCode = readCodeOnly('../../src/app/conversa/page.tsx');
+const entradaPageCode = readCodeOnly('../../src/app/entrada/page.tsx');
+const panelCode = readCodeOnly('../../src/app/conversa/ConversationPanel.tsx');
 
 check('7. página usa createClient() normal e getClaims() (auth server-side, mesmo padrão do projeto)', () => {
   assert.ok(pageCode.includes("from '@/lib/supabase/server'"));
@@ -160,8 +162,18 @@ check("15. '/tarefas' está em AAL2_REQUIRED_PATHS, rotas já existentes preserv
   assert.ok(match[1].includes("'/conversa'"));
 });
 
+// Nota histórica: a versão anterior deste teste checava a presença do link
+// para /conversa via `git diff` das linhas ADICIONADAS em entrada/page.tsx
+// — válido só enquanto aquela mudança (subfase de navegação/descoberta da
+// V1) ainda estava sem commit. Depois do commit isolado correspondente
+// (2bb4cad), `git diff` desse arquivo passa a ser vazio por definição,
+// então uma asserção baseada em "linha adicionada no diff atual" fica
+// estruturalmente inatingível para sempre — não uma falha de regressão
+// real. Reescrito para checar o CONTEÚDO do arquivo (estável
+// independentemente do estado do git/commit) em vez do diff — mesma
+// correção já aplicada em presentation-ui.test.mjs (teste 26).
 check(
-  '16. /entrada: BrainDumpForm.tsx byte-for-byte intacto; page.tsx só ganhou o link de navegação para /conversa (subfase de navegação/descoberta da V1), nenhuma outra linha tocada',
+  '16. /entrada: BrainDumpForm.tsx byte-for-byte intacto; page.tsx contém o link já commitado para /conversa e não tem diff nesta subfase',
   () => {
     const root = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -170,36 +182,83 @@ check(
       .trim();
     assert.equal(brainDumpDiff, '', 'BrainDumpForm.tsx foi modificado — esperado zero diff');
 
-    const pageDiff = execSync('git diff -- src/app/entrada/page.tsx', { cwd: root }).toString();
-    const addedLines = pageDiff.split('\n').filter((line) => line.startsWith('+') && !line.startsWith('+++'));
-    const removedLines = pageDiff.split('\n').filter((line) => line.startsWith('-') && !line.startsWith('---'));
+    // Nesta subfase (query_calendar read-only), /entrada/page.tsx não deve
+    // ser tocado — zero diff é a prova correta, não a ausência de linhas
+    // adicionadas (que hoje é sempre vazia, tenha ou não diff real).
+    const pageDiff = execSync('git diff -- src/app/entrada/page.tsx', { cwd: root }).toString().trim();
+    assert.equal(pageDiff, '', 'src/app/entrada/page.tsx foi modificado nesta subfase — esperado zero diff');
 
-    // A regra desta subfase é estritamente aditiva: nenhuma linha removida,
-    // e a única linha nova de verdade é o link para /conversa — nunca uma
-    // reescrita de lógica existente.
-    assert.equal(removedLines.length, 0, 'nenhuma linha deveria ser removida de entrada/page.tsx');
+    // O link para /conversa (da subfase de navegação, já commitado em
+    // 2bb4cad) continua presente no CONTEÚDO real do arquivo — checagem
+    // estável para sempre, nunca depende de o commit estar ou não no
+    // working tree.
     assert.ok(
-      addedLines.some((line) => line.includes('href="/conversa"')),
-      'linha adicionada com o link para /conversa não encontrada',
+      /<Link href="\/conversa" className=\{buttonVariants\("secondary"\)\}>/.test(entradaPageCode),
+      'link para /conversa ausente de entrada/page.tsx',
     );
 
+    // Nenhuma lógica de BrainDump/Calendar/MFA/logout foi alterada.
     const forbidden = ['.from(', '.insert(', '.update(', '.delete(', 'createBrainDump', 'organizeBrainDump'];
-    for (const line of addedLines) {
-      for (const token of forbidden) {
-        assert.ok(!line.includes(token), `linha adicionada contém lógica indevida: ${token}`);
-      }
+    for (const token of forbidden) {
+      assert.ok(!entradaPageCode.includes(token), `lógica indevida encontrada em entrada/page.tsx: ${token}`);
     }
+    // Lógica existente (BrainDump/Calendar/MFA/logout) continua presente.
+    assert.ok(entradaPageCode.includes('<BrainDumpForm'));
+    assert.ok(entradaPageCode.includes('connectGoogleCalendar'));
+    assert.ok(entradaPageCode.includes('href="/mfa/configurar"'));
+    assert.ok(entradaPageCode.includes('logout'));
   },
 );
 
-check('17. ConversationPanel.tsx não foi alterado nesta subfase (byte-for-byte)', () => {
-  const diff = execSync('git diff -- src/app/conversa/ConversationPanel.tsx', {
-    cwd: fileURLToPath(new URL('../..', import.meta.url)),
-  })
-    .toString()
-    .trim();
-  assert.equal(diff, '', 'ConversationPanel.tsx foi modificado — esperado zero diff');
-});
+// Nota histórica: a versão anterior deste teste exigia zero diff em
+// ConversationPanel.tsx — válido enquanto nenhuma subfase posterior tinha
+// motivo legítimo para tocá-lo. A subfase de query_calendar read-only
+// autoriza explicitamente uma única mudança nele (captura/envio do
+// timezone do browser); a asserção de "byte-for-byte" ficou obsoleta por
+// isso, não por regressão real. Reescrita para permitir EXATAMENTE essa
+// mudança — mesma correção já aplicada em navigation.test.mjs (teste 10).
+check(
+  '17. ConversationPanel.tsx: única mudança permitida é a captura/envio de timezone — zero lógica Calendar/Supabase/token/localStorage, zero componente novo',
+  () => {
+    assert.ok(
+      panelCode.includes('Intl.DateTimeFormat().resolvedOptions().timeZone'),
+      'captura de timezone não encontrada',
+    );
+    assert.ok(
+      /sendConversationMessage\(\s*text\s*,\s*timezone\s*\)/.test(panelCode),
+      'timezone não está sendo enviado como 2º argumento de sendConversationMessage',
+    );
+
+    const forbidden = [
+      'supabase',
+      'Supabase',
+      'createAdminClient',
+      'service_role',
+      'getGoogleCalendarBusyTimes',
+      'calendar-query',
+      "from '@/lib/google",
+      'access_token',
+      'refresh_token',
+      'GOOGLE_CLIENT',
+      'localStorage',
+      'sessionStorage',
+      'document.cookie',
+      'createContext',
+      'useContext',
+    ];
+    for (const token of forbidden) {
+      assert.ok(!panelCode.includes(token), `token proibido encontrado: ${token}`);
+    }
+    assert.ok(!panelCode.includes('Calendar'), 'nenhum import/lógica de Calendar deveria existir no client');
+
+    const topLevelFunctions = [...panelCode.matchAll(/^function (\w+)/gm)].map((m) => m[1]);
+    assert.deepEqual(
+      topLevelFunctions.sort(),
+      ['MessageBubble', 'ProposalPreview', 'nextId'].sort(),
+      'nenhuma função de nível superior nova deveria existir além das 3 já aprovadas',
+    );
+  },
+);
 
 check('18b. página importa completeTaskAction de ./actions, nunca implementa mutação própria', () => {
   assert.ok(pageCode.includes("from './actions'"));

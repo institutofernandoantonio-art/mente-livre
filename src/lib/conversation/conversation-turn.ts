@@ -6,6 +6,7 @@ import { buildProposedAction } from './proposed-action';
 import type { ProposedAction } from './proposed-action';
 import { createProposalState, type ProposalState } from './proposal-state';
 import { resolveClarificationTurn } from './orchestration';
+import { resolveCalendarQuery, type CalendarQueryResult } from './calendar-query';
 import {
   getRuntimeState,
   replaceRuntimeState,
@@ -110,6 +111,32 @@ import type { RuntimeStateAdvanceResult } from './runtime-state-storage';
 // usando exclusivamente `advanceRuntimeState` — nunca consomem, porque
 // ambos têm um PRÓXIMO estado real a persistir.
 //
+// --- query_calendar: CONSULTA, nunca ProposedAction (subfase de leitura
+// read-only do Calendar) ---------------------------------------------------
+//
+// Antes de chamar `buildProposedAction` num intent `ready`, este módulo
+// agora desvia `intentType === 'query_calendar'` para `calendar-query.ts`
+// — nunca para `buildProposedAction`/`ProposalState`/Confirmation Policy/
+// `proposal-turn.ts`/Execution. `ProposedAction` continua com exatamente 1
+// variante (`create_local_task`); `query_calendar` nunca se torna uma.
+//
+// Uma consulta já resolvida no primeiro turno é 100% stateless: zero
+// `replaceRuntimeState` — não há nada a aguardar depois da resposta. Uma
+// consulta que só fica `ready` DEPOIS de uma clarificação (hoje só possível
+// via a resolução de `event_reference`, já suportada por
+// `orchestration.ts` — `temporal_window` continua sem resolvedor de
+// resposta, ver clarification.ts/orchestration.ts) é TERMINAL, sem
+// sucessor: usa `consumeAndReturn`, exatamente o mesmo mecanismo já
+// corrigido para os terminais `unsupported`/`not_materializable` (ver
+// "CONSUME" abaixo) — zero mudança em `runtime-state-storage.ts`.
+//
+// `timezone` (novo parâmetro nas duas funções públicas) é contexto do
+// cliente, nunca dado de autorização — propagado só até `calendar-query.ts`
+// (a única camada que precisa resolver `relative_day`), nunca usado para
+// nada além de aritmética de data. Timezone inválida nunca aborta o turno
+// inteiro: `calendar-query.ts` já trata isso, devolvendo
+// `unsupported_window` (ver aquele arquivo).
+//
 // --- stateId vs proposalId --------------------------------------------
 //
 // `stateId` (identidade de versão de storage, usada só para CAS) NUNCA é
@@ -173,6 +200,7 @@ export type ConversationExpirations = {
 export type FirstTurnResult =
   | { status: 'clarification_saved'; question: string }
   | { status: 'proposal_saved'; action: ProposedAction }
+  | { status: 'calendar_information'; result: CalendarQueryResult }
   | { status: 'already_active' }
   | { status: 'unsupported' }
   | { status: 'not_materializable' }
@@ -181,6 +209,7 @@ export type FirstTurnResult =
 export type ClarificationTurnPersistenceResult =
   | { status: 'clarification_saved'; question: string }
   | { status: 'proposal_saved'; action: ProposedAction }
+  | { status: 'calendar_information'; result: CalendarQueryResult }
   | { status: 'no_active_runtime_state' }
   | { status: 'runtime_expired' }
   | { status: 'proposal_pending' }
@@ -199,6 +228,7 @@ export async function resolveFirstConversationalTurn(
   intent: StructuredIntent,
   now: number,
   expirations: ConversationExpirations,
+  timezone: string,
 ): Promise<FirstTurnResult> {
   const current = await getRuntimeState(now);
   if (current.status === 'error') {
@@ -222,6 +252,14 @@ export async function resolveFirstConversationalTurn(
   }
 
   // createConversationState devolveu null: a intenção já está `ready`.
+
+  if (intent.intentType === 'query_calendar') {
+    // Consulta, não proposta — ver "query_calendar: CONSULTA" no cabeçalho.
+    // Zero write de runtime: nada fica pendente depois desta resposta.
+    const result = await resolveCalendarQuery(intent, now, timezone);
+    return { status: 'calendar_information', result };
+  }
+
   const buildResult = buildProposedAction(intent);
 
   switch (buildResult.status) {
@@ -251,6 +289,7 @@ export async function resolveClarificationConversationalTurn(
   answer: string,
   now: number,
   expirations: ConversationExpirations,
+  timezone: string,
 ): Promise<ClarificationTurnPersistenceResult> {
   const current = await getRuntimeState(now);
 
@@ -320,6 +359,14 @@ export async function resolveClarificationConversationalTurn(
     }
 
     case 'ready': {
+      if (turnResult.intent.intentType === 'query_calendar') {
+        // Terminal — mesmo mecanismo já usado para unsupported/
+        // not_materializable (ver "CONSUME" no cabeçalho): esta resposta
+        // não tem sucessor, a clarification row não deve sobreviver a ela.
+        const result = await resolveCalendarQuery(turnResult.intent, now, timezone);
+        return consumeAndReturn(expectedStateId, now, { status: 'calendar_information', result });
+      }
+
       const buildResult = buildProposedAction(turnResult.intent);
 
       switch (buildResult.status) {

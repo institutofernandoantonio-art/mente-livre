@@ -58,6 +58,19 @@
 //    (`../../src/lib/conversation/conversation-entry.ts`) — specifier
 //    distinto, nunca encontrado por este Map.
 //
+//    `conversation-turn.ts` importa estaticamente `./calendar-query` (que,
+//    através de `../google/calendar`, depende de `next/headers`) —
+//    redirecionado para fake-calendar-query.mjs. Mesmo cuidado de
+//    especificidade: tests/conversation/calendar-query.test.mjs importa o
+//    módulo real por `../../src/lib/conversation/calendar-query.ts`,
+//    specifier distinto, nunca interceptado por este redirect.
+//
+//    `calendar-query.ts` importa estaticamente `../google/calendar` —
+//    redirecionado para fake-google-calendar.mjs. Specifier exato,
+//    distinto de `./calendar` (o specifier que planning-context.ts usa
+//    para o MESMO arquivo real, a partir de um diretório diferente) —
+//    nunca colidem.
+//
 // API 100% nativa do Node (`node:module`), nenhuma dependência nova.
 const REDIRECTS = new Map([
   ['./runtime-state-storage', new URL('./fake-runtime-state-storage.mjs', import.meta.url).href],
@@ -68,6 +81,8 @@ const REDIRECTS = new Map([
   ['./proposal-turn', new URL('./fake-proposal-turn.mjs', import.meta.url).href],
   ['./intent-extraction', new URL('./fake-intent-extraction.mjs', import.meta.url).href],
   ['./conversation-entry', new URL('./fake-conversation-entry.mjs', import.meta.url).href],
+  ['./calendar-query', new URL('./fake-calendar-query.mjs', import.meta.url).href],
+  ['../google/calendar', new URL('./fake-google-calendar.mjs', import.meta.url).href],
 ]);
 
 export async function resolve(specifier, context, nextResolve) {

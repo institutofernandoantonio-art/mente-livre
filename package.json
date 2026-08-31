@@ -21,7 +21,8 @@
     "test:conversation-ui": "node --experimental-strip-types tests/conversation/presentation-ui.test.mjs",
     "test:tarefas": "node --experimental-strip-types tests/tarefas/tarefas.test.mjs",
     "test:tasks-actions": "node --experimental-strip-types tests/tarefas/tasks-actions.test.mjs",
-    "test:navigation": "node tests/navigation/navigation.test.mjs"
+    "test:navigation": "node tests/navigation/navigation.test.mjs",
+    "test:calendar-query": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/calendar-query.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

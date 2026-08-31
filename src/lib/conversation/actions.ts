@@ -25,7 +25,8 @@ import { handleConversationMessage, type ConversationEntryResult } from './conve
 //   trim/normalização/coerção;
 // - aceita `now`/`userId`/`stateId`/`proposalId`/`expiresAt`/
 //   `StructuredIntent`/`ProposedAction`/`ConversationState`/`ProposalState`/
-//   client Supabase do chamador — o único parâmetro público é `text`.
+//   client Supabase do chamador — os únicos parâmetros públicos são
+//   `text`/`timezone`.
 //
 // --- `now`: gerado aqui, e só aqui, nesta camada -------------------------
 //
@@ -33,6 +34,17 @@ import { handleConversationMessage, type ConversationEntryResult } from './conve
 // executa no servidor, por ser uma Server Action — `'use server'` acima).
 // O browser nunca fornece `now`: não existe parâmetro para isso, nem aqui
 // nem em nenhuma camada abaixo desta.
+//
+// --- `timezone`: contexto do cliente, repassado sem validar aqui ---------
+//
+// Adicionado nesta subfase (query_calendar read-only) — o browser envia
+// `Intl.DateTimeFormat().resolvedOptions().timeZone` (capturado em
+// `ConversationPanel.tsx`) junto de cada mensagem. Timezone é contexto do
+// cliente, nunca dado de autorização/identidade — esta camada não valida
+// nem interpreta o valor, só o repassa cru para `handleConversationMessage`
+// (que também só repassa — a validação real, e o que fazer com timezone
+// inválido, vivem exclusivamente em `calendar-query.ts`, a única camada que
+// precisa resolver `relative_day`).
 //
 // --- Catch estreito --------------------------------------------------------
 //
@@ -46,11 +58,11 @@ import { handleConversationMessage, type ConversationEntryResult } from './conve
 // retry: uma segunda tentativa automática não é decisão desta camada.
 // ============================================================================
 
-export async function sendConversationMessage(text: string): Promise<ConversationEntryResult> {
+export async function sendConversationMessage(text: string, timezone: string): Promise<ConversationEntryResult> {
   const now = Date.now();
 
   try {
-    return await handleConversationMessage(text, now);
+    return await handleConversationMessage(text, now, timezone);
   } catch {
     return { status: 'error' };
   }

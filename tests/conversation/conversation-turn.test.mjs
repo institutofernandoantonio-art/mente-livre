@@ -22,6 +22,7 @@
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   resolveFirstConversationalTurn,
@@ -29,6 +30,7 @@ import {
 } from '../../src/lib/conversation/conversation-turn.ts';
 import { handlers as storageHandlers } from '../support/fake-runtime-state-storage.mjs';
 import { handlers as orchestrationHandlers } from '../support/fake-orchestration.mjs';
+import { handlers as calendarHandlers } from '../support/fake-calendar-query.mjs';
 
 const results = [];
 function record(name, pass, detail) {
@@ -65,6 +67,12 @@ function setHandlers(overrides = {}) {
   storageHandlers.consumeRuntimeState = overrides.consumeRuntimeState ?? neverCalled('consumeRuntimeState');
   orchestrationHandlers.resolveClarificationTurn =
     overrides.resolveClarificationTurn ?? neverCalled('resolveClarificationTurn');
+  // Default "neverCalled": qualquer teste que NÃO configure
+  // resolveCalendarQuery explicitamente está, por construção, provando
+  // "zero desvio para Calendar" para aquele cenário (ex.: todos os testes
+  // de create_task/cancel_event já existentes, que nunca deveriam chamar
+  // calendar-query.ts).
+  calendarHandlers.resolveCalendarQuery = overrides.resolveCalendarQuery ?? neverCalled('resolveCalendarQuery');
 }
 
 // --- Fixtures reais (nenhum dado pessoal) -----------------------------
@@ -799,7 +807,6 @@ await check('23. arquivo-fonte não referencia nenhum código de Execution/UI/ro
     '.insert(',
     '.update(',
     '.delete(',
-    'Calendar',
     'Anthropic',
     'OpenAI',
     'NextResponse',
@@ -814,6 +821,126 @@ await check('23. arquivo-fonte não referencia nenhum código de Execution/UI/ro
   for (const token of forbidden) {
     assert.ok(!codeOnly.includes(token), `token proibido encontrado no código real do arquivo-fonte: ${token}`);
   }
+});
+
+// ============================================================================
+// 26-31. query_calendar É CONSULTA — nunca ProposedAction/Confirmation/
+// Execution (subfase de query_calendar read-only)
+// ============================================================================
+
+await check('26. import de Calendar restrito à fronteira sancionada (./calendar-query), nunca à API do Google direto', () => {
+  const sourcePath = fileURLToPath(new URL('../../src/lib/conversation/conversation-turn.ts', import.meta.url));
+  const codeOnly = readFileSync(sourcePath, 'utf8')
+    .split('\n')
+    .map((line) => line.replace(/\/\/.*$/, ''))
+    .join('\n');
+
+  assert.ok(codeOnly.includes("from './calendar-query'"));
+  const forbidden = [
+    'getGoogleCalendarBusyTimes',
+    "from '../google/calendar'",
+    "from '@/lib/google/calendar'",
+    'googleapis.com',
+    'freeBusy',
+    'GOOGLE_CLIENT',
+  ];
+  for (const token of forbidden) {
+    assert.ok(!codeOnly.includes(token), `acesso direto à API do Google encontrado: ${token}`);
+  }
+});
+
+const queryCalendarIntentReady = {
+  missingFields: [],
+  confidence: 0.9,
+  intentType: 'query_calendar',
+  temporalWindow: { expression: 'amanhã', resolved: { kind: 'relative_day', day: 'tomorrow', time: null } },
+};
+
+const TIMEZONE = 'America/Sao_Paulo';
+
+await check('27. first-turn ready + query_calendar -> calendar_information, zero write de runtime (replace nunca chamado)', async () => {
+  let calendarCalls = 0;
+  let capturedArgs = null;
+  setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
+  calendarHandlers.resolveCalendarQuery = async (intent, now, timezone) => {
+    calendarCalls++;
+    capturedArgs = { intent, now, timezone };
+    return { status: 'available', scope: 'day' };
+  };
+
+  const result = await resolveFirstConversationalTurn(queryCalendarIntentReady, NOW, EXPIRATIONS, TIMEZONE);
+
+  assert.deepEqual(result, { status: 'calendar_information', result: { status: 'available', scope: 'day' } });
+  assert.equal(calendarCalls, 1);
+  assert.equal(capturedArgs.intent, queryCalendarIntentReady);
+  assert.equal(capturedArgs.now, NOW);
+  assert.equal(capturedArgs.timezone, TIMEZONE);
+  // storageHandlers.replaceRuntimeState continua "neverCalled" (default de
+  // setHandlers) — se o código chamasse replace, este teste já teria
+  // lançado antes de chegar aqui.
+});
+
+await check('28. first-turn ready + query_calendar: resultado de calendar-query repassado verbatim (busy/error/unsupported_window)', async () => {
+  for (const calendarResult of [
+    { status: 'busy', scope: 'hour', busyBlockCount: 2 },
+    { status: 'error' },
+    { status: 'unsupported_window' },
+  ]) {
+    setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
+    calendarHandlers.resolveCalendarQuery = async () => calendarResult;
+    const result = await resolveFirstConversationalTurn(queryCalendarIntentReady, NOW, EXPIRATIONS, TIMEZONE);
+    assert.deepEqual(result, { status: 'calendar_information', result: calendarResult });
+  }
+});
+
+await check('29. clarification turn: ready + query_calendar -> calendar_information via consume (terminal, zero advance)', async () => {
+  let consumeCalls = 0;
+  setHandlers({
+    getRuntimeState: async () => ({
+      status: 'found',
+      value: { stateId: 'state-cal', kind: 'clarification', state: fixtureConversationState({ field: 'x', text: 'y' }) },
+    }),
+    resolveClarificationTurn: async () => ({ status: 'ready', intent: queryCalendarIntentReady }),
+    consumeRuntimeState: async (expectedStateId, now) => {
+      consumeCalls++;
+      assert.equal(expectedStateId, 'state-cal');
+      assert.equal(now, NOW);
+      return { status: 'consumed', value: {} };
+    },
+  });
+  calendarHandlers.resolveCalendarQuery = async () => ({ status: 'available', scope: 'day' });
+
+  const result = await resolveClarificationConversationalTurn('amanhã', NOW, EXPIRATIONS, TIMEZONE);
+
+  assert.deepEqual(result, { status: 'calendar_information', result: { status: 'available', scope: 'day' } });
+  assert.equal(consumeCalls, 1);
+  // storageHandlers.advanceRuntimeState continua "neverCalled" — provando
+  // que este caminho nunca tenta persistir um sucessor.
+});
+
+await check('30. clarification turn: query_calendar + consume conflict -> conflict, zero fallback', async () => {
+  setHandlers({
+    getRuntimeState: async () => ({
+      status: 'found',
+      value: { stateId: 'state-cal', kind: 'clarification', state: fixtureConversationState({ field: 'x', text: 'y' }) },
+    }),
+    resolveClarificationTurn: async () => ({ status: 'ready', intent: queryCalendarIntentReady }),
+    consumeRuntimeState: async () => ({ status: 'conflict' }),
+  });
+  calendarHandlers.resolveCalendarQuery = async () => ({ status: 'available', scope: 'day' });
+
+  const result = await resolveClarificationConversationalTurn('amanhã', NOW, EXPIRATIONS, TIMEZONE);
+
+  assert.deepEqual(result, { status: 'conflict' });
+});
+
+await check('31. ProposedAction continua com 1 única variante — proposed-action.ts intocado nesta subfase (byte-for-byte)', () => {
+  const diff = execSync('git diff -- src/lib/conversation/proposed-action.ts', {
+    cwd: fileURLToPath(new URL('../..', import.meta.url)),
+  })
+    .toString()
+    .trim();
+  assert.equal(diff, '', 'proposed-action.ts foi modificado — esperado zero diff (query_calendar nunca é ProposedAction)');
 });
 
 // --- Resumo -------------------------------------------------------------

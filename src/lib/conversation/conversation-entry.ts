@@ -11,6 +11,7 @@ import { resolveProposalConversationalTurn, type ProposalTurnResult } from './pr
 import { extractStructuredIntent } from './intent-extraction';
 import { getClarificationExpiresAt, getProposalExpiresAt } from './conversation-ttl';
 import type { ProposedAction } from './proposed-action';
+import type { CalendarQueryResult } from './calendar-query';
 
 // ============================================================================
 // Conversation entry — o dispatcher server-side único que recebe uma
@@ -69,20 +70,35 @@ import type { ProposedAction } from './proposed-action';
 // encontrada, NLU inválido/erro). `resolveProposalConversationalTurn`
 // nunca recebe TTL nenhum — não persiste nenhum novo state.
 //
+// --- `timezone`: contexto do cliente, nunca dado de autorização -----------
+//
+// Adicionado nesta subfase (query_calendar read-only) — o browser envia o
+// timezone real (`Intl.DateTimeFormat().resolvedOptions().timeZone`,
+// capturado em `ConversationPanel.tsx`) para que `relative_day` possa ser
+// resolvido corretamente (o NLU nunca recebe timezone, só `now` em UTC —
+// ver `calendar-query.ts`). Este dispatcher NUNCA valida o timezone nem
+// decide com base nele — só repassa o valor cru até a única camada que
+// realmente precisa dele (`resolveFirstConversationalTurn`/
+// `resolveClarificationConversationalTurn` → `calendar-query.ts`, quando
+// e só quando o intent é `query_calendar`). Timezone inválido nunca rejeita
+// a mensagem inteira aqui — outras intenções (`create_task` etc.) não usam
+// timezone nenhum.
+//
 // --- Segurança -------------------------------------------------------------
 //
-// Recebe SÓ `text`/`now` — nunca `userId`/`stateId`/`proposalId`/client
-// Supabase/admin/`ConversationState`/`ProposalState` do chamador. Não
+// Recebe SÓ `text`/`now`/`timezone` — nunca `userId`/`stateId`/`proposalId`/
+// client Supabase/admin/`ConversationState`/`ProposalState` do chamador. Não
 // autentica diretamente: cada módulo inferior (runtime-state-storage.ts,
 // local-task-execution.ts) já deriva a sessão via seu próprio boundary
 // existente. `ConversationEntryResult` nunca expõe `stateId`/`proposalId`
-// — só o mínimo de apresentação (`question`/`action`/`itemId`, todos já
-// auditados como seguros nas subfases correspondentes).
+// — só o mínimo de apresentação (`question`/`action`/`itemId`/`result` de
+// `calendar_information`, todos já auditados como seguros).
 // ============================================================================
 
 export type ConversationEntryResult =
   | { status: 'clarification_required'; question: string }
   | { status: 'proposal_ready'; action: ProposedAction }
+  | { status: 'calendar_information'; result: CalendarQueryResult }
   | { status: 'confirmed'; itemId: string }
   | { status: 'cancelled' }
   | { status: 'needs_input' }
@@ -109,6 +125,8 @@ function translateFirstTurnResult(result: FirstTurnResult): ConversationEntryRes
       return { status: 'clarification_required', question: result.question };
     case 'proposal_saved':
       return { status: 'proposal_ready', action: result.action };
+    case 'calendar_information':
+      return { status: 'calendar_information', result: result.result };
     case 'already_active':
       // Corrida: a leitura classificadora deste dispatcher viu ausência/
       // expiração, mas outra requisição criou um runtime state ativo
@@ -129,6 +147,8 @@ function translateClarificationResult(result: ClarificationTurnPersistenceResult
       return { status: 'clarification_required', question: result.question };
     case 'proposal_saved':
       return { status: 'proposal_ready', action: result.action };
+    case 'calendar_information':
+      return { status: 'calendar_information', result: result.result };
     case 'ambiguous':
     case 'unrecognized':
     case 'reference_not_found':
@@ -178,7 +198,7 @@ function translateProposalResult(result: ProposalTurnResult): ConversationEntryR
 //
 // Só chamado quando a classificação inicial já determinou `not_found`/
 // `expired` — nunca chamado de nenhum outro lugar.
-async function handleFirstMessage(text: string, now: number): Promise<ConversationEntryResult> {
+async function handleFirstMessage(text: string, now: number, timezone: string): Promise<ConversationEntryResult> {
   const extraction = await extractStructuredIntent(text, now);
 
   switch (extraction.status) {
@@ -191,7 +211,7 @@ async function handleFirstMessage(text: string, now: number): Promise<Conversati
         clarificationExpiresAt: getClarificationExpiresAt(now),
         proposalExpiresAt: getProposalExpiresAt(now),
       };
-      const result = await resolveFirstConversationalTurn(extraction.intent, now, expirations);
+      const result = await resolveFirstConversationalTurn(extraction.intent, now, expirations, timezone);
       return translateFirstTurnResult(result);
     }
   }
@@ -202,7 +222,11 @@ async function handleFirstMessage(text: string, now: number): Promise<Conversati
 // Nunca aceita userId/stateId/proposalId/client Supabase/admin/
 // ConversationState/ProposalState externos — só o texto do usuário e o
 // instante do turno (fronteira `now` explicada no cabeçalho do arquivo).
-export async function handleConversationMessage(text: string, now: number): Promise<ConversationEntryResult> {
+export async function handleConversationMessage(
+  text: string,
+  now: number,
+  timezone: string,
+): Promise<ConversationEntryResult> {
   if (!isNonBlankString(text)) {
     return { status: 'needs_input' };
   }
@@ -225,7 +249,7 @@ export async function handleConversationMessage(text: string, now: number): Prom
           clarificationExpiresAt: getClarificationExpiresAt(now),
           proposalExpiresAt: getProposalExpiresAt(now),
         };
-        const result = await resolveClarificationConversationalTurn(text, now, expirations);
+        const result = await resolveClarificationConversationalTurn(text, now, expirations, timezone);
         return translateClarificationResult(result);
       }
       // current.value.kind === 'proposal'
@@ -233,6 +257,6 @@ export async function handleConversationMessage(text: string, now: number): Prom
 
     case 'not_found':
     case 'expired':
-      return handleFirstMessage(text, now);
+      return handleFirstMessage(text, now, timezone);
   }
 }

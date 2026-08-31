@@ -1,6 +1,7 @@
 import type { ProposedAction } from './proposed-action';
 import type { ConversationPresentationState } from './presentation';
 import type { ConversationEntryResult } from './conversation-entry';
+import type { CalendarQueryResult } from './calendar-query';
 
 // ============================================================================
 // Presentation UI mapping — helper puro (zero I/O, zero `'use client'`/
@@ -44,6 +45,16 @@ const CANCELLED_TEXT = 'Proposta cancelada.';
 const NEEDS_INPUT_TEXT = 'Não entendi. Pode responder de outro jeito?';
 const UNSUPPORTED_TEXT = 'Por enquanto, consigo criar tarefas simples a partir do que você escreve.';
 const CONFLICT_TEXT = 'O estado da conversa mudou. Revise o que está na tela e envie novamente.';
+// Textos de `calendar_information` — ver calendarInformationText() abaixo.
+// Frases factuais sobre compromissos/ocupações, nunca "você está livre o
+// dia inteiro" (poderia sugerir algo além do que o Calendar consultado
+// realmente garante — ver mapeamento desta subfase).
+const CALENDAR_DAY_BUSY_TEXT = 'Você tem compromissos nesse dia.';
+const CALENDAR_DAY_AVAILABLE_TEXT = 'Não encontrei horários ocupados nesse dia.';
+const CALENDAR_HOUR_BUSY_TEXT = 'Esse horário está ocupado na sua agenda.';
+const CALENDAR_HOUR_AVAILABLE_TEXT = 'Não encontrei compromisso nesse horário.';
+const CALENDAR_UNSUPPORTED_TEXT = 'Por enquanto, só consigo checar sua agenda para hoje ou amanhã.';
+const CALENDAR_ERROR_TEXT = 'Não consegui consultar seu Google Calendar agora.';
 
 function assistantText(text: string): UiMessageContent {
   return { role: 'assistant', kind: 'text', text };
@@ -51,6 +62,28 @@ function assistantText(text: string): UiMessageContent {
 
 function assistantProposal(action: ProposedAction): UiMessageContent {
   return { role: 'assistant', kind: 'proposal', action };
+}
+
+// --- calendar_information → texto curto e determinístico --------------------
+//
+// Zero segunda chamada a LLM: a frase é escolhida por `status`/`scope`,
+// nunca gerada a partir de conteúdo variável. Nunca menciona
+// `busyBlockCount` (não melhora a UX pedida nesta fatia) nem inventa nome
+// de compromisso (freebusy nunca devolve isso — ver calendar-query.ts).
+function calendarInformationText(result: CalendarQueryResult): string {
+  switch (result.status) {
+    case 'busy':
+      return result.scope === 'day' ? CALENDAR_DAY_BUSY_TEXT : CALENDAR_HOUR_BUSY_TEXT;
+    case 'available':
+      return result.scope === 'day' ? CALENDAR_DAY_AVAILABLE_TEXT : CALENDAR_HOUR_AVAILABLE_TEXT;
+    case 'unsupported_window':
+      return CALENDAR_UNSUPPORTED_TEXT;
+    case 'error':
+      // Calendar não conectado e falha técnica continuam indistinguíveis
+      // aqui, de propósito — mesma decisão de calendar-query.ts. Nunca
+      // afirma "não está conectado" sem evidência.
+      return CALENDAR_ERROR_TEXT;
+  }
 }
 
 // --- Bootstrap (montagem) → mensagem inicial opcional -----------------------
@@ -89,6 +122,8 @@ export function mapEntryResultToUiEffect(result: ConversationEntryResult): Entry
       return { message: assistantText(result.question), clearInput: true };
     case 'proposal_ready':
       return { message: assistantProposal(result.action), clearInput: true };
+    case 'calendar_information':
+      return { message: assistantText(calendarInformationText(result.result)), clearInput: true };
     case 'confirmed':
       // `result.itemId` deliberadamente nunca lido aqui — a UI não expõe
       // nem depende dele (ver cabeçalho do Client Component).

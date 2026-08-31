@@ -708,7 +708,7 @@ await check('46. módulo é server-only', () => {
   assert.ok(codeOnly.includes("import 'server-only'"));
 });
 
-await check('47. zero Supabase/admin/service_role/Anthropic/fetch/process.env/items/Calendar no código real', () => {
+await check('47. zero Supabase/admin/service_role/Anthropic/fetch/process.env/items no código real', () => {
   const forbidden = [
     'supabase',
     'Supabase',
@@ -721,10 +721,23 @@ await check('47. zero Supabase/admin/service_role/Anthropic/fetch/process.env/it
     'RPC',
     'from(\'items\')',
     'items.insert',
-    'Calendar',
   ];
   for (const token of forbidden) {
     assert.ok(!codeOnly.includes(token), `token proibido encontrado: ${token}`);
+  }
+});
+
+await check('47b. único import de Calendar é o type CalendarQueryResult (fronteira já traduzida por conversation-turn), zero acesso direto à API do Google', () => {
+  assert.ok(codeOnly.includes("import type { CalendarQueryResult } from './calendar-query'"));
+  const forbidden = [
+    'getGoogleCalendarBusyTimes',
+    "from '../google/calendar'",
+    "from '@/lib/google/calendar'",
+    'googleapis.com',
+    'freeBusy',
+  ];
+  for (const token of forbidden) {
+    assert.ok(!codeOnly.includes(token), `acesso direto à API do Google encontrado: ${token}`);
   }
 });
 
@@ -747,6 +760,72 @@ await check('49. usa as abstrações reais (imports estáticos), nunca reimpleme
   assert.ok(codeOnly.includes("from './proposal-turn'"));
   assert.ok(codeOnly.includes("from './intent-extraction'"));
   assert.ok(codeOnly.includes("from './conversation-ttl'"));
+});
+
+// ============================================================================
+// 50-54. query_calendar read-only — calendar_information, timezone
+// ============================================================================
+
+const CALENDAR_RESULT = { status: 'busy', scope: 'hour', busyBlockCount: 1 };
+const TIMEZONE = 'America/Sao_Paulo';
+
+await check('50. first-turn calendar_information -> traduzido verbatim, result é a MESMA referência', async () => {
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    extractStructuredIntent: async () => ({ status: 'extracted', intent: VALID_INTENT }),
+    resolveFirstConversationalTurn: async () => ({ status: 'calendar_information', result: CALENDAR_RESULT }),
+  });
+  const result = await handleConversationMessage('tenho algo amanhã?', NOW, TIMEZONE);
+  assert.deepEqual(result, { status: 'calendar_information', result: CALENDAR_RESULT });
+  assert.equal(result.result, CALENDAR_RESULT);
+});
+
+await check('51. clarification calendar_information -> traduzido verbatim', async () => {
+  foundClarification({
+    resolveClarificationConversationalTurn: async () => ({ status: 'calendar_information', result: CALENDAR_RESULT }),
+  });
+  const result = await handleConversationMessage('amanhã', NOW, TIMEZONE);
+  assert.deepEqual(result, { status: 'calendar_information', result: CALENDAR_RESULT });
+});
+
+await check('52. timezone propagada verbatim para resolveFirstConversationalTurn (4º argumento)', async () => {
+  let capturedTimezone = null;
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    extractStructuredIntent: async () => ({ status: 'extracted', intent: VALID_INTENT }),
+    resolveFirstConversationalTurn: async (intent, now, expirations, timezone) => {
+      capturedTimezone = timezone;
+      return { status: 'unsupported' };
+    },
+  });
+  await handleConversationMessage('comprar leite amanhã', NOW, TIMEZONE);
+  assert.equal(capturedTimezone, TIMEZONE);
+});
+
+await check('53. timezone propagada verbatim para resolveClarificationConversationalTurn (4º argumento)', async () => {
+  let capturedTimezone = null;
+  foundClarification({
+    resolveClarificationConversationalTurn: async (answer, now, expirations, timezone) => {
+      capturedTimezone = timezone;
+      return { status: 'ambiguous' };
+    },
+  });
+  await handleConversationMessage('30 minutos', NOW, TIMEZONE);
+  assert.equal(capturedTimezone, TIMEZONE);
+});
+
+await check('54. now continua exato e timezone nunca afeta o roteamento inicial (initial GET agnóstico a timezone)', async () => {
+  let getCalls = 0;
+  foundProposal({
+    getRuntimeState: async () => {
+      getCalls++;
+      return { status: 'found', value: { stateId: 'proposal-1', kind: 'proposal', state: {} } };
+    },
+    resolveProposalConversationalTurn: async () => ({ status: 'cancelled' }),
+  });
+  const result = await handleConversationMessage('não', NOW, 'Not/AValidTimeZone');
+  assert.deepEqual(result, { status: 'cancelled' });
+  assert.equal(getCalls, 1);
 });
 
 // --- Resumo -------------------------------------------------------------

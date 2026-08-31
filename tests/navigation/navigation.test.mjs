@@ -29,6 +29,21 @@ function byteDiffIsEmpty(relativePathFromRoot) {
   return execSync(`git diff -- ${relativePathFromRoot}`, { cwd: repoRoot }).toString().trim();
 }
 
+// Lista os arquivos com diff (modificados OU novos/untracked) dentro de um
+// diretório — usado para permitir uma LISTA EXATA de arquivos autorizados
+// a mudar num diretório, em vez de exigir zero diff no diretório inteiro
+// (que ficaria obsoleto assim que qualquer subfase futura, legitimamente
+// autorizada, precisasse tocar algo ali — ver teste 13).
+function changedFilesUnder(relativePathFromRoot) {
+  const output = execSync(`git status --porcelain --untracked-files=all -- ${relativePathFromRoot}`, {
+    cwd: repoRoot,
+  }).toString();
+  return output
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => line.slice(3).trim());
+}
+
 const results = [];
 function record(name, pass, detail) {
   results.push({ name, pass });
@@ -49,6 +64,7 @@ const homeCode = readCodeOnly('../../src/app/page.tsx');
 const entradaCode = readCodeOnly('../../src/app/entrada/page.tsx');
 const conversaCode = readCodeOnly('../../src/app/conversa/page.tsx');
 const tarefasCode = readCodeOnly('../../src/app/tarefas/page.tsx');
+const panelCode = readCodeOnly('../../src/app/conversa/ConversationPanel.tsx');
 
 // ============================================================================
 // 1-2. HOME — CTA principal para /conversa + acesso secundário a /entrada
@@ -131,10 +147,58 @@ check('9. tarefas/page.tsx não foi alterado nesta subfase (byte-for-byte)', () 
 // 10-13. Componentes/lógica que esta subfase NUNCA deveria tocar
 // ============================================================================
 
-check('10. ConversationPanel.tsx não foi alterado nesta subfase (byte-for-byte)', () => {
-  const diff = byteDiffIsEmpty('src/app/conversa/ConversationPanel.tsx');
-  assert.equal(diff, '', 'ConversationPanel.tsx foi modificado — esperado zero diff');
-});
+// Nota histórica: a versão anterior deste teste exigia zero diff em
+// ConversationPanel.tsx — válido enquanto nenhuma subfase posterior tinha
+// motivo legítimo para tocá-lo. A subfase de query_calendar read-only
+// autoriza explicitamente uma única mudança nele (captura/envio do
+// timezone do browser); a asserção de "byte-for-byte" ficou obsoleta por
+// isso, não por regressão real. Reescrita para permitir EXATAMENTE essa
+// mudança, continuando a proibir tudo o que sempre foi proibido.
+check(
+  '10. ConversationPanel.tsx: única mudança permitida é a captura/envio de timezone — zero lógica Calendar/Supabase/token/localStorage, zero componente novo',
+  () => {
+    assert.ok(
+      panelCode.includes('Intl.DateTimeFormat().resolvedOptions().timeZone'),
+      'captura de timezone não encontrada',
+    );
+    assert.ok(
+      /sendConversationMessage\(\s*text\s*,\s*timezone\s*\)/.test(panelCode),
+      'timezone não está sendo enviado como 2º argumento de sendConversationMessage',
+    );
+
+    const forbidden = [
+      'supabase',
+      'Supabase',
+      'createAdminClient',
+      'service_role',
+      'getGoogleCalendarBusyTimes',
+      'calendar-query',
+      "from '@/lib/google",
+      'access_token',
+      'refresh_token',
+      'GOOGLE_CLIENT',
+      'localStorage',
+      'sessionStorage',
+      'document.cookie',
+      'createContext',
+      'useContext',
+    ];
+    for (const token of forbidden) {
+      assert.ok(!panelCode.includes(token), `token proibido encontrado: ${token}`);
+    }
+    // "Calendar" (substantivo) continua ausente do código real — só a
+    // string literal 'timezone'/Intl, nunca um import/lógica de Calendar.
+    assert.ok(!panelCode.includes('Calendar'), 'nenhum import/lógica de Calendar deveria existir no client');
+
+    // Nenhum componente novo — mesmas 3 funções de nível superior de sempre.
+    const topLevelFunctions = [...panelCode.matchAll(/^function (\w+)/gm)].map((m) => m[1]);
+    assert.deepEqual(
+      topLevelFunctions.sort(),
+      ['MessageBubble', 'ProposalPreview', 'nextId'].sort(),
+      'nenhuma função de nível superior nova deveria existir além das 3 já aprovadas',
+    );
+  },
+);
 
 check('11. BrainDumpForm.tsx não foi alterado nesta subfase (byte-for-byte)', () => {
   const diff = byteDiffIsEmpty('src/app/entrada/BrainDumpForm.tsx');
@@ -146,10 +210,30 @@ check('12. src/lib/supabase/actions.ts (createBrainDump/organizeBrainDump) intac
   assert.equal(diff, '', 'src/lib/supabase/actions.ts foi modificado — esperado zero diff');
 });
 
-check('13. src/lib/conversation/ (NLU/pipeline) inteiramente intacto', () => {
-  const diff = byteDiffIsEmpty('src/lib/conversation/');
-  assert.equal(diff, '', 'src/lib/conversation/ foi modificado — esperado zero diff');
-});
+// Nota histórica: a versão anterior deste teste exigia zero diff em todo
+// `src/lib/conversation/` — válido enquanto nenhuma subfase posterior
+// tinha motivo legítimo para tocar o NLU/pipeline. A subfase de
+// query_calendar read-only autoriza explicitamente 5 arquivos ali (o
+// desvio de query_calendar para fora de ProposedAction); a asserção de
+// "diretório inteiro intacto" ficou obsoleta por isso, não por vazamento
+// de escopo real. Reescrita para permitir EXATAMENTE esses 5 arquivos,
+// continuando a proibir qualquer outro módulo conversacional inesperado.
+check(
+  '13. src/lib/conversation/: só os 5 arquivos autorizados desta subfase têm diff — nenhum outro módulo conversacional tocado',
+  () => {
+    const allowed = new Set([
+      'src/lib/conversation/actions.ts',
+      'src/lib/conversation/conversation-entry.ts',
+      'src/lib/conversation/conversation-turn.ts',
+      'src/lib/conversation/presentation-ui.ts',
+      'src/lib/conversation/calendar-query.ts',
+    ]);
+    const changed = changedFilesUnder('src/lib/conversation/');
+    for (const file of changed) {
+      assert.ok(allowed.has(file), `arquivo não autorizado com diff em src/lib/conversation/: ${file}`);
+    }
+  },
+);
 
 check('14. src/lib/google/ (Calendar) inteiramente intacto', () => {
   const diff = byteDiffIsEmpty('src/lib/google/');
