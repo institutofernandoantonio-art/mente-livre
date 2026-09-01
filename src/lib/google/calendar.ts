@@ -7,10 +7,18 @@ import { headers, cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 
-// calendar.events (criar/editar evento) + calendar.events.freebusy (checar
-// disponibilidade) — escopos já configurados no Google Cloud (Fase 7B).
-const GOOGLE_CALENDAR_SCOPES =
-  'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.events.freebusy';
+// Só calendar.events.freebusy (checar disponibilidade) — princípio de
+// menor privilégio: a V1 nunca escreve no Google Calendar (zero
+// events.insert/update/delete em todo o projeto, ver getGoogleCalendarBusyTimes
+// abaixo), então nunca deve SOLICITAR o escopo de escrita `calendar.events`.
+// Pedir um escopo sensível que nunca é exercido não é só desnecessário: para
+// este app (consentimento granular, não verificado), solicitar dois escopos
+// sensíveis juntos faz o Google tratar uma concessão PARCIAL (usuário marca
+// só freebusy) como negação da autorização inteira — o redirect de volta
+// chega sem `code`, e a conexão nunca se completa. Solicitar só o escopo
+// realmente usado elimina essa falha por construção: não há mais um segundo
+// escopo para o usuário desmarcar.
+const GOOGLE_CALENDAR_SCOPES = 'https://www.googleapis.com/auth/calendar.events.freebusy';
 
 const STATE_COOKIE_NAME = 'google_calendar_oauth_state';
 const STATE_COOKIE_MAX_AGE_SECONDS = 10 * 60;

@@ -262,10 +262,45 @@ check(
   },
 );
 
-check('14. src/lib/google/ (Calendar) inteiramente intacto', () => {
-  const diff = byteDiffIsEmpty('src/lib/google/');
-  assert.equal(diff, '', 'src/lib/google/ foi modificado — esperado zero diff');
-});
+// Nota histórica: a versão anterior deste teste exigia zero diff em todo
+// `src/lib/google/` — válido enquanto nenhuma subfase posterior tinha
+// motivo legítimo para tocá-lo. A subfase de correção de menor privilégio
+// do OAuth do Calendar autoriza explicitamente reduzir o escopo solicitado
+// em `calendar.ts` (remover `calendar.events`, manter só
+// `calendar.events.freebusy`); a asserção de "diretório inteiro intacto"
+// ficou obsoleta por isso, não por vazamento de escopo real. Reescrita
+// para permitir EXATAMENTE essa mudança de escopo, continuando a proibir
+// qualquer Calendar write ou mudança inesperada — a auditoria estrutural
+// completa (escopo exato, zero write, callback não exige scope) já é
+// feita por tests/google/calendar.test.mjs.
+check(
+  '14. src/lib/google/: única mudança permitida é o escopo OAuth reduzido a calendar.events.freebusy — zero Calendar write, zero outro arquivo tocado',
+  () => {
+    const changed = changedFilesUnder('src/lib/google/');
+    assert.deepEqual(changed, ['src/lib/google/calendar.ts'], 'só calendar.ts deveria ter diff em src/lib/google/');
+
+    // A checagem da URL usa o arquivo BRUTO (sem o stripping de
+    // comentários de readCodeOnly, que trunca ingenuamente qualquer linha
+    // no primeiro `//` — inclusive o `//` de dentro de `https://...`).
+    // A varredura de tokens proibidos usa o código JÁ SEM comentários
+    // (readCodeOnly) — o comentário do próprio arquivo documentando a
+    // AUSÊNCIA de events.insert/update/delete contém essas palavras como
+    // texto explicativo, o que daria falso positivo se lido bruto.
+    const calendarCodeRaw = readFileSync(
+      fileURLToPath(new URL('../../src/lib/google/calendar.ts', import.meta.url)),
+      'utf8',
+    );
+    assert.ok(
+      calendarCodeRaw.includes("'https://www.googleapis.com/auth/calendar.events.freebusy'"),
+      'escopo freebusy-only não encontrado',
+    );
+    const calendarCode = readCodeOnly('../../src/lib/google/calendar.ts');
+    const forbidden = ['events.insert', 'events.update', 'events.delete', 'calendar.events '];
+    for (const token of forbidden) {
+      assert.ok(!calendarCode.includes(token), `token proibido encontrado: ${token}`);
+    }
+  },
+);
 
 check('15. src/app/layout.tsx intacto — nenhuma navbar/sidebar global criada', () => {
   const diff = byteDiffIsEmpty('src/app/layout.tsx');
