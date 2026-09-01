@@ -2,6 +2,7 @@ import 'server-only';
 
 import type { StructuredIntent } from './types';
 import { getGoogleCalendarBusyTimes } from '../google/calendar';
+import { isValidTimeZone, getCivilDateInTimeZone, addCivilDays, resolveCivilDateTimeInTimeZone } from './timezone';
 
 // ============================================================================
 // Calendar query — a menor fatia read-only de `query_calendar` em /conversa.
@@ -48,22 +49,22 @@ import { getGoogleCalendarBusyTimes } from '../google/calendar';
 // Timezone é contexto do cliente, não dado de autorização — nunca usado
 // para decidir identidade/permissão, só para aritmética de data.
 //
-// Validação: string não vazia + aceita por `Intl.DateTimeFormat` (mesma
-// técnica já usada em `planning-context.ts`, `isValidTimeZone`). Timezone
-// inválida/ausente NUNCA lança nem executa a consulta ao Calendar — cai em
-// `unsupported_window`, o mesmo status genérico de "esta janela eu não sei
+// Validação: string não vazia + aceita por `Intl.DateTimeFormat`
+// (`isValidTimeZone`, extraído para `./timezone` — reaproveitado
+// byte-a-byte por `calendar-event-proposal.ts`, nenhuma segunda
+// implementação). Timezone inválida/ausente NUNCA lança nem executa a
+// consulta ao Calendar — cai em `unsupported_window`, o mesmo status
+// genérico de "esta janela eu não sei
 // responder ainda", sem inventar um status novo só para isso.
 //
 // --- Resolução dia/hora → instante absoluto -------------------------------
 //
-// Reimplementação mínima e deliberada da MESMA técnica já comprovada em
-// `planning-context.ts` (`startOfDayInTimeZone`: mede quanto tempo já
-// passou desde a meia-noite local via `Intl.DateTimeFormat.formatToParts`,
-// sem lib de fuso, seguro para horário de verão) — não importada de lá
-// porque é uma função privada, não exportada, e semanticamente amarrada a
-// `PlanningWindow`/brain dump; duplicar a MENOR função pura necessária é
-// mais simples e mais seguro do que criar um módulo compartilhado novo só
-// para 15 linhas, ou "importar por gambiarra" um privado de outro arquivo.
+// `resolveCivilDateTimeInTimeZone`/`getCivilDateInTimeZone`/`addCivilDays`
+// (`./timezone.ts`) — a ÚNICA implementação de conversão civil → instante
+// usada pelo projeto (auditoria da subfase de Calendar, Subfase 1: a
+// técnica anterior, duplicada aqui e em `planning-context.ts`, produzia
+// horário errado por 1h em dias de transição de horário de verão). Nunca
+// reimplementada localmente — este módulo só compõe o resultado.
 //
 // --- Google call: exatamente 1 por consulta -------------------------------
 //
@@ -85,62 +86,56 @@ export type CalendarQueryResult =
 // função; este alias só nomeia o tipo resultante dessa checagem.
 type QueryCalendarIntent = Extract<StructuredIntent, { intentType: 'query_calendar' }>;
 
-function isValidTimeZone(value: unknown): value is string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    return false;
-  }
-  try {
-    // Só valida que o construtor aceita o timezone — a instância em si
-    // nunca é usada, existe só para o efeito de lançar em caso de valor
-    // inválido (mesma técnica já usada em planning-context.ts).
-    new Intl.DateTimeFormat(undefined, { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Início do dia civil (00:00 local) de "hoje + daysOffset" no timezone
-// informado, como instante UTC — ver cabeçalho do arquivo.
-function startOfDayInTimeZone(now: Date, timeZone: string, daysOffset: number): Date {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).formatToParts(now);
-
-  const part = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? '0');
-  const msSinceLocalMidnight =
-    ((part('hour') % 24) * 3600 + part('minute') * 60 + part('second')) * 1000 + now.getMilliseconds();
-
-  const startOfToday = new Date(now.getTime() - msSinceLocalMidnight);
-  return new Date(startOfToday.getTime() + daysOffset * 24 * 60 * 60 * 1000);
-}
-
 type ResolvedWindow = { start: Date; end: Date; scope: 'day' | 'hour' };
 
 // `time === null` -> dia civil inteiro (scope 'day'). `time` presente ->
 // janela fixa de 1h a partir do horário pedido (scope 'hour') — nunca busca
-// o próximo horário livre, nunca amplia a janela.
+// o próximo horário livre, nunca amplia a janela. `null` (em vez de uma
+// exceção) quando o dia civil ou a hora civil pedida não podem ser
+// resolvidos com segurança nesse timezone (meia-noite ou horário
+// inexistente/ambíguo numa transição de horário de verão) — mapeado pelo
+// chamador para `unsupported_window`, o mesmo status genérico já usado
+// para qualquer janela que este módulo não sabe responder ainda; nunca um
+// palpite.
 function resolveRelativeDayWindow(
   now: Date,
   timeZone: string,
   day: 'today' | 'tomorrow',
   time: { hour: number; minute: number } | null,
-): ResolvedWindow {
-  const dayOffset = day === 'today' ? 0 : 1;
-  const startOfDay = startOfDayInTimeZone(now, timeZone, dayOffset);
+): ResolvedWindow | null {
+  const today = getCivilDateInTimeZone(now, timeZone);
+  const civilDay = day === 'today' ? today : addCivilDays(today, 1);
 
   if (time === null) {
-    const endOfDay = startOfDayInTimeZone(now, timeZone, dayOffset + 1);
-    return { start: startOfDay, end: endOfDay, scope: 'day' };
+    const nextCivilDay = addCivilDays(civilDay, 1);
+    const startResolution = resolveCivilDateTimeInTimeZone(civilDay.year, civilDay.month, civilDay.day, 0, 0, timeZone);
+    const endResolution = resolveCivilDateTimeInTimeZone(
+      nextCivilDay.year,
+      nextCivilDay.month,
+      nextCivilDay.day,
+      0,
+      0,
+      timeZone,
+    );
+    if (startResolution.status !== 'resolved' || endResolution.status !== 'resolved') {
+      return null;
+    }
+    return { start: startResolution.utc, end: endResolution.utc, scope: 'day' };
   }
 
-  const start = new Date(startOfDay.getTime() + (time.hour * 60 + time.minute) * 60_000);
-  const end = new Date(start.getTime() + 60 * 60_000);
-  return { start, end, scope: 'hour' };
+  const startResolution = resolveCivilDateTimeInTimeZone(
+    civilDay.year,
+    civilDay.month,
+    civilDay.day,
+    time.hour,
+    time.minute,
+    timeZone,
+  );
+  if (startResolution.status !== 'resolved') {
+    return null;
+  }
+  const end = new Date(startResolution.utc.getTime() + 60 * 60_000);
+  return { start: startResolution.utc, end, scope: 'hour' };
 }
 
 // Único ponto de entrada. Nunca formata texto de UI (ver presentation-ui.ts)
@@ -165,6 +160,13 @@ export async function resolveCalendarQuery(
   }
 
   const window = resolveRelativeDayWindow(nowDate, timezone, resolved.day, resolved.time);
+  if (window === null) {
+    // Dia/hora civil não resolvível com segurança (meia-noite ou horário
+    // inexistente/ambíguo numa transição de horário de verão) — nunca um
+    // palpite, mesmo status genérico já usado para qualquer janela que
+    // este módulo não sabe responder.
+    return { status: 'unsupported_window' };
+  }
 
   const busyBlocks = await getGoogleCalendarBusyTimes(window.start.toISOString(), window.end.toISOString());
 

@@ -22,7 +22,6 @@
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   resolveFirstConversationalTurn,
@@ -934,14 +933,31 @@ await check('30. clarification turn: query_calendar + consume conflict -> confli
   assert.deepEqual(result, { status: 'conflict' });
 });
 
-await check('31. ProposedAction continua com 1 única variante — proposed-action.ts intocado nesta subfase (byte-for-byte)', () => {
-  const diff = execSync('git diff -- src/lib/conversation/proposed-action.ts', {
-    cwd: fileURLToPath(new URL('../..', import.meta.url)),
-  })
-    .toString()
-    .trim();
-  assert.equal(diff, '', 'proposed-action.ts foi modificado — esperado zero diff (query_calendar nunca é ProposedAction)');
-});
+// Nota histórica: a versão anterior deste teste exigia zero diff em
+// proposed-action.ts inteiro — válido enquanto nenhuma subfase posterior
+// tinha motivo legítimo para tocar o tipo `ProposedAction`. A Subfase 1 da
+// criação de compromissos no Google Calendar autoriza explicitamente
+// estender `ProposedAction` para uma segunda variante
+// (`create_calendar_event`) — a asserção de "byte-for-byte" ficou obsoleta
+// por isso, não por regressão real. Reescrita para checar o INVARIANTE
+// que o teste sempre quis provar: `query_calendar` nunca se torna (nem se
+// tornou) uma `ProposedAction` — `buildProposedAction` continua
+// rejeitando tudo que não é `create_task`, e o arquivo nunca menciona
+// `query_calendar`.
+await check(
+  '31. ProposedAction: query_calendar continua nunca sendo tratado por buildProposedAction (proposed-action.ts nunca menciona query_calendar)',
+  () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('../../src/lib/conversation/proposed-action.ts', import.meta.url)),
+      'utf8',
+    );
+    assert.ok(!source.includes('query_calendar'), 'proposed-action.ts não deveria mencionar query_calendar');
+    assert.ok(
+      source.includes("intent.intentType !== 'create_task'"),
+      'buildProposedAction deveria continuar rejeitando tudo que não é create_task',
+    );
+  },
+);
 
 // --- Resumo -------------------------------------------------------------
 

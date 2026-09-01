@@ -246,7 +246,7 @@ check('12. src/lib/supabase/actions.ts (createBrainDump/organizeBrainDump) intac
 // de escopo real. Reescrita para permitir EXATAMENTE esses 5 arquivos,
 // continuando a proibir qualquer outro módulo conversacional inesperado.
 check(
-  '13. src/lib/conversation/: só os 5 arquivos autorizados desta subfase têm diff — nenhum outro módulo conversacional tocado',
+  '13. src/lib/conversation/: só os arquivos autorizados até agora têm diff — nenhum outro módulo conversacional tocado',
   () => {
     const allowed = new Set([
       'src/lib/conversation/actions.ts',
@@ -254,6 +254,13 @@ check(
       'src/lib/conversation/conversation-turn.ts',
       'src/lib/conversation/presentation-ui.ts',
       'src/lib/conversation/calendar-query.ts',
+      // Subfase 1 da criação de compromissos no Google Calendar (só "IA
+      // recomenda" — buildCreateCalendarEventAction puro, zero wiring em
+      // conversation-turn.ts/proposal-turn.ts):
+      'src/lib/conversation/proposed-action.ts',
+      'src/lib/conversation/runtime-state-validation.ts',
+      'src/lib/conversation/calendar-event-proposal.ts',
+      'src/lib/conversation/timezone.ts',
     ]);
     const changed = changedFilesUnder('src/lib/conversation/');
     for (const file of changed) {

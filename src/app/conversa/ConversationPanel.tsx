@@ -231,6 +231,14 @@ function MessageBubble({ message }: { message: UiMessage }) {
 }
 
 function ProposalPreview({ action }: { action: ProposedAction }) {
+  if (action.actionType !== 'create_local_task') {
+    // Outra variante de ProposedAction ainda não tem preview nesta
+    // subfase — estruturalmente inalcançável hoje (nenhum caminho real
+    // ainda produz isso), guarda de tipo necessária só porque
+    // ProposedAction virou uma union de duas variantes.
+    return null;
+  }
+
   const deadlineText = formatDeadlinePreview(action.task.deadline);
   const durationText = formatDurationPreview(action.task.duration);
 

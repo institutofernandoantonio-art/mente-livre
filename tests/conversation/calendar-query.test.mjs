@@ -300,6 +300,45 @@ await check('13. Google chamado exatamente 1 vez para uma consulta válida', asy
   assert.equal(calls, 1);
 });
 
+// ============================================================================
+// 14-15. DST — wiring ponta a ponta com o helper compartilhado
+// (resolveCivilDateTimeInTimeZone, ./timezone.ts). Prova só que este
+// módulo está corretamente conectado a ele — a correção em si é testada
+// exaustivamente em tests/conversation/timezone.test.mjs.
+// ============================================================================
+
+await check('14. relative_day today às 10h em America/New_York, no dia de spring-forward -> janela correta (14:00Z)', async () => {
+  // now = 2027-03-13T15:00:00Z = 10:00 local em New York -> "amanhã" =
+  // 14/03/2027, o próprio dia da transição (2h EST -> 3h EDT).
+  let captured = null;
+  setHandler(async (timeMin, timeMax) => {
+    captured = { timeMin, timeMax };
+    return [];
+  });
+
+  const result = await resolveCalendarQuery(
+    queryCalendarIntent(relativeDayWindow('tomorrow', { hour: 10, minute: 0 })),
+    Date.UTC(2027, 2, 13, 15, 0, 0),
+    'America/New_York',
+  );
+
+  assert.deepEqual(captured, {
+    timeMin: '2027-03-14T14:00:00.000Z',
+    timeMax: '2027-03-14T15:00:00.000Z',
+  });
+  assert.deepEqual(result, { status: 'available', scope: 'hour' });
+});
+
+await check('15. relative_day today às 2h30 em America/New_York, horário inexistente (lacuna de spring-forward) -> unsupported_window, zero chamada ao Google', async () => {
+  setHandler();
+  const result = await resolveCalendarQuery(
+    queryCalendarIntent(relativeDayWindow('tomorrow', { hour: 2, minute: 30 })),
+    Date.UTC(2027, 2, 13, 15, 0, 0),
+    'America/New_York',
+  );
+  assert.deepEqual(result, { status: 'unsupported_window' });
+});
+
 // --- Resumo -------------------------------------------------------------
 
 const passed = results.filter((r) => r.pass).length;

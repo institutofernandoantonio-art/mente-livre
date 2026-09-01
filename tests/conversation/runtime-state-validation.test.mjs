@@ -23,7 +23,10 @@
 // matriz completa das 11.
 
 import assert from 'node:assert/strict';
-import { isValidStructuredIntent } from '../../src/lib/conversation/runtime-state-validation.ts';
+import {
+  isValidStructuredIntent,
+  validateStoredRuntimeState,
+} from '../../src/lib/conversation/runtime-state-validation.ts';
 
 const results = [];
 function record(name, pass, detail) {
@@ -161,6 +164,116 @@ check('5e. create_task sem missingFields -> false', () => {
 
 check('6. capture_thought válido (task: null) -> true', () => {
   assert.equal(isValidStructuredIntent(validCaptureThought()), true);
+});
+
+// ============================================================================
+// 7. ProposedAction via validateStoredRuntimeState — create_local_task
+//    (regressão) + create_calendar_event (Subfase 1 do Calendar, novo)
+//
+// `validateStoredRuntimeState` é o único export público que efetivamente
+// alcança `isValidProposedAction`/`isValidProposedCalendarEventEvent`
+// (ambos privados) — por isso os testes abaixo passam por uma linha
+// inteira de `conversation_runtime_states` (state_kind: 'proposal'), não
+// por uma chamada direta a um símbolo interno.
+// ============================================================================
+
+const EXPIRES_AT_MS = Date.UTC(2026, 8, 1, 12, 30, 0);
+const EXPIRES_AT_ISO = new Date(EXPIRES_AT_MS).toISOString();
+const CREATED_AT_MS = Date.UTC(2026, 8, 1, 12, 0, 0);
+
+function proposalRow(action) {
+  return {
+    state_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    state_kind: 'proposal',
+    payload: {
+      status: 'awaiting_confirmation',
+      proposalId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      action,
+      createdAt: CREATED_AT_MS,
+      expiresAt: EXPIRES_AT_MS,
+    },
+    expires_at: EXPIRES_AT_ISO,
+  };
+}
+
+const validLocalTaskAction = {
+  actionType: 'create_local_task',
+  task: { title: 'Revisar orçamento', description: null, deadline: null, duration: null },
+};
+
+function validCalendarEventAction(overrides = {}) {
+  return {
+    actionType: 'create_calendar_event',
+    event: {
+      title: 'Reunião com Ricardo',
+      description: null,
+      start: '2026-09-02T17:00:00.000Z',
+      end: '2026-09-02T18:00:00.000Z',
+      timezone: 'America/Sao_Paulo',
+      reminderMinutesBeforeStart: 30,
+      ...overrides,
+    },
+  };
+}
+
+check('7a. create_local_task continua válido através de validateStoredRuntimeState (regressão)', () => {
+  const result = validateStoredRuntimeState(proposalRow(validLocalTaskAction));
+  assert.equal(result.status, 'valid');
+});
+
+check('7b. create_calendar_event com shape correto -> valid', () => {
+  const result = validateStoredRuntimeState(proposalRow(validCalendarEventAction()));
+  assert.equal(result.status, 'valid');
+  assert.equal(result.value.state.action.actionType, 'create_calendar_event');
+});
+
+check('7c. create_calendar_event com campo extra em event -> invalid', () => {
+  const withExtra = validCalendarEventAction();
+  withExtra.event.location = 'Sala 3';
+  const result = validateStoredRuntimeState(proposalRow(withExtra));
+  assert.equal(result.status, 'invalid');
+});
+
+check('7d. create_calendar_event com start não-ISO -> invalid', () => {
+  const withBadStart = validCalendarEventAction({ start: 'não é uma data' });
+  const result = validateStoredRuntimeState(proposalRow(withBadStart));
+  assert.equal(result.status, 'invalid');
+});
+
+check('7e. create_calendar_event com end anterior ao start -> invalid', () => {
+  const withBadEnd = validCalendarEventAction({
+    start: '2026-09-02T18:00:00.000Z',
+    end: '2026-09-02T17:00:00.000Z',
+  });
+  const result = validateStoredRuntimeState(proposalRow(withBadEnd));
+  assert.equal(result.status, 'invalid');
+});
+
+check('7f. create_calendar_event com end igual ao start -> invalid (end deve ser estritamente maior)', () => {
+  const withEqualEnd = validCalendarEventAction({
+    start: '2026-09-02T17:00:00.000Z',
+    end: '2026-09-02T17:00:00.000Z',
+  });
+  const result = validateStoredRuntimeState(proposalRow(withEqualEnd));
+  assert.equal(result.status, 'invalid');
+});
+
+check('7g. create_calendar_event com reminderMinutesBeforeStart != 30 -> invalid', () => {
+  const withBadReminder = validCalendarEventAction({ reminderMinutesBeforeStart: 15 });
+  const result = validateStoredRuntimeState(proposalRow(withBadReminder));
+  assert.equal(result.status, 'invalid');
+});
+
+check('7h. create_calendar_event com timezone inválido -> invalid', () => {
+  const withBadTimezone = validCalendarEventAction({ timezone: 'Nao/Existe' });
+  const result = validateStoredRuntimeState(proposalRow(withBadTimezone));
+  assert.equal(result.status, 'invalid');
+});
+
+check('7i. actionType desconhecido (nem create_local_task nem create_calendar_event) -> invalid', () => {
+  const bogus = { actionType: 'delete_everything', task: {} };
+  const result = validateStoredRuntimeState(proposalRow(bogus));
+  assert.equal(result.status, 'invalid');
 });
 
 // --- Resumo -------------------------------------------------------------

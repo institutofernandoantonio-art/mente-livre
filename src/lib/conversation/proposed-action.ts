@@ -29,17 +29,25 @@ import type { StructuredIntent } from './types';
 // 'create_local_task', não 'create_task'.
 // ============================================================================
 
-// --- Union de ações (hoje, uma só variante) ---------------------------------
+// --- Union de ações (hoje, duas variantes) ----------------------------------
 //
-// Escrita como union discriminada mesmo com uma única variante — evita
-// que crescer para uma segunda ação (ainda bloqueada por infraestrutura
-// ausente: Calendar write, reminders, resolução de participantes — ver
-// relatório de mapeamento da subfase correspondente) exija redesenhar o
-// tipo desde o zero.
+// Escrita como union discriminada desde a primeira versão — a segunda
+// variante (`create_calendar_event`) chegou exatamente como o comentário
+// original antecipava, sem redesenhar o tipo: só um novo membro da union.
+//
+// `create_calendar_event`: materializada por `buildCreateCalendarEventAction`
+// (`./calendar-event-proposal.ts`), NUNCA por `buildProposedAction` abaixo
+// — os dois builders são deliberadamente separados porque têm assinaturas
+// diferentes (`create_local_task` não precisa de `now`/`timezone`;
+// `create_event` precisa dos dois para resolver um instante absoluto — ver
+// relatório de mapeamento e o cabeçalho de `calendar-event-proposal.ts`).
+// Nesta subfase, `create_calendar_event` é só o RESULTADO de tipo — nenhum
+// código real ainda persiste um `ProposalState`/`ProposedAction` com esta
+// variante (`conversation-turn.ts`/`proposal-turn.ts` intocados).
 //
 // Deliberadamente SEM: user_id, brain_dump_id, category, status,
 // needs_confirmation, created_at/updated_at — todos são detalhes de
-// PERSISTÊNCIA (linha da tabela `items`), não da operação de domínio.
+// PERSISTÊNCIA (linha de uma tabela), não da operação de domínio.
 // `category`/`status` já têm DEFAULT no schema ('tarefa'/'pending') e
 // create_task já os implica semanticamente; a futura Execution os aplica,
 // não esta camada. Deliberadamente SEM proposalId/createdAt/expiresAt
@@ -47,28 +55,52 @@ import type { StructuredIntent } from './types';
 // (UI/voz futura deriva dos campos estruturados, nunca duplicado aqui) e
 // riskLevel/requiresConfirmation (derivados pela futura Confirmation
 // Policy a partir do `actionType`, nunca embutidos no dado).
-export type ProposedAction = {
-  actionType: 'create_local_task';
-  task: {
-    // Preservados verbatim de TaskRef — nunca reescritos/normalizados
-    // semanticamente, nunca gerados por IA nesta camada.
-    title: string;
-    description: string | null;
-    // `null` = nenhum prazo associado a esta tarefa (nunca inventado).
-    // Presente = Deadline já resolvido (`source` sempre 'stated'/
-    // 'inferred' aqui — um Deadline 'unresolved' nunca chega a este
-    // shape, ver buildProposedAction). `source` preservado para que uma
-    // futura Confirmation Policy possa distinguir "usuário disse
-    // explicitamente" de "o sistema inferiu" antes de mostrar ao
-    // usuário — `confidence` numérica não é preservada nesta primeira
-    // versão: nenhum consumidor concreto precisa dela ainda, e
-    // carregá-la sem uso definido seria expandir o contrato sem
-    // necessidade.
-    deadline: { at: string; source: 'stated' | 'inferred' } | null;
-    // Mesmo princípio de `deadline`, para Duration.
-    duration: { minutes: number; source: 'stated' | 'inferred' } | null;
-  };
-};
+export type ProposedAction =
+  | {
+      actionType: 'create_local_task';
+      task: {
+        // Preservados verbatim de TaskRef — nunca reescritos/normalizados
+        // semanticamente, nunca gerados por IA nesta camada.
+        title: string;
+        description: string | null;
+        // `null` = nenhum prazo associado a esta tarefa (nunca inventado).
+        // Presente = Deadline já resolvido (`source` sempre 'stated'/
+        // 'inferred' aqui — um Deadline 'unresolved' nunca chega a este
+        // shape, ver buildProposedAction). `source` preservado para que uma
+        // futura Confirmation Policy possa distinguir "usuário disse
+        // explicitamente" de "o sistema inferiu" antes de mostrar ao
+        // usuário — `confidence` numérica não é preservada nesta primeira
+        // versão: nenhum consumidor concreto precisa dela ainda, e
+        // carregá-la sem uso definido seria expandir o contrato sem
+        // necessidade.
+        deadline: { at: string; source: 'stated' | 'inferred' } | null;
+        // Mesmo princípio de `deadline`, para Duration.
+        duration: { minutes: number; source: 'stated' | 'inferred' } | null;
+      };
+    }
+  | {
+      actionType: 'create_calendar_event';
+      event: {
+        // Verbatim de TaskRef, mesmo princípio de create_local_task acima.
+        title: string;
+        description: string | null;
+        // Sempre um instante ABSOLUTO já resolvido (ISO 8601, UTC) — nunca
+        // uma janela civil/relativa. `end` é sempre `start + duration`,
+        // calculado uma única vez no builder — nunca duas representações
+        // conflitantes do comprimento do evento (nunca um `duration` solto
+        // aqui, só o resultado já composto).
+        start: string;
+        end: string;
+        // Necessário mesmo com `start`/`end` já absolutos: a API de
+        // eventos do Google exige o par `{dateTime, timeZone}` em cada
+        // extremidade — sem isso não há como a Execution (futura, fora
+        // desta subfase) montar o payload de criação corretamente.
+        timezone: string;
+        // Literal fixo nesta V1 — não configurável pelo usuário ainda
+        // (ver relatório de mapeamento, seção de lembrete).
+        reminderMinutesBeforeStart: 30;
+      };
+    };
 
 // --- Resultado do builder ------------------------------------------------
 //
@@ -126,6 +158,14 @@ export type ProposedActionBuildResult =
 // `temporalWindow` não-nulo torna o intent inteiro `not_materializable`
 // — uma regra única e simples, em vez de tentar representar parcialmente
 // alguns kinds e não outros.
+// `create_event` continua `unsupported` AQUI de propósito — este builder
+// nunca cresce para tratá-lo. A materialização de `create_event` vive em
+// `buildCreateCalendarEventAction` (`./calendar-event-proposal.ts`), com
+// assinatura própria (`intent`, `now`, `timezone`), porque `create_task`
+// nunca precisa de relógio/timezone e `create_event` sempre precisa —
+// forçar os dois pelo mesmo builder exigiria mudar esta assinatura (e,
+// junto dela, os dois call sites reais em `conversation-turn.ts`) só para
+// satisfazer uma variante que esta subfase ainda nem conecta ao pipeline.
 export function buildProposedAction(intent: StructuredIntent): ProposedActionBuildResult {
   if (intent.intentType !== 'create_task') {
     return { status: 'unsupported' };

@@ -14,6 +14,7 @@ import type { ConversationState } from './state';
 import type { ClarificationQuestion } from './clarification-questions';
 import type { ProposedAction } from './proposed-action';
 import type { ProposalState } from './proposal-state';
+import { isValidTimeZone } from './timezone';
 
 // ============================================================================
 // Runtime state validation — a fronteira entre a linha JSONB não confiável
@@ -460,7 +461,7 @@ export function isValidStructuredIntent(value: unknown): value is StructuredInte
   }
 }
 
-// --- ProposedAction (hoje, uma só variante: create_local_task) -------------
+// --- ProposedAction (hoje, duas variantes) ---------------------------------
 
 function isValidProposedDeadline(value: unknown): boolean {
   if (!isPlainObject(value)) return false;
@@ -483,11 +484,43 @@ function isValidProposedActionTask(value: unknown): boolean {
   return value.duration === null || isValidProposedDuration(value.duration);
 }
 
+// `create_calendar_event` — mesmo shape produzido por
+// `buildCreateCalendarEventAction` (calendar-event-proposal.ts, Subfase 1
+// da criação de compromissos no Google Calendar). Nenhum código real
+// ainda persiste isto (conversation-turn.ts/proposal-turn.ts intocados
+// nesta subfase) — este validador existe para já estar correto quando essa
+// integração acontecer, sem precisar revisitar este arquivo depois.
+function isValidProposedCalendarEventEvent(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  if (
+    !hasExactKeys(value, ['title', 'description', 'start', 'end', 'timezone', 'reminderMinutesBeforeStart'])
+  ) {
+    return false;
+  }
+  if (typeof value.title !== 'string') return false;
+  if (value.description !== null && typeof value.description !== 'string') return false;
+  if (!isIsoParseableString(value.start)) return false;
+  if (!isIsoParseableString(value.end)) return false;
+  // `end > start` sempre — nunca igual, nunca invertido. Comparação por
+  // epoch ms (Date.parse), nunca comparação de string.
+  if (Date.parse(value.end) <= Date.parse(value.start)) return false;
+  if (!isValidTimeZone(value.timezone)) return false;
+  // Literal fixo nesta V1 — não é uma faixa, é EXATAMENTE 30.
+  return value.reminderMinutesBeforeStart === 30;
+}
+
 function isValidProposedAction(value: unknown): value is ProposedAction {
   if (!isPlainObject(value)) return false;
-  if (!hasExactKeys(value, ['actionType', 'task'])) return false;
-  if (value.actionType !== 'create_local_task') return false;
-  return isValidProposedActionTask(value.task);
+
+  if (value.actionType === 'create_local_task') {
+    return hasExactKeys(value, ['actionType', 'task']) && isValidProposedActionTask(value.task);
+  }
+
+  if (value.actionType === 'create_calendar_event') {
+    return hasExactKeys(value, ['actionType', 'event']) && isValidProposedCalendarEventEvent(value.event);
+  }
+
+  return false;
 }
 
 // --- Payload por state_kind ----------------------------------------------
