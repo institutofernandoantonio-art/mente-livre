@@ -35,7 +35,9 @@
     "test:calendar-event-id": "node tests/conversation/calendar-event-id.test.mjs",
     "test:calendar-event-executions-migration": "node tests/google/calendar-event-executions-migration.test.mjs",
     "test:calendar-event-finalize": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/calendar-event-finalize.test.mjs",
-    "test:finalize-calendar-event-execution-migration": "node tests/google/finalize-calendar-event-execution-migration.test.mjs"
+    "test:finalize-calendar-event-execution-migration": "node tests/google/finalize-calendar-event-execution-migration.test.mjs",
+    "test:calendar-event-cancel": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/calendar-event-cancel.test.mjs",
+    "test:cancel-calendar-event-proposal-migration": "node tests/google/cancel-calendar-event-proposal-migration.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

@@ -855,6 +855,28 @@ await check('56. clarification schedule_conflict/calendar_unavailable -> traduzi
   }
 });
 
+// ============================================================================
+// 57-58. execution_started -> calendar_processing (Subfase 5 — cancelamento
+// protegido de proposta de evento). NUNCA traduzido para `cancelled`.
+// ============================================================================
+
+await check('57. proposal-turn execution_started -> traduzido para calendar_processing (nunca cancelled)', async () => {
+  foundProposal({
+    resolveProposalConversationalTurn: async () => ({ status: 'execution_started' }),
+  });
+  const result = await handleConversationMessage('não', NOW, TIMEZONE);
+  assert.deepEqual(result, { status: 'calendar_processing' });
+  assert.notEqual(result.status, 'cancelled');
+});
+
+await check('58. cancelled real de proposal-turn continua traduzido para cancelled (nunca calendar_processing)', async () => {
+  foundProposal({
+    resolveProposalConversationalTurn: async () => ({ status: 'cancelled' }),
+  });
+  const result = await handleConversationMessage('não', NOW, TIMEZONE);
+  assert.deepEqual(result, { status: 'cancelled' });
+});
+
 // --- Resumo -------------------------------------------------------------
 
 const passed = results.filter((r) => r.pass).length;

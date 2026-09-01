@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveProposalConversationalTurn } from '../../src/lib/conversation/proposal-turn.ts';
 import { handlers as storageHandlers } from '../support/fake-runtime-state-storage.mjs';
 import { handlers as executorHandlers } from '../support/fake-local-task-execution.mjs';
+import { handlers as cancelHandlers } from '../support/fake-calendar-event-cancel.mjs';
 
 const results = [];
 function record(name, pass, detail) {
@@ -53,6 +54,8 @@ function setHandlers(overrides = {}) {
   storageHandlers.advanceRuntimeState = overrides.advanceRuntimeState ?? neverCalled('advanceRuntimeState');
   storageHandlers.consumeRuntimeState = overrides.consumeRuntimeState ?? neverCalled('consumeRuntimeState');
   executorHandlers.executeCreateLocalTask = overrides.executeCreateLocalTask ?? neverCalled('executeCreateLocalTask');
+  cancelHandlers.cancelCalendarEventProposal =
+    overrides.cancelCalendarEventProposal ?? neverCalled('cancelCalendarEventProposal');
 }
 
 // --- Fixtures reais (nenhum dado pessoal) -----------------------------
@@ -600,6 +603,150 @@ await check('41. replay: primeira chamada confirmed, segunda vê runtime ausente
 });
 
 // ============================================================================
+// SUBFASE 5 — cancelamento protegido de proposta de evento
+// (create_calendar_event usa cancelCalendarEventProposal, nunca
+// consumeRuntimeState; create_local_task continua exatamente como antes)
+// ============================================================================
+
+function fixtureCalendarProposalState(expiresAt = PROPOSAL_EXPIRES_AT) {
+  return {
+    status: 'awaiting_confirmation',
+    proposalId: 'fixture-calendar-proposal-id-777',
+    action: {
+      actionType: 'create_calendar_event',
+      event: {
+        title: 'Reunião com o time',
+        description: null,
+        start: '2026-09-02T14:00:00.000Z',
+        end: '2026-09-02T14:30:00.000Z',
+        timezone: 'America/Sao_Paulo',
+        reminderMinutesBeforeStart: 30,
+      },
+    },
+    createdAt: NOW,
+    expiresAt,
+  };
+}
+
+function foundCalendarProposal(stateId, expiresAt) {
+  setHandlers({
+    getRuntimeState: async () => ({
+      status: 'found',
+      value: { stateId, kind: 'proposal', state: fixtureCalendarProposalState(expiresAt) },
+    }),
+  });
+}
+
+function capturingCancel(responder) {
+  const calls = [];
+  cancelHandlers.cancelCalendarEventProposal = async (input) => {
+    calls.push(input);
+    return responder(input);
+  };
+  return calls;
+}
+
+await check(
+  '42 (S5-35). create_local_task + "não" continua usando consumeRuntimeState — cancelCalendarEventProposal nunca chamado',
+  async () => {
+    // cancelCalendarEventProposal permanece "neverCalled" por padrão de
+    // setHandlers (não sobrescrito por foundProposal) — se
+    // proposal-turn.ts o chamasse para create_local_task, este teste
+    // falharia com uma exceção em vez do `cancelled` esperado.
+    setHandlers({
+      getRuntimeState: async () => ({
+        status: 'found',
+        value: { stateId: 'state-local-cancel', kind: 'proposal', state: fixtureProposalState() },
+      }),
+      consumeRuntimeState: async () => ({
+        status: 'consumed',
+        value: { stateId: 'state-local-cancel', kind: 'proposal', state: fixtureProposalState() },
+      }),
+    });
+    const result = await resolveProposalConversationalTurn('não', NOW);
+    assert.equal(result.status, 'cancelled');
+  },
+);
+
+await check(
+  '43 (S5-36). create_calendar_event + "não" usa cancelCalendarEventProposal exatamente 1 vez — consumeRuntimeState nunca chamado',
+  async () => {
+    // consumeRuntimeState permanece "neverCalled" — se proposal-turn.ts o
+    // chamasse para create_calendar_event, este teste falharia com uma
+    // exceção em vez do `cancelled` esperado.
+    foundCalendarProposal('state-cal-A', PROPOSAL_EXPIRES_AT);
+    const calls = capturingCancel(() => ({ status: 'cancelled' }));
+    const result = await resolveProposalConversationalTurn('não', NOW);
+    assert.equal(calls.length, 1);
+    assert.equal(result.status, 'cancelled');
+  },
+);
+
+await check('44 (S5-36b). cancelCalendarEventProposal recebe expectedStateId/proposalId exatos, nada mais', async () => {
+  foundCalendarProposal('distinctive-cal-state-id', PROPOSAL_EXPIRES_AT);
+  const calls = capturingCancel(() => ({ status: 'cancelled' }));
+  await resolveProposalConversationalTurn('cancela', NOW);
+  assert.deepEqual(Object.keys(calls[0]).sort(), ['expectedStateId', 'proposalId']);
+  assert.equal(calls[0].expectedStateId, 'distinctive-cal-state-id');
+  assert.equal(calls[0].proposalId, 'fixture-calendar-proposal-id-777');
+});
+
+await check('45 (S5-37). create_calendar_event + cancelled -> cancelled', async () => {
+  foundCalendarProposal('state-cal-B', PROPOSAL_EXPIRES_AT);
+  capturingCancel(() => ({ status: 'cancelled' }));
+  const result = await resolveProposalConversationalTurn('não', NOW);
+  assert.deepEqual(result, { status: 'cancelled' });
+});
+
+await check(
+  '46 (S5-38 e S5-39). create_calendar_event + execution_started -> execution_started (NUNCA cancelled)',
+  async () => {
+    foundCalendarProposal('state-cal-C', PROPOSAL_EXPIRES_AT);
+    capturingCancel(() => ({ status: 'execution_started' }));
+    const result = await resolveProposalConversationalTurn('não', NOW);
+    assert.deepEqual(result, { status: 'execution_started' });
+    assert.notEqual(result.status, 'cancelled');
+  },
+);
+
+await check('47 (S5-40). create_calendar_event + conflict -> conflict', async () => {
+  foundCalendarProposal('state-cal-D', PROPOSAL_EXPIRES_AT);
+  capturingCancel(() => ({ status: 'conflict' }));
+  const result = await resolveProposalConversationalTurn('não', NOW);
+  assert.deepEqual(result, { status: 'conflict' });
+});
+
+await check('48 (S5-41). create_calendar_event + error -> error', async () => {
+  foundCalendarProposal('state-cal-E', PROPOSAL_EXPIRES_AT);
+  capturingCancel(() => ({ status: 'error' }));
+  const result = await resolveProposalConversationalTurn('não', NOW);
+  assert.deepEqual(result, { status: 'error' });
+});
+
+await check('49. cancelCalendarEventProposal lançando exceção propaga (rejeita), mesma convenção do resto do módulo', async () => {
+  foundCalendarProposal('state-cal-F', PROPOSAL_EXPIRES_AT);
+  cancelHandlers.cancelCalendarEventProposal = async () => {
+    throw new Error('falha inesperada fora do contrato de retorno');
+  };
+  await assert.rejects(
+    () => resolveProposalConversationalTurn('não', NOW),
+    /falha inesperada fora do contrato de retorno/,
+  );
+});
+
+await check(
+  '50 (S5-42). ramo "sim" (confirmado) de create_calendar_event continua sem claim/finalize/Google write nesta subfase — ainda retorna error',
+  async () => {
+    // Mesmo guard defensivo já testado no teste 40 (actionType não
+    // suportada no caminho `confirmed`) — reafirmado explicitamente aqui
+    // como regressão da Subfase 5: o lifecycle positivo não foi tocado.
+    foundCalendarProposal('state-cal-G', PROPOSAL_EXPIRES_AT);
+    const result = await resolveProposalConversationalTurn('sim', NOW);
+    assert.equal(result.status, 'error');
+  },
+);
+
+// ============================================================================
 // 22-24, 26. VERIFICAÇÃO ESTÁTICA DO ARQUIVO-FONTE
 // ============================================================================
 
@@ -610,13 +757,21 @@ const codeOnly = source
   .map((line) => line.replace(/\/\/.*$/, ''))
   .join('\n');
 
-await check('22, 23 e 24. nenhuma Execution direta/item/Calendar/admin/timestamp/id gerado no código real', () => {
+// Nota histórica: até a Subfase 4, este teste bania o token genérico
+// 'Calendar' inteiro — válido enquanto proposal-turn.ts nunca tinha
+// nenhum motivo legítimo para mencioná-lo. A Subfase 5 (cancelamento
+// protegido de proposta de evento) autoriza explicitamente importar
+// `cancelCalendarEventProposal`/`./calendar-event-cancel` — um ban
+// genérico de 'Calendar' teria um falso positivo nesse identificador. A
+// proteção real que importava (zero Calendar WRITE, zero claim/finalize
+// chamados daqui) é preservada por checagens precisas abaixo, nunca
+// enfraquecida.
+await check('22, 23 e 24. nenhuma Execution direta/item/admin/timestamp/id gerado no código real', () => {
   const forbidden = [
     '.insert(',
     '.update(',
     '.delete(',
     "from('items')",
-    'Calendar',
     'Anthropic',
     'OpenAI',
     'NextResponse',
@@ -632,6 +787,35 @@ await check('22, 23 e 24. nenhuma Execution direta/item/Calendar/admin/timestamp
     assert.ok(!codeOnly.includes(token), `token proibido encontrado: ${token}`);
   }
 });
+
+await check(
+  '22b. zero Calendar WRITE e zero claim/finalize chamados a partir de proposal-turn.ts (Subfase 5: só cancelamento protegido)',
+  () => {
+    const forbidden = [
+      'googleapis.com',
+      'events.insert',
+      'access_token',
+      'refresh_token',
+      "from '../google/calendar'",
+      'claimCalendarEventExecution',
+      'finalizeCalendarEventExecution',
+      'claim_calendar_event_execution',
+      'finalize_calendar_event_execution',
+    ];
+    for (const token of forbidden) {
+      assert.ok(!codeOnly.includes(token), `token proibido encontrado: ${token}`);
+    }
+  },
+);
+
+await check(
+  '22c. usa a abstração ./calendar-event-cancel para o cancelamento de create_calendar_event, nunca a RPC/Supabase diretamente',
+  () => {
+    assert.ok(codeOnly.includes("from './calendar-event-cancel'"));
+    assert.ok(codeOnly.includes('cancelCalendarEventProposal('));
+    assert.ok(!codeOnly.includes('cancel_calendar_event_proposal'));
+  },
+);
 
 await check('26b. confirmation_requires_execution não existe mais no código real', () => {
   assert.ok(!codeOnly.includes('confirmation_requires_execution'));

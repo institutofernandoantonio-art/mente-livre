@@ -240,6 +240,41 @@ check(
 );
 
 // ============================================================================
+// 14k. calendar_processing (Subfase 5 — cancelamento protegido de proposta
+// de evento). Nunca afirma que o evento já foi criado (pode estar só
+// CLAIMED); zero proposalId/stateId/googleEventId exposto — o status de
+// entrada em si já não carrega nenhum desses campos.
+// ============================================================================
+
+check(
+  '14k. calendar_processing -> "Esse compromisso já começou a ser processado e não pode mais ser cancelado por aqui.", clearInput true',
+  () => {
+    const effect = mapEntryResultToUiEffect({ status: 'calendar_processing' });
+    assert.deepEqual(effect, {
+      message: {
+        role: 'assistant',
+        kind: 'text',
+        text: 'Esse compromisso já começou a ser processado e não pode mais ser cancelado por aqui.',
+      },
+      clearInput: true,
+    });
+  },
+);
+
+check('14l. calendar_processing nunca reutiliza o texto de cancelled/schedule_conflict/calendar_unavailable', () => {
+  const effect = mapEntryResultToUiEffect({ status: 'calendar_processing' });
+  assert.notEqual(effect.message.text, 'Proposta cancelada.');
+  assert.notEqual(effect.message.text, 'Você já tem um compromisso nesse horário.');
+  assert.notEqual(effect.message.text, 'Não consegui confirmar sua disponibilidade agora. Tente novamente.');
+});
+
+check('14m. calendar_processing nunca afirma que o evento já foi criado (evita "criado"/"confirmado" no texto)', () => {
+  const effect = mapEntryResultToUiEffect({ status: 'calendar_processing' });
+  assert.ok(!/criado/i.test(effect.message.text));
+  assert.ok(!/confirmado/i.test(effect.message.text));
+});
+
+// ============================================================================
 // 15-19. FORMATAÇÃO DE PREVIEW (visual, nunca lógica)
 // ============================================================================
 

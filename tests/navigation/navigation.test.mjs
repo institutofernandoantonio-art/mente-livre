@@ -271,6 +271,13 @@ check(
       // Subfase 4 (finalização atômica da execução — zero Calendar write,
       // zero wiring em proposal-turn.ts):
       'src/lib/conversation/calendar-event-finalize.ts',
+      // Subfase 5 (cancelamento protegido de proposta de evento — zero
+      // Calendar write, zero claim/finalize chamados a partir daqui;
+      // proposal-turn.ts ganha diff pela primeira vez nesta subfase,
+      // estritamente no ramo `cancelled`, ver comentário de cabeçalho do
+      // próprio arquivo):
+      'src/lib/conversation/calendar-event-cancel.ts',
+      'src/lib/conversation/proposal-turn.ts',
     ]);
     const changed = changedFilesUnder('src/lib/conversation/');
     for (const file of changed) {

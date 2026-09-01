@@ -60,6 +60,13 @@ const CALENDAR_ERROR_TEXT = 'Não consegui consultar seu Google Calendar agora.'
 // de create_calendar_event (preview visual) fica para subfase própria.
 const SCHEDULE_CONFLICT_TEXT = 'Você já tem um compromisso nesse horário.';
 const CALENDAR_UNAVAILABLE_TEXT = 'Não consegui confirmar sua disponibilidade agora. Tente novamente.';
+// Subfase 5 da criação de compromissos no Google Calendar — nunca afirma
+// que o evento já foi criado (a execução pode estar apenas CLAIMED, ainda
+// não confirmada pelo Google): "começou a ser processado" é verdadeiro em
+// ambos os casos (claimed ou já completed), sem prometer mais do que o
+// sistema sabe neste momento.
+const CALENDAR_PROCESSING_TEXT =
+  'Esse compromisso já começou a ser processado e não pode mais ser cancelado por aqui.';
 
 function assistantText(text: string): UiMessageContent {
   return { role: 'assistant', kind: 'text', text };
@@ -147,6 +154,16 @@ export function mapEntryResultToUiEffect(result: ConversationEntryResult): Entry
       return { message: assistantText(CONFIRMED_TEXT), clearInput: true };
     case 'cancelled':
       return { message: assistantText(CANCELLED_TEXT), clearInput: true };
+    case 'calendar_processing':
+      // clearInput: true — deliberado, diferente de `calendar_unavailable`
+      // (que preserva o texto porque reenviar a MESMA resposta pode
+      // funcionar assim que o Calendar voltar). Aqui reenviar "não"
+      // verbatim produziria sempre o mesmo resultado (a execução já
+      // começou, permanentemente) — não há nada de produtivo a repetir com
+      // o texto já digitado, mesmo racional de `cancelled`/
+      // `schedule_conflict` (resultado determinístico e terminal para esta
+      // proposta).
+      return { message: assistantText(CALENDAR_PROCESSING_TEXT), clearInput: true };
     case 'needs_input':
       return { message: assistantText(NEEDS_INPUT_TEXT), clearInput: false };
     case 'unsupported':

@@ -85,12 +85,23 @@
 //    proposal`) NUNCA é redirecionado — é 100% puro (Subfase 1), carregado
 //    real nos testes, mesmo padrão já usado para `buildProposedAction`.
 //
+//    `proposal-turn.ts` importa estaticamente `./calendar-event-cancel`
+//    (que, através de `../supabase/server`, também depende de
+//    `next/headers` — Subfase 5 da criação de compromissos no Google
+//    Calendar) — redirecionado para fake-calendar-event-cancel.mjs, mesmo
+//    motivo/racional de `./local-task-execution` acima. Mesmo cuidado de
+//    especificidade: tests/conversation/calendar-event-cancel.test.mjs
+//    importa o módulo real por
+//    `../../src/lib/conversation/calendar-event-cancel.ts`, specifier
+//    distinto, nunca interceptado por este redirect.
+//
 // API 100% nativa do Node (`node:module`), nenhuma dependência nova.
 const REDIRECTS = new Map([
   ['./runtime-state-storage', new URL('./fake-runtime-state-storage.mjs', import.meta.url).href],
   ['./orchestration', new URL('./fake-orchestration.mjs', import.meta.url).href],
   ['../supabase/server', new URL('./fake-supabase-server.mjs', import.meta.url).href],
   ['./local-task-execution', new URL('./fake-local-task-execution.mjs', import.meta.url).href],
+  ['./calendar-event-cancel', new URL('./fake-calendar-event-cancel.mjs', import.meta.url).href],
   ['./conversation-turn', new URL('./fake-conversation-turn.mjs', import.meta.url).href],
   ['./proposal-turn', new URL('./fake-proposal-turn.mjs', import.meta.url).href],
   ['./intent-extraction', new URL('./fake-intent-extraction.mjs', import.meta.url).href],

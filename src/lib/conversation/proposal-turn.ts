@@ -3,6 +3,7 @@ import 'server-only';
 import { resolveProposalConfirmation } from './confirmation';
 import { getRuntimeState, consumeRuntimeState } from './runtime-state-storage';
 import { executeCreateLocalTask } from './local-task-execution';
+import { cancelCalendarEventProposal } from './calendar-event-cancel';
 
 // ============================================================================
 // Proposal turn — o integrador que conecta a Confirmation Policy pura
@@ -69,12 +70,31 @@ import { executeCreateLocalTask } from './local-task-execution';
 // inventado, nunca uma tentativa de "adivinhar" a ação, nunca consumo da
 // runtime row, nunca chamada ao executor).
 //
-// --- `cancelled` continua o único caminho que usa `consumeRuntimeState` --
+// --- `cancelled` — dois caminhos, por actionType (Subfase 5) -------------
 //
-// Cancelamento nunca dispara ação externa, então não carrega a mesma
-// tensão de atomicidade — `consumeRuntimeState(expectedStateId, now)` já
-// oferece toda a garantia necessária (CAS + expiração + proteção contra
-// replay, já testadas em runtime-state-storage.ts).
+// Para `create_local_task`, cancelamento nunca dispara ação externa, então
+// não carrega nenhuma tensão de atomicidade —
+// `consumeRuntimeState(expectedStateId, now)` já oferece toda a garantia
+// necessária (CAS + expiração + proteção contra replay, já testadas em
+// runtime-state-storage.ts). Este caminho é preservado EXATAMENTE como
+// era antes desta subfase — zero mudança de comportamento.
+//
+// Para `create_calendar_event`, cancelamento PODE colidir com uma
+// execução já reivindicada por outra camada — apagar a runtime e responder
+// "cancelado" depois que uma execução já foi reivindicada seria uma
+// mentira ao usuário e um risco real de duplicação/confusão numa futura
+// chamada ao Google. `cancelCalendarEventProposal` (`./calendar-event-
+// cancel.ts`) resolve isso com UMA RPC Postgres atômica que decide "ainda
+// posso cancelar" vs. "a execução já começou" sem nenhuma pré-leitura em
+// TypeScript (ver a migration correspondente para a prova dos dois
+// interleavings claim-vs-cancel). `execution_started` é um resultado
+// NOVO, explícito, nunca traduzido para `cancelled` — mapear os dois para
+// o mesmo status externo seria exatamente o "cancelado" falso que esta
+// subfase existe para eliminar.
+//
+// Esta subfase NUNCA chama claim/finalize a partir daqui, e NUNCA executa
+// nenhuma escrita no Google Calendar — "não", depois de um claim já
+// vencido, só informa que o cancelamento local não é mais seguro.
 //
 // --- Nuance conhecida do consume -----------------------------------------
 //
@@ -103,6 +123,12 @@ export type ProposalTurnResult =
   | { status: 'confirmation_ambiguous' }
   | { status: 'confirmation_unrecognized' }
   | { status: 'cancelled' }
+  // Subfase 5 da criação de compromissos no Google Calendar: resultado
+  // explícito para "a proposta é create_calendar_event, mas um claim já
+  // venceu — o cancelamento local não é mais seguro". Nunca traduzido
+  // para `cancelled` nesta camada nem em nenhuma camada superior (ver
+  // conversation-entry.ts/presentation-ui.ts).
+  | { status: 'execution_started' }
   | { status: 'confirmed'; itemId: string }
   | { status: 'conflict' }
   | { status: 'error' };
@@ -176,6 +202,29 @@ export async function resolveProposalConversationalTurn(
     }
 
     case 'cancelled': {
+      const action = proposalState.action;
+
+      // Subfase 5: create_calendar_event usa a RPC atômica de
+      // cancelamento protegido — nunca consumeRuntimeState (ver cabeçalho
+      // do arquivo para a corrida que isso evitaria). create_local_task
+      // continua exatamente como antes, sem nenhuma mudança.
+      if (action.actionType === 'create_calendar_event') {
+        const cancelResult = await cancelCalendarEventProposal({
+          expectedStateId,
+          proposalId: proposalState.proposalId,
+        });
+        switch (cancelResult.status) {
+          case 'cancelled':
+            return { status: 'cancelled' };
+          case 'execution_started':
+            return { status: 'execution_started' };
+          case 'conflict':
+            return { status: 'conflict' };
+          case 'error':
+            return { status: 'error' };
+        }
+      }
+
       const consumeResult = await consumeRuntimeState(expectedStateId, now);
       switch (consumeResult.status) {
         case 'consumed':

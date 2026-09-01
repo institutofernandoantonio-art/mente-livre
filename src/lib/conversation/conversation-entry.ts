@@ -109,6 +109,12 @@ export type ConversationEntryResult =
   | { status: 'calendar_unavailable' }
   | { status: 'confirmed'; itemId: string }
   | { status: 'cancelled' }
+  // Subfase 5 da criação de compromissos no Google Calendar: status
+  // externo explícito para "a proposta é create_calendar_event, mas um
+  // claim já venceu — o cancelamento local não é mais seguro". Nunca
+  // traduzido para `cancelled` (ver proposal-turn.ts/presentation-ui.ts) —
+  // essa é exatamente a mentira ao usuário que esta subfase elimina.
+  | { status: 'calendar_processing' }
   | { status: 'needs_input' }
   | { status: 'unsupported' }
   | { status: 'conflict' }
@@ -195,6 +201,10 @@ function translateProposalResult(result: ProposalTurnResult): ConversationEntryR
       return { status: 'confirmed', itemId: result.itemId };
     case 'cancelled':
       return { status: 'cancelled' };
+    case 'execution_started':
+      // Subfase 5: nunca mapeado para `cancelled` — ver
+      // ConversationEntryResult/proposal-turn.ts.
+      return { status: 'calendar_processing' };
     case 'confirmation_ambiguous':
     case 'confirmation_unrecognized':
       return { status: 'needs_input' };
