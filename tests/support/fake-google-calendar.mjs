@@ -14,6 +14,11 @@
 // compromissos no Google Calendar) é usado por
 // tests/conversation/calendar-event-execution.test.mjs, mesmo specifier
 // `../google/calendar` escrito em calendar-event-execution.ts.
+// `hasGoogleCalendarEventWriteAuthorization` (Subfase 10 — gate seguro
+// para conexões antigas freebusy-only) é usado por
+// tests/conversation/calendar-event-confirmation.test.mjs, mesmo
+// specifier `../google/calendar` escrito em
+// calendar-event-confirmation.ts.
 //
 // Nenhuma lógica de OAuth/refresh/token storage é duplicada aqui — só
 // delegação para um handler configurável por teste.
@@ -26,6 +31,7 @@ function unconfigured(name) {
 export const handlers = {
   getGoogleCalendarBusyTimes: unconfigured('getGoogleCalendarBusyTimes'),
   getGoogleCalendarAccessToken: unconfigured('getGoogleCalendarAccessToken'),
+  hasGoogleCalendarEventWriteAuthorization: unconfigured('hasGoogleCalendarEventWriteAuthorization'),
 };
 
 export async function getGoogleCalendarBusyTimes(...args) {
@@ -34,4 +40,8 @@ export async function getGoogleCalendarBusyTimes(...args) {
 
 export async function getGoogleCalendarAccessToken(...args) {
   return handlers.getGoogleCalendarAccessToken(...args);
+}
+
+export async function hasGoogleCalendarEventWriteAuthorization(...args) {
+  return handlers.hasGoogleCalendarEventWriteAuthorization(...args);
 }

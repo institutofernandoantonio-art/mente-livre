@@ -129,11 +129,22 @@ export async function GET(request: Request) {
   // uma reconexão sempre falhava com `23505 unique_violation` (user_id é
   // unique), mascarado como o mesmo erro genérico de qualquer outra causa
   // (bug real confirmado em produção). `user_id` nunca é enviado por este
-  // código — a função (public.reconnect_google_calendar, que só repassa
-  // para private.reconnect_google_calendar, migration 20260831020000)
-  // deriva o usuário de auth.uid() internamente; este client nunca tem
-  // (e não precisa ter) nenhum GRANT de SELECT/UPDATE/DELETE na tabela.
-  const { error: rpcError } = await supabase.rpc('reconnect_google_calendar', {
+  // código — a função deriva o usuário de auth.uid() internamente; este
+  // client nunca tem (e não precisa ter) nenhum GRANT de SELECT/UPDATE/
+  // DELETE na tabela.
+  //
+  // `reconnect_google_calendar_with_event_write` (Subfase 10, migration
+  // 20260901130000, não `reconnect_google_calendar` — a RPC antiga,
+  // migration 20260831020000, permanece intocada e continua existindo só
+  // para compatibilidade com produção enquanto os novos commits não são
+  // deployados): a ÚNICA diferença é que esta grava
+  // `event_write_enabled = true` atomicamente junto do refresh_token —
+  // chamá-la aqui é seguro exatamente porque as duas validações acima
+  // (refresh_token presente + todos os escopos obrigatórios concedidos)
+  // já aconteceram antes deste ponto. Nenhum scope/boolean é passado como
+  // parâmetro — a escolha de qual RPC chamar já representa, por si só,
+  // que este callback validou o consentimento completo.
+  const { error: rpcError } = await supabase.rpc('reconnect_google_calendar_with_event_write', {
     p_refresh_token: refreshToken,
   });
 

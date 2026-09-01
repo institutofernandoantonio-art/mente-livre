@@ -169,6 +169,77 @@ export async function getGoogleCalendarAccessToken(): Promise<string | null> {
   return refreshGoogleAccessToken(connection.refresh_token);
 }
 
+// Gate server-side de autorização de ESCRITA — Subfase 10 da criação de
+// compromissos no Google Calendar. Responde a uma pergunta só: "esta
+// conexão foi (re)estabelecida com o consentimento completo (incluindo
+// `calendar.events.owned`), ou é uma conexão antiga freebusy-only (ou
+// nem existe)?" — nunca "existe um refresh_token", que por si só NÃO
+// prova capacidade de escrita (ver a migration
+// 20260901130000_add_google_calendar_event_write_capability.sql para o
+// racional completo do porquê isso é necessário).
+//
+// Deliberadamente um resultado de 3 estados, nunca um boolean simples:
+// - `authorized`: `event_write_enabled = true` na conexão do usuário.
+// - `unauthorized`: conexão ausente OU `event_write_enabled = false` —
+//   ambos são um "não" CONHECIDO, nunca uma falha técnica.
+// - `error`: falha técnica antes de sabermos qual dos dois acima é
+//   verdade (sem sessão, admin client indisponível, erro real de query) —
+//   nunca colapsado silenciosamente em `unauthorized`, para que o
+//   orquestrador nunca confunda "sabemos que não pode" com "não
+//   conseguimos nem perguntar".
+//
+// Reutiliza o MESMO admin client/padrão já usado por
+// `getGoogleCalendarAccessToken` acima — nenhum segundo admin client é
+// criado, nenhum novo GRANT de SELECT é concedido a `authenticated`/`anon`
+// na tabela (a leitura aqui só é possível porque o cliente é privilegiado,
+// exatamente como já era). Usa `.maybeSingle()` (não `.single()`) de
+// propósito: distingue "conexão inexistente" (`data: null, error: null`
+// — mapeado para `unauthorized`) de um erro real de query (`error`
+// preenchido — mapeado para `error`), o que `.single()` não permitiria
+// (trataria "zero linhas" como erro também).
+//
+// NUNCA retorna refresh_token/access_token — só o booleano já resolvido
+// em `event_write_enabled`, e mesmo esse nunca cruza a fronteira para o
+// browser (só o resultado de 3 estados, consumido inteiramente
+// server-side por `calendar-event-confirmation.ts`).
+export type GoogleCalendarEventWriteAuthorization = 'authorized' | 'unauthorized' | 'error';
+
+export async function hasGoogleCalendarEventWriteAuthorization(): Promise<GoogleCalendarEventWriteAuthorization> {
+  const supabase = await createClient();
+  const { data: claims } = await supabase.auth.getClaims();
+  const userId = claims?.claims.sub;
+
+  if (!userId) {
+    // Sem sessão é uma anomalia técnica neste ponto (o orquestrador só
+    // roda para um usuário já autenticado) — nunca confundida com "sem
+    // permissão de escrita conhecida".
+    return 'error';
+  }
+
+  let admin: ReturnType<typeof createAdminClient>;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return 'error';
+  }
+
+  const { data: connection, error: connectionError } = await admin
+    .from('google_calendar_connections')
+    .select('event_write_enabled')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (connectionError) {
+    return 'error';
+  }
+  if (!connection) {
+    // Conexão inexistente — "não" conhecido, nunca erro técnico.
+    return 'unauthorized';
+  }
+
+  return connection.event_write_enabled ? 'authorized' : 'unauthorized';
+}
+
 // Consulta só os blocos ocupados do calendário primário do usuário atual,
 // numa janela [timeMin, timeMax) — nunca título/descrição/participantes/
 // local/id do evento (freebusy.query nem devolve isso). Nada é persistido

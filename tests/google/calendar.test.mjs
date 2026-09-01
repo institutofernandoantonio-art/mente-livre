@@ -160,6 +160,70 @@ check('9. refreshGoogleAccessToken (troca do refresh_token por access token) é 
   assert.equal(callSites.length - definitionMatch.length, 1, 'refreshGoogleAccessToken deveria ser CHAMADA exatamente 1 vez em todo o arquivo');
 });
 
+// ============================================================================
+// 10-16. hasGoogleCalendarEventWriteAuthorization (Subfase 10 — gate
+// seguro para conexões antigas freebusy-only). Auditoria ESTÁTICA — este
+// arquivo depende de next/headers/next/navigation, então não há como
+// testar dinamicamente o comportamento real da função aqui (mesma
+// limitação já documentada no cabeçalho deste arquivo). O comportamento
+// da função COMO CONSUMIDA pelo orquestrador é coberto dinamicamente por
+// tests/conversation/calendar-event-confirmation.test.mjs, via dublê.
+// ============================================================================
+
+check('10. hasGoogleCalendarEventWriteAuthorization é exportada', () => {
+  assert.ok(/export async function hasGoogleCalendarEventWriteAuthorization\(\)/.test(codeOnly));
+});
+
+check('11. retorna a união de exatamente 3 literais: authorized | unauthorized | error', () => {
+  assert.ok(
+    codeOnly.includes(
+      "export type GoogleCalendarEventWriteAuthorization = 'authorized' | 'unauthorized' | 'error';",
+    ),
+  );
+});
+
+check('12. usa .maybeSingle() (nunca .single()) para distinguir conexão ausente de erro real de query', () => {
+  const fnMatch = codeOnly.match(/export async function hasGoogleCalendarEventWriteAuthorization\(\)[\s\S]*?\n\}/);
+  assert.ok(fnMatch, 'função não encontrada');
+  const body = fnMatch[0];
+  assert.ok(body.includes('.maybeSingle()'));
+  assert.ok(!body.includes('.single()'));
+});
+
+check('13. seleciona SOMENTE event_write_enabled — nunca refresh_token nesta consulta', () => {
+  const fnMatch = codeOnly.match(/export async function hasGoogleCalendarEventWriteAuthorization\(\)[\s\S]*?\n\}/);
+  const body = fnMatch[0];
+  assert.ok(body.includes(".select('event_write_enabled')"));
+  assert.ok(!body.includes('refresh_token'));
+});
+
+check('14. filtra por user_id (nunca lê a conexão de outro usuário) e reutiliza o MESMO admin client — zero segundo createAdminClient novo', () => {
+  const fnMatch = codeOnly.match(/export async function hasGoogleCalendarEventWriteAuthorization\(\)[\s\S]*?\n\}/);
+  const body = fnMatch[0];
+  assert.ok(body.includes(".eq('user_id', userId)"));
+  assert.ok(body.includes('createAdminClient()'));
+  // Mesmo padrão de chamada já usado por getGoogleCalendarAccessToken —
+  // nenhuma segunda IMPLEMENTAÇÃO de admin client, só uma segunda CHAMADA
+  // ao mesmo createAdminClient() já importado no topo do arquivo.
+  const adminClientCallSites = [...codeOnly.matchAll(/= createAdminClient\(\)/g)];
+  assert.equal(adminClientCallSites.length, 2, 'esperava exatamente 2 chamadas a createAdminClient() em todo o arquivo (uma por função)');
+  const importCount = (codeOnly.match(/import \{ createAdminClient \}/g) ?? []).length;
+  assert.equal(importCount, 1, 'createAdminClient deveria ser importado uma única vez');
+});
+
+check('15. NUNCA retorna refresh_token/access_token — só o status de 3 estados', () => {
+  const fnMatch = codeOnly.match(/export async function hasGoogleCalendarEventWriteAuthorization\(\)[\s\S]*?\n\}/);
+  const body = fnMatch[0];
+  const returnStatements = [...body.matchAll(/return ([^;]+);/g)].map((m) => m[1]);
+  for (const statement of returnStatements) {
+    assert.ok(!/refresh_token|access_token|refreshToken|accessToken/i.test(statement), `return suspeito: ${statement}`);
+  }
+});
+
+check('16. zero GRANT novo de SELECT na tabela para authenticated/anon neste arquivo (a leitura só é possível via admin client)', () => {
+  assert.ok(!codeOnly.includes('grant select'));
+});
+
 // --- Resumo -------------------------------------------------------------
 
 const passed = results.filter((r) => r.pass).length;

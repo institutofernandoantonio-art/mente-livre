@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { hasGoogleCalendarEventWriteAuthorization } from '../google/calendar';
 import { claimCalendarEventExecution } from './calendar-event-claim';
 import { executeCreateCalendarEvent } from './calendar-event-execution';
 import { finalizeCalendarEventExecution } from './calendar-event-finalize';
@@ -22,6 +23,14 @@ import type { ProposedAction } from './proposed-action';
 // uma única RPC atômica que faça claim+Google+finalize juntos — Google é
 // uma chamada de REDE, nunca pode viver dentro da MESMA transação
 // Postgres que o claim/finalize.
+//
+// Subfase 10 (gate seguro para conexões antigas freebusy-only): antes de
+// QUALQUER claim, este módulo pergunta a `hasGoogleCalendarEventWriteAuthorization()`
+// (`../google/calendar`) se a conexão do usuário atual foi de fato
+// (re)estabelecida com o consentimento completo (freebusy + escrita).
+// Uma conexão antiga (criada quando o app só pedia freebusy) tem
+// `event_write_enabled = false` e NUNCA chega ao claim — ver "Passo 0"
+// abaixo.
 //
 // Este módulo NUNCA:
 // - reimplementa claim/execução Google/finalize — importa e chama as três
@@ -103,8 +112,26 @@ import type { ProposedAction } from './proposed-action';
 //   resto da pilha, zero chamada ao Google.
 //
 // ============================================================================
-// MAPEAMENTO DETALHADO — os 3 passos
+// MAPEAMENTO DETALHADO — Passo 0 (gate) + os 3 passos
 // ============================================================================
+//
+// Passo 0 — GATE (`hasGoogleCalendarEventWriteAuthorization`), chamado
+// exatamente 1 vez, ANTES de qualquer claim:
+//   authorized    -> segue para o Passo 1 (claim)
+//   unauthorized  -> retorna 'authorization_required' IMEDIATAMENTE — zero
+//                    claim, zero Google, zero finalize, zero
+//                    calendar_event_execution criada. A runtime permanece
+//                    uma ProposalState normal — o usuário ainda pode
+//                    responder "não" depois, e o cancelamento funciona
+//                    normalmente (nunca houve claim para colidir com ele).
+//   error         -> retorna 'error' IMEDIATAMENTE — mesma ausência total
+//                    de efeito colateral do caso `unauthorized`. Nunca
+//                    confundido com `unauthorized`: um erro técnico ao
+//                    consultar a capacidade (sessão ausente, admin client
+//                    indisponível, falha real de query) não prova que a
+//                    conexão carece de escrita — só que não conseguimos
+//                    perguntar. Tratar isso como `authorization_required`
+//                    mandaria o usuário reconectar sem necessidade.
 //
 // Passo 1 — CLAIM (`claimCalendarEventExecution`), chamado exatamente 1 vez:
 //   claimed          -> segue para Google com este googleEventId
@@ -150,6 +177,17 @@ import type { ProposedAction } from './proposed-action';
 // `conflict` (runtime não encontrada), e este módulo para imediatamente,
 // zero chamada ao Google.
 //
+// Conexão antiga (gate = unauthorized) + "sim": o Passo 0 retorna
+// `authorization_required` ANTES de qualquer claim — nenhuma linha é
+// inserida em `calendar_event_executions`. A runtime permanece uma
+// ProposalState normal, nunca reivindicada. Um "não" seguinte (mesmo
+// concorrente) encontra a MESMA situação que sempre existiu antes de
+// qualquer claim: `cancel_calendar_event_proposal` não encontra execução
+// nenhuma e cancela normalmente (`cancelled`) — o gate desta subfase não
+// muda em nada a semântica de cancelamento, porque nunca chega perto de
+// criar o único artefato (a linha de execution) que faria cancel se
+// comportar diferente.
+//
 // ============================================================================
 // RESPOSTA PERDIDA — o que é e o que não é resolvido aqui
 // ============================================================================
@@ -191,6 +229,22 @@ export async function confirmCalendarEvent(
   input: ConfirmCalendarEventInput,
 ): Promise<ConfirmCalendarEventResult> {
   const { expectedStateId, proposalId, action } = input;
+
+  // --- Passo 0: GATE de autorização de escrita, ANTES de qualquer claim ---
+  //
+  // Uma conexão antiga (freebusy-only) nunca deveria sequer tentar um
+  // claim — ver "PROBLEMA CRÍTICO" no cabeçalho da migration
+  // 20260901130000_add_google_calendar_event_write_capability.sql.
+  const authorization = await hasGoogleCalendarEventWriteAuthorization();
+
+  if (authorization === 'unauthorized') {
+    return { status: 'authorization_required' };
+  }
+  if (authorization === 'error') {
+    // Falha técnica ao consultar a capacidade — nunca confundida com
+    // "sabemos que não pode" (ver cabeçalho do arquivo).
+    return { status: 'error' };
+  }
 
   // --- Passo 1: CLAIM, exatamente 1 chamada -------------------------------
   const claimResult = await claimCalendarEventExecution({ expectedStateId, proposalId });

@@ -1,21 +1,33 @@
 // Testes unitários de src/lib/conversation/calendar-event-confirmation.ts
-// — o orquestrador claim -> Google -> finalize (Subfase 9 da criação de
-// compromissos no Google Calendar).
+// — o orquestrador gate -> claim -> Google -> finalize (Subfase 9 e,
+// nesta atualização, Subfase 10 — gate seguro para conexões antigas
+// freebusy-only — da criação de compromissos no Google Calendar).
 //
 // Execução: npm run test:calendar-event-confirmation
 //
 // Sem framework (nenhum instalado no projeto) — mesmo padrão do resto de
-// tests/conversation/. Três peças são substituídas, via dublês
+// tests/conversation/. Quatro peças são substituídas, via dublês
 // redirecionados só neste processo de teste (ver
 // tests/support/ts-extension-loader.mjs): `./calendar-event-claim`,
-// `./calendar-event-execution`, `./calendar-event-finalize` — os
-// specifiers EXATOS escritos dentro de calendar-event-confirmation.ts.
+// `./calendar-event-execution`, `./calendar-event-finalize` e
+// `../google/calendar` (só `hasGoogleCalendarEventWriteAuthorization`) —
+// os specifiers EXATOS escritos dentro de calendar-event-confirmation.ts.
 // Nenhuma chamada real ao Google/Supabase acontece em execução alguma
 // deste arquivo. Estes testes provam o CONTRATO do orquestrador
-// (sequenciamento exato dos 3 passos, mapeamento de cada combinação de
-// resultados, zero retry/requery) — nunca o comportamento real de
-// claim/execução Google/finalize em si (cobertos por seus próprios
+// (sequenciamento exato do gate + 3 passos, mapeamento de cada combinação
+// de resultados, zero retry/requery) — nunca o comportamento real do
+// próprio gate/claim/execução Google/finalize (cobertos por seus próprios
 // arquivos de teste).
+//
+// `googleHandlers.hasGoogleCalendarEventWriteAuthorization` é
+// inicializado como `'authorized'` logo abaixo, ANTES de qualquer teste —
+// todos os testes já existentes (Subfase 9, sobre claim/Google/finalize)
+// continuam válidos sem nenhuma alteração, porque simplesmente não
+// competia a eles decidir o gate. Os testes NOVOS desta atualização
+// (seção "SUBFASE 10 — GATE") ficam deliberadamente no FINAL do arquivo,
+// depois de todo o resto, para que sobrescrever o gate para
+// 'unauthorized'/'error' dentro deles nunca vaze para nenhum teste
+// anterior.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -24,6 +36,11 @@ import { confirmCalendarEvent } from '../../src/lib/conversation/calendar-event-
 import { handlers as claimHandlers } from '../support/fake-calendar-event-claim.mjs';
 import { handlers as executionHandlers } from '../support/fake-calendar-event-execution.mjs';
 import { handlers as finalizeHandlers } from '../support/fake-calendar-event-finalize.mjs';
+import { handlers as googleHandlers } from '../support/fake-google-calendar.mjs';
+
+// Default global — ver nota acima. Só os testes da seção "SUBFASE 10 —
+// GATE" (no final do arquivo) sobrescrevem isto.
+googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => 'authorized';
 
 const results = [];
 function record(name, pass, detail) {
@@ -343,6 +360,128 @@ await check(
 );
 
 // ============================================================================
+// SUBFASE 10 — GATE de autorização de escrita, ANTES de qualquer claim.
+// Deliberadamente a ÚLTIMA seção de testes comportamentais deste arquivo
+// (ver nota no cabeçalho) — cada teste abaixo configura o gate para o que
+// precisa, sem risco de vazar para nenhum teste anterior.
+// ============================================================================
+
+await check('34, 35, 36 e 37. gate unauthorized -> authorization_required, ZERO claim, ZERO Google, ZERO finalize', async () => {
+  googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => 'unauthorized';
+  setHandlers({}); // claim/execute/finalize todos "neverCalled"
+  const result = await confirmCalendarEvent(VALID_INPUT);
+  assert.deepEqual(result, { status: 'authorization_required' });
+});
+
+await check('38, 39 e 40. erro ao checar o gate -> error, ZERO claim, ZERO Google (finalize também nunca alcançável)', async () => {
+  googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => 'error';
+  setHandlers({}); // claim/execute/finalize todos "neverCalled"
+  const result = await confirmCalendarEvent(VALID_INPUT);
+  assert.deepEqual(result, { status: 'error' });
+});
+
+await check('gate error é DISTINTO de gate unauthorized — nunca colapsados no mesmo status externo', async () => {
+  googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => 'unauthorized';
+  setHandlers({});
+  const unauthorizedResult = await confirmCalendarEvent(VALID_INPUT);
+
+  googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => 'error';
+  setHandlers({});
+  const errorResult = await confirmCalendarEvent(VALID_INPUT);
+
+  assert.notDeepEqual(unauthorizedResult, errorResult);
+});
+
+await check('41 e 42. gate authorized -> segue para claim; lifecycle existente (claim/Google/finalize) continua idêntico depois do gate', async () => {
+  googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => 'authorized';
+  setHandlers({
+    claim: async () => ({ status: 'claimed', googleEventId: VALID_EVENT_ID }),
+    execute: async () => ({ status: 'created' }),
+    finalize: async () => ({ status: 'completed' }),
+  });
+  const result = await confirmCalendarEvent(VALID_INPUT);
+  assert.deepEqual(result, { status: 'completed' });
+});
+
+await check('43. gate authorized + claimed/already_claimed continuam funcionando normalmente', async () => {
+  for (const claimStatus of ['claimed', 'already_claimed']) {
+    googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => 'authorized';
+    setHandlers({
+      claim: async () => ({ status: claimStatus, googleEventId: VALID_EVENT_ID }),
+      execute: async () => ({ status: 'created' }),
+      finalize: async () => ({ status: 'completed' }),
+    });
+    const result = await confirmCalendarEvent(VALID_INPUT);
+    assert.deepEqual(result, { status: 'completed' }, `falhou para claim status ${claimStatus}`);
+  }
+});
+
+await check('44. gate authorized + created/already_exists continuam indo para finalize normalmente', async () => {
+  for (const executeStatus of ['created', 'already_exists']) {
+    googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => 'authorized';
+    let finalizeCalls = 0;
+    setHandlers({
+      claim: async () => ({ status: 'claimed', googleEventId: VALID_EVENT_ID }),
+      execute: async () => ({ status: executeStatus }),
+      finalize: async () => {
+        finalizeCalls++;
+        return { status: 'completed' };
+      },
+    });
+    await confirmCalendarEvent(VALID_INPUT);
+    assert.equal(finalizeCalls, 1, `finalize deveria ter sido chamado para execute status ${executeStatus}`);
+  }
+});
+
+await check('45. gate authorized + unauthorized do PRÓPRIO Google (depois do claim) continua retornando authorization_required', async () => {
+  googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => 'authorized';
+  setHandlers({
+    claim: async () => ({ status: 'claimed', googleEventId: VALID_EVENT_ID }),
+    execute: async () => ({ status: 'unauthorized' }),
+  });
+  const result = await confirmCalendarEvent(VALID_INPUT);
+  assert.deepEqual(result, { status: 'authorization_required' });
+});
+
+await check('46. gate authorized + erro do Google continua retornando execution_uncertain', async () => {
+  googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => 'authorized';
+  setHandlers({
+    claim: async () => ({ status: 'claimed', googleEventId: VALID_EVENT_ID }),
+    execute: async () => ({ status: 'error' }),
+  });
+  const result = await confirmCalendarEvent(VALID_INPUT);
+  assert.deepEqual(result, { status: 'execution_uncertain' });
+});
+
+await check('gate é consultado exatamente 1 vez por execução (zero retry/requery do próprio gate)', async () => {
+  let gateCalls = 0;
+  googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => {
+    gateCalls++;
+    return 'authorized';
+  };
+  setHandlers({
+    claim: async () => ({ status: 'claimed', googleEventId: VALID_EVENT_ID }),
+    execute: async () => ({ status: 'created' }),
+    finalize: async () => ({ status: 'completed' }),
+  });
+  await confirmCalendarEvent(VALID_INPUT);
+  assert.equal(gateCalls, 1);
+});
+
+await check('gate lançando exceção propaga (rejeita), mesma convenção do resto do módulo', async () => {
+  googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => {
+    throw new Error('falha inesperada fora do contrato de retorno');
+  };
+  setHandlers({});
+  await assert.rejects(() => confirmCalendarEvent(VALID_INPUT), /falha inesperada fora do contrato de retorno/);
+});
+
+// Restaura o default para 'authorized' — última linha de defesa caso
+// algum teste futuro seja adicionado depois desta seção sem configurar o
+// gate explicitamente.
+googleHandlers.hasGoogleCalendarEventWriteAuthorization = async () => 'authorized';
+
+// ============================================================================
 // AUDITORIA ESTÁTICA — zero admin/service-role, zero geração de id, zero
 // Calendar API direta, server-only
 // ============================================================================
@@ -374,6 +513,29 @@ await check('usa as 3 abstrações reais, cada uma exatamente 1 vez no código (
   assert.equal(executeCallSites.length, 1);
   assert.equal(finalizeCallSites.length, 1);
 });
+
+await check(
+  '(Subfase 10) hasGoogleCalendarEventWriteAuthorization é importado de ../google/calendar e chamado exatamente 1 vez',
+  () => {
+    assert.ok(codeOnly.includes("from '../google/calendar'"));
+    const gateCallSites = [...codeOnly.matchAll(/hasGoogleCalendarEventWriteAuthorization\(/g)];
+    // 1 na chamada real + 1 na própria linha de import (nomeia a função) —
+    // nunca uma segunda chamada real.
+    assert.ok(gateCallSites.length >= 1);
+    const realCallSites = [...codeOnly.matchAll(/await hasGoogleCalendarEventWriteAuthorization\(/g)];
+    assert.equal(realCallSites.length, 1, 'gate deveria ser chamado (com await) exatamente 1 vez no código real');
+  },
+);
+
+await check(
+  '8 (prova de ordem). o gate é textualmente chamado ANTES do claim no código-fonte — Passo 0 precede o Passo 1',
+  () => {
+    const gateIndex = codeOnly.indexOf('await hasGoogleCalendarEventWriteAuthorization(');
+    const claimIndex = codeOnly.indexOf('await claimCalendarEventExecution(');
+    assert.ok(gateIndex !== -1 && claimIndex !== -1);
+    assert.ok(gateIndex < claimIndex, 'o gate deveria aparecer antes do claim no código-fonte');
+  },
+);
 
 await check('módulo é server-only', () => {
   assert.ok(codeOnly.includes("import 'server-only'"));
