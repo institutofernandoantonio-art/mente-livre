@@ -276,6 +276,89 @@ check('14m. calendar_processing nunca afirma que o evento já foi criado (evita 
 });
 
 // ============================================================================
+// 31-38. SUBFASE 9 — mensagens do lifecycle claim -> Google -> finalize.
+// Nenhuma expõe dado técnico (token/scope/OAuth/HTTP status/
+// googleEventId/proposalId/stateId); nenhuma afirma mais do que o sistema
+// sabe no momento.
+// ============================================================================
+
+check('31 e 32. calendar_event_confirmed menciona Google Agenda e o aviso de 30 minutos; clearInput true', () => {
+  const effect = mapEntryResultToUiEffect({ status: 'calendar_event_confirmed' });
+  assert.match(effect.message.text, /Google Agenda/);
+  assert.match(effect.message.text, /30 minutos/);
+  assert.equal(effect.clearInput, true);
+});
+
+check('calendar_event_confirmed nunca diz "vou te avisar" (quem emite o lembrete é o Google Calendar, não o Mente Livre)', () => {
+  const effect = mapEntryResultToUiEffect({ status: 'calendar_event_confirmed' });
+  assert.ok(!/vou (te )?avisar/i.test(effect.message.text));
+});
+
+check('33 e 34. calendar_authorization_required orienta reconexão, NUNCA menciona token/scope/OAuth/401/refresh; clearInput false', () => {
+  const effect = mapEntryResultToUiEffect({ status: 'calendar_authorization_required' });
+  assert.match(effect.message.text, /reconecte/i);
+  const forbidden = ['token', 'scope', 'OAuth', '401', 'refresh'];
+  for (const word of forbidden) {
+    assert.ok(!effect.message.text.toLowerCase().includes(word.toLowerCase()), `termo técnico vazou: ${word}`);
+  }
+  assert.equal(effect.clearInput, false);
+});
+
+check('35. calendar_execution_uncertain NUNCA afirma que o evento não existe/não foi criado', () => {
+  const effect = mapEntryResultToUiEffect({ status: 'calendar_execution_uncertain' });
+  assert.ok(!/não foi criado/i.test(effect.message.text));
+  assert.ok(!/não existe/i.test(effect.message.text));
+});
+
+check('36. calendar_execution_uncertain NUNCA afirma que o evento existe/foi criado', () => {
+  const effect = mapEntryResultToUiEffect({ status: 'calendar_execution_uncertain' });
+  assert.ok(!/\bfoi criado\b/i.test(effect.message.text));
+  assert.ok(!/\bcriado com sucesso\b/i.test(effect.message.text));
+  assert.equal(effect.clearInput, false);
+});
+
+check('37. calendar_finalization_pending NUNCA diz que a criação falhou/foi cancelada', () => {
+  const effect = mapEntryResultToUiEffect({ status: 'calendar_finalization_pending' });
+  assert.ok(!/falhou/i.test(effect.message.text));
+  assert.ok(!/não foi criado/i.test(effect.message.text));
+  assert.ok(!/cancelad[oa]/i.test(effect.message.text));
+  assert.equal(effect.clearInput, false);
+});
+
+check('38. nenhum dos 4 novos status expõe googleEventId/proposalId/stateId/token em seu texto', () => {
+  for (const status of [
+    'calendar_event_confirmed',
+    'calendar_authorization_required',
+    'calendar_execution_uncertain',
+    'calendar_finalization_pending',
+  ]) {
+    const effect = mapEntryResultToUiEffect({ status });
+    const forbidden = ['googleEventId', 'proposalId', 'stateId', 'token'];
+    for (const word of forbidden) {
+      assert.ok(!effect.message.text.toLowerCase().includes(word.toLowerCase()), `dado técnico vazou em ${status}: ${word}`);
+    }
+  }
+});
+
+check('os 4 novos textos são todos distintos entre si e distintos dos textos já existentes', () => {
+  const texts = [
+    'calendar_event_confirmed',
+    'calendar_authorization_required',
+    'calendar_execution_uncertain',
+    'calendar_finalization_pending',
+  ].map((status) => mapEntryResultToUiEffect({ status }).message.text);
+  assert.equal(new Set(texts).size, 4, 'os 4 textos deveriam ser distintos entre si');
+  const existingTexts = [
+    mapEntryResultToUiEffect({ status: 'confirmed', itemId: 'x' }).message.text,
+    mapEntryResultToUiEffect({ status: 'cancelled' }).message.text,
+    mapEntryResultToUiEffect({ status: 'calendar_processing' }).message.text,
+  ];
+  for (const text of texts) {
+    assert.ok(!existingTexts.includes(text), `texto novo colide com um já existente: "${text}"`);
+  }
+});
+
+// ============================================================================
 // 15-19. FORMATAÇÃO DE PREVIEW (visual, nunca lógica)
 // ============================================================================
 

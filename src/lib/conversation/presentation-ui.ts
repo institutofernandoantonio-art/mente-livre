@@ -67,6 +67,32 @@ const CALENDAR_UNAVAILABLE_TEXT = 'Não consegui confirmar sua disponibilidade a
 // sistema sabe neste momento.
 const CALENDAR_PROCESSING_TEXT =
   'Esse compromisso já começou a ser processado e não pode mais ser cancelado por aqui.';
+// Subfase 9 da criação de compromissos no Google Calendar — mensagens do
+// lifecycle claim -> Google -> finalize. Nenhuma menciona token/scope/
+// OAuth/HTTP status; nenhuma afirma criação/falha quando o resultado real
+// é incerto (ver calendar-event-confirmation.ts para a semântica exata de
+// cada status).
+//
+// Sucesso: nunca "vou te avisar" — quem emite o lembrete é o próprio
+// Google Calendar, não o Mente Livre.
+const CALENDAR_EVENT_CONFIRMED_TEXT = 'Compromisso adicionado ao Google Agenda, com aviso de 30 minutos antes.';
+// Autorização ausente: orienta reconexão sem nunca mencionar termos
+// técnicos (token/scope/OAuth/401/refresh token) e sem tentar reconectar
+// automaticamente — a proposta continua pendente (claim/runtime
+// preservados), por isso "confirme novamente" faz sentido depois de
+// reconectar.
+const CALENDAR_AUTHORIZATION_REQUIRED_TEXT =
+  'Para criar esse compromisso, reconecte seu Google Agenda permitindo o agendamento. Depois, confirme novamente.';
+// Execução incerta: nunca afirma que o evento foi criado NEM que não foi
+// — genuinamente não sabemos. "reutilizará a mesma identificação" é a
+// forma tecnicamente honesta de dizer que reenviar é seguro (nunca cria
+// duplicata), mais precisa que uma promessa genérica de "sem risco".
+const CALENDAR_EXECUTION_UNCERTAIN_TEXT =
+  'Não consegui confirmar a conclusão no Google Agenda. Você pode tentar confirmar novamente; o Mente Livre reutilizará a mesma identificação do compromisso para evitar duplicidade.';
+// Finalização pendente: o Google JÁ confirmou existência — nunca dizer
+// "não foi criado"/"falhou ao agendar"/"cancelado".
+const CALENDAR_FINALIZATION_PENDING_TEXT =
+  'O compromisso foi processado no Google Agenda, mas não consegui concluir o registro aqui. Tente confirmar novamente.';
 
 function assistantText(text: string): UiMessageContent {
   return { role: 'assistant', kind: 'text', text };
@@ -164,6 +190,29 @@ export function mapEntryResultToUiEffect(result: ConversationEntryResult): Entry
       // `schedule_conflict` (resultado determinístico e terminal para esta
       // proposta).
       return { message: assistantText(CALENDAR_PROCESSING_TEXT), clearInput: true };
+    case 'calendar_event_confirmed':
+      // Sucesso terminal — mesmo racional de clearInput:true de
+      // `confirmed`/`cancelled` (nada produtivo a repetir).
+      return { message: assistantText(CALENDAR_EVENT_CONFIRMED_TEXT), clearInput: true };
+    case 'calendar_authorization_required':
+    case 'calendar_execution_uncertain':
+    case 'calendar_finalization_pending':
+      // clearInput: false nos três — a proposta continua pendente (claim/
+      // runtime preservados pelo orquestrador nesses três casos) e a ação
+      // recomendada é literalmente "confirme/tente novamente", isto é,
+      // reenviar a MESMA resposta ("sim") — preservar o texto já digitado
+      // ajuda exatamente esse reenvio, mesmo racional de
+      // `calendar_unavailable`.
+      return {
+        message: assistantText(
+          result.status === 'calendar_authorization_required'
+            ? CALENDAR_AUTHORIZATION_REQUIRED_TEXT
+            : result.status === 'calendar_execution_uncertain'
+              ? CALENDAR_EXECUTION_UNCERTAIN_TEXT
+              : CALENDAR_FINALIZATION_PENDING_TEXT,
+        ),
+        clearInput: false,
+      };
     case 'needs_input':
       return { message: assistantText(NEEDS_INPUT_TEXT), clearInput: false };
     case 'unsupported':

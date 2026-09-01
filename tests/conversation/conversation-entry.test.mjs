@@ -877,6 +877,27 @@ await check('58. cancelled real de proposal-turn continua traduzido para cancell
   assert.deepEqual(result, { status: 'cancelled' });
 });
 
+// ============================================================================
+// 59. SUBFASE 9 — os 4 novos status do lifecycle claim -> Google ->
+// finalize são traduzidos VERBATIM (mesmo nome nas duas camadas), mesmo
+// padrão já usado por schedule_conflict/calendar_unavailable.
+// ============================================================================
+
+await check('59. calendar_event_confirmed/calendar_authorization_required/calendar_execution_uncertain/calendar_finalization_pending -> traduzidos verbatim', async () => {
+  for (const status of [
+    'calendar_event_confirmed',
+    'calendar_authorization_required',
+    'calendar_execution_uncertain',
+    'calendar_finalization_pending',
+  ]) {
+    foundProposal({
+      resolveProposalConversationalTurn: async () => ({ status }),
+    });
+    const result = await handleConversationMessage('sim', NOW, TIMEZONE);
+    assert.deepEqual(result, { status });
+  }
+});
+
 // --- Resumo -------------------------------------------------------------
 
 const passed = results.filter((r) => r.pass).length;

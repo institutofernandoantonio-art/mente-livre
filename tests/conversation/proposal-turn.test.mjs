@@ -25,6 +25,7 @@ import { resolveProposalConversationalTurn } from '../../src/lib/conversation/pr
 import { handlers as storageHandlers } from '../support/fake-runtime-state-storage.mjs';
 import { handlers as executorHandlers } from '../support/fake-local-task-execution.mjs';
 import { handlers as cancelHandlers } from '../support/fake-calendar-event-cancel.mjs';
+import { handlers as confirmationHandlers } from '../support/fake-calendar-event-confirmation.mjs';
 
 const results = [];
 function record(name, pass, detail) {
@@ -56,6 +57,7 @@ function setHandlers(overrides = {}) {
   executorHandlers.executeCreateLocalTask = overrides.executeCreateLocalTask ?? neverCalled('executeCreateLocalTask');
   cancelHandlers.cancelCalendarEventProposal =
     overrides.cancelCalendarEventProposal ?? neverCalled('cancelCalendarEventProposal');
+  confirmationHandlers.confirmCalendarEvent = overrides.confirmCalendarEvent ?? neverCalled('confirmCalendarEvent');
 }
 
 // --- Fixtures reais (nenhum dado pessoal) -----------------------------
@@ -541,31 +543,39 @@ await check('39. runtime error NÃO chama o executor', async () => {
   assert.equal(result.status, 'error');
 });
 
-await check('40. actionType não suportada (defensivo, hoje inalcançável) -> error, zero executor', async () => {
-  // ProposedAction real só tem `create_local_task` — este fixture usa um
-  // actionType arbitrário só para exercitar o guard defensivo descrito no
-  // cabeçalho de proposal-turn.ts. Testável só porque este arquivo é JS
-  // puro (sem checagem de tipos); em TypeScript real este branch é
-  // inalcançável hoje.
-  setHandlers({
-    getRuntimeState: async () => ({
-      status: 'found',
-      value: {
-        stateId: 'state-AA',
-        kind: 'proposal',
-        state: {
-          status: 'awaiting_confirmation',
-          proposalId: 'proposal-unsupported',
-          action: { actionType: 'create_calendar_event', task: FULL_TASK },
-          createdAt: NOW,
-          expiresAt: PROPOSAL_EXPIRES_AT,
+await check(
+  '40. actionType não suportada (defensivo, hoje inalcançável) -> error, zero executor, zero orquestrador',
+  async () => {
+    // ProposedAction real só tem `create_local_task`/`create_calendar_event`
+    // (Subfase 9 já trata a segunda) — este fixture usa um TERCEIRO
+    // actionType arbitrário, genuinamente desconhecido, só para exercitar o
+    // guard defensivo descrito no cabeçalho de proposal-turn.ts. Testável só
+    // porque este arquivo é JS puro (sem checagem de tipos); em TypeScript
+    // real este branch é inalcançável hoje. `executorHandlers`/
+    // `confirmationHandlers` permanecem "neverCalled" (setHandlers só
+    // sobrescreve getRuntimeState) — se proposal-turn.ts chamasse qualquer
+    // um dos dois para este actionType, o teste falharia com uma exceção
+    // em vez do `error` esperado.
+    setHandlers({
+      getRuntimeState: async () => ({
+        status: 'found',
+        value: {
+          stateId: 'state-AA',
+          kind: 'proposal',
+          state: {
+            status: 'awaiting_confirmation',
+            proposalId: 'proposal-unsupported',
+            action: { actionType: 'bogus_action_type', task: FULL_TASK },
+            createdAt: NOW,
+            expiresAt: PROPOSAL_EXPIRES_AT,
+          },
         },
-      },
-    }),
-  });
-  const result = await resolveProposalConversationalTurn('sim', NOW);
-  assert.equal(result.status, 'error');
-});
+      }),
+    });
+    const result = await resolveProposalConversationalTurn('sim', NOW);
+    assert.equal(result.status, 'error');
+  },
+);
 
 // ============================================================================
 // 41. TESTE DE REPLAY LÓGICO — confirmação bem-sucedida não executa 2x
@@ -734,15 +744,131 @@ await check('49. cancelCalendarEventProposal lançando exceção propaga (rejeit
   );
 });
 
+// ============================================================================
+// SUBFASE 9 — conectar o "sim" ao lifecycle seguro (claim -> Google ->
+// finalize) via calendar-event-confirmation.ts. Substitui o comportamento
+// intermediário anterior (o antigo teste "50 (S5-42)" — create_calendar_event
+// + "sim" sempre retornava `error` — ficou obsoleto por definição: esta é
+// exatamente a subfase que conecta esse caminho).
+// ============================================================================
+
+function capturingConfirmation(responder) {
+  const calls = [];
+  confirmationHandlers.confirmCalendarEvent = async (input) => {
+    calls.push(input);
+    return responder(input);
+  };
+  return calls;
+}
+
 await check(
-  '50 (S5-42). ramo "sim" (confirmado) de create_calendar_event continua sem claim/finalize/Google write nesta subfase — ainda retorna error',
+  '22. create_calendar_event + "sim" chama o novo orquestrador (confirmCalendarEvent) exatamente 1 vez — executeCreateLocalTask nunca chamado',
   async () => {
-    // Mesmo guard defensivo já testado no teste 40 (actionType não
-    // suportada no caminho `confirmed`) — reafirmado explicitamente aqui
-    // como regressão da Subfase 5: o lifecycle positivo não foi tocado.
-    foundCalendarProposal('state-cal-G', PROPOSAL_EXPIRES_AT);
+    // executorHandlers (executeCreateLocalTask) permanece "neverCalled" —
+    // se proposal-turn.ts o chamasse para create_calendar_event, este
+    // teste falharia com uma exceção em vez do status esperado.
+    foundCalendarProposal('state-cal-confirm-A', PROPOSAL_EXPIRES_AT);
+    const calls = capturingConfirmation(() => ({ status: 'completed' }));
+    await resolveProposalConversationalTurn('sim', NOW);
+    assert.equal(calls.length, 1);
+  },
+);
+
+await check('22b. confirmCalendarEvent recebe expectedStateId/proposalId/action exatos, nada mais', async () => {
+  foundCalendarProposal('distinctive-confirm-state', PROPOSAL_EXPIRES_AT);
+  const calls = capturingConfirmation(() => ({ status: 'completed' }));
+  await resolveProposalConversationalTurn('sim', NOW);
+  assert.deepEqual(Object.keys(calls[0]).sort(), ['action', 'expectedStateId', 'proposalId']);
+  assert.equal(calls[0].expectedStateId, 'distinctive-confirm-state');
+  assert.equal(calls[0].proposalId, 'fixture-calendar-proposal-id-777');
+  assert.equal(calls[0].action.actionType, 'create_calendar_event');
+  assert.deepEqual(calls[0].action, fixtureCalendarProposalState().action);
+});
+
+await check('23. confirmCalendarEvent completed -> status externo calendar_event_confirmed (compromisso criado)', async () => {
+  foundCalendarProposal('state-cal-confirm-B', PROPOSAL_EXPIRES_AT);
+  capturingConfirmation(() => ({ status: 'completed' }));
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.deepEqual(result, { status: 'calendar_event_confirmed' });
+});
+
+await check('24. confirmCalendarEvent authorization_required -> status externo calendar_authorization_required', async () => {
+  foundCalendarProposal('state-cal-confirm-C', PROPOSAL_EXPIRES_AT);
+  capturingConfirmation(() => ({ status: 'authorization_required' }));
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.deepEqual(result, { status: 'calendar_authorization_required' });
+});
+
+await check('25. confirmCalendarEvent execution_uncertain -> status externo calendar_execution_uncertain', async () => {
+  foundCalendarProposal('state-cal-confirm-D', PROPOSAL_EXPIRES_AT);
+  capturingConfirmation(() => ({ status: 'execution_uncertain' }));
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.deepEqual(result, { status: 'calendar_execution_uncertain' });
+});
+
+await check('26. confirmCalendarEvent finalization_pending -> status externo calendar_finalization_pending', async () => {
+  foundCalendarProposal('state-cal-confirm-E', PROPOSAL_EXPIRES_AT);
+  capturingConfirmation(() => ({ status: 'finalization_pending' }));
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.deepEqual(result, { status: 'calendar_finalization_pending' });
+});
+
+await check('27. confirmCalendarEvent conflict -> conflict (claim nem sequer autorizou execução)', async () => {
+  foundCalendarProposal('state-cal-confirm-F', PROPOSAL_EXPIRES_AT);
+  capturingConfirmation(() => ({ status: 'conflict' }));
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.deepEqual(result, { status: 'conflict' });
+});
+
+await check('28. confirmCalendarEvent error -> error', async () => {
+  foundCalendarProposal('state-cal-confirm-G', PROPOSAL_EXPIRES_AT);
+  capturingConfirmation(() => ({ status: 'error' }));
+  const result = await resolveProposalConversationalTurn('sim', NOW);
+  assert.deepEqual(result, { status: 'error' });
+});
+
+await check('confirmCalendarEvent lançando exceção propaga (rejeita), mesma convenção do resto do módulo', async () => {
+  foundCalendarProposal('state-cal-confirm-H', PROPOSAL_EXPIRES_AT);
+  confirmationHandlers.confirmCalendarEvent = async () => {
+    throw new Error('falha inesperada fora do contrato de retorno');
+  };
+  await assert.rejects(
+    () => resolveProposalConversationalTurn('sim', NOW),
+    /falha inesperada fora do contrato de retorno/,
+  );
+});
+
+await check(
+  '21. create_local_task + "sim" permanece EXATAMENTE igual (regressão) — confirmCalendarEvent nunca chamado',
+  async () => {
+    // confirmationHandlers permanece "neverCalled" — se proposal-turn.ts o
+    // chamasse para create_local_task, este teste falharia com uma
+    // exceção em vez do `confirmed` esperado.
+    foundProposalWithTask('state-local-confirm-regression', FULL_TASK);
+    capturingExecutor(() => ({ status: 'created', itemId: VALID_ITEM_UUID }));
     const result = await resolveProposalConversationalTurn('sim', NOW);
-    assert.equal(result.status, 'error');
+    assert.deepEqual(result, { status: 'confirmed', itemId: VALID_ITEM_UUID });
+  },
+);
+
+await check(
+  '29. create_calendar_event + "não" continua usando cancelCalendarEventProposal (regressão da Subfase 5, inalterada por esta subfase)',
+  async () => {
+    foundCalendarProposal('state-cal-confirm-I', PROPOSAL_EXPIRES_AT);
+    const cancelCalls = capturingCancel(() => ({ status: 'cancelled' }));
+    const result = await resolveProposalConversationalTurn('não', NOW);
+    assert.equal(cancelCalls.length, 1);
+    assert.deepEqual(result, { status: 'cancelled' });
+  },
+);
+
+await check(
+  '30. execution_started (cancel) continua retornando execution_started em proposal-turn.ts (regressão — a tradução para calendar_processing é responsabilidade de conversation-entry.ts, inalterada por esta subfase)',
+  async () => {
+    foundCalendarProposal('state-cal-confirm-J', PROPOSAL_EXPIRES_AT);
+    capturingCancel(() => ({ status: 'execution_started' }));
+    const result = await resolveProposalConversationalTurn('não', NOW);
+    assert.deepEqual(result, { status: 'execution_started' });
   },
 );
 
@@ -814,6 +940,17 @@ await check(
     assert.ok(codeOnly.includes("from './calendar-event-cancel'"));
     assert.ok(codeOnly.includes('cancelCalendarEventProposal('));
     assert.ok(!codeOnly.includes('cancel_calendar_event_proposal'));
+  },
+);
+
+await check(
+  '22d (Subfase 9). usa a abstração ./calendar-event-confirmation para o lifecycle de create_calendar_event, nunca claim/execução Google/finalize diretamente',
+  () => {
+    assert.ok(codeOnly.includes("from './calendar-event-confirmation'"));
+    assert.ok(codeOnly.includes('confirmCalendarEvent('));
+    assert.ok(!codeOnly.includes('claimCalendarEventExecution('));
+    assert.ok(!codeOnly.includes('executeCreateCalendarEvent('));
+    assert.ok(!codeOnly.includes('finalizeCalendarEventExecution('));
   },
 );
 

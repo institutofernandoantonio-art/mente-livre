@@ -115,6 +115,15 @@ export type ConversationEntryResult =
   // traduzido para `cancelled` (ver proposal-turn.ts/presentation-ui.ts) —
   // essa é exatamente a mentira ao usuário que esta subfase elimina.
   | { status: 'calendar_processing' }
+  // Subfase 9 da criação de compromissos no Google Calendar: resultados
+  // externos do lifecycle claim -> Google -> finalize, traduzidos VERBATIM
+  // (mesmo nome) de `ProposalTurnResult` — mesmo padrão já usado por
+  // `schedule_conflict`/`calendar_unavailable`. Ver proposal-turn.ts/
+  // calendar-event-confirmation.ts para a semântica completa de cada um.
+  | { status: 'calendar_event_confirmed' }
+  | { status: 'calendar_authorization_required' }
+  | { status: 'calendar_execution_uncertain' }
+  | { status: 'calendar_finalization_pending' }
   | { status: 'needs_input' }
   | { status: 'unsupported' }
   | { status: 'conflict' }
@@ -205,6 +214,12 @@ function translateProposalResult(result: ProposalTurnResult): ConversationEntryR
       // Subfase 5: nunca mapeado para `cancelled` — ver
       // ConversationEntryResult/proposal-turn.ts.
       return { status: 'calendar_processing' };
+    case 'calendar_event_confirmed':
+    case 'calendar_authorization_required':
+    case 'calendar_execution_uncertain':
+    case 'calendar_finalization_pending':
+      // Subfase 9: passthrough verbatim — ver ConversationEntryResult.
+      return { status: result.status };
     case 'confirmation_ambiguous':
     case 'confirmation_unrecognized':
       return { status: 'needs_input' };

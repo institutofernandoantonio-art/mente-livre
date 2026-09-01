@@ -95,6 +95,22 @@
 //    `../../src/lib/conversation/calendar-event-cancel.ts`, specifier
 //    distinto, nunca interceptado por este redirect.
 //
+//    `proposal-turn.ts` importa estaticamente `./calendar-event-confirmation`
+//    (Subfase 9 — conectar o "sim" ao lifecycle seguro) — redirecionado
+//    para fake-calendar-event-confirmation.mjs, mesmo motivo/racional
+//    acima. `calendar-event-confirmation.ts`, por sua vez, importa
+//    estaticamente `./calendar-event-claim`, `./calendar-event-execution`
+//    e `./calendar-event-finalize` — cada um redirecionado para seu
+//    próprio dublê (fake-calendar-event-claim.mjs/
+//    fake-calendar-event-execution.mjs/fake-calendar-event-finalize.mjs),
+//    usados SOMENTE por tests/conversation/calendar-event-confirmation.test.mjs.
+//    Mesmo cuidado de especificidade de sempre: os testes de cada módulo
+//    real (calendar-event-claim.test.mjs/calendar-event-execution.test.mjs/
+//    calendar-event-finalize.test.mjs/calendar-event-confirmation.test.mjs)
+//    importam pelos caminhos relativos `../../src/lib/conversation/...`,
+//    specifiers distintos dos escritos DENTRO desses arquivos-fonte,
+//    nunca interceptados por estes redirects.
+//
 // API 100% nativa do Node (`node:module`), nenhuma dependência nova.
 const REDIRECTS = new Map([
   ['./runtime-state-storage', new URL('./fake-runtime-state-storage.mjs', import.meta.url).href],
@@ -102,6 +118,10 @@ const REDIRECTS = new Map([
   ['../supabase/server', new URL('./fake-supabase-server.mjs', import.meta.url).href],
   ['./local-task-execution', new URL('./fake-local-task-execution.mjs', import.meta.url).href],
   ['./calendar-event-cancel', new URL('./fake-calendar-event-cancel.mjs', import.meta.url).href],
+  ['./calendar-event-confirmation', new URL('./fake-calendar-event-confirmation.mjs', import.meta.url).href],
+  ['./calendar-event-claim', new URL('./fake-calendar-event-claim.mjs', import.meta.url).href],
+  ['./calendar-event-execution', new URL('./fake-calendar-event-execution.mjs', import.meta.url).href],
+  ['./calendar-event-finalize', new URL('./fake-calendar-event-finalize.mjs', import.meta.url).href],
   ['./conversation-turn', new URL('./fake-conversation-turn.mjs', import.meta.url).href],
   ['./proposal-turn', new URL('./fake-proposal-turn.mjs', import.meta.url).href],
   ['./intent-extraction', new URL('./fake-intent-extraction.mjs', import.meta.url).href],

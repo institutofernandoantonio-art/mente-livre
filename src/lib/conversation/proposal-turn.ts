@@ -4,6 +4,7 @@ import { resolveProposalConfirmation } from './confirmation';
 import { getRuntimeState, consumeRuntimeState } from './runtime-state-storage';
 import { executeCreateLocalTask } from './local-task-execution';
 import { cancelCalendarEventProposal } from './calendar-event-cancel';
+import { confirmCalendarEvent } from './calendar-event-confirmation';
 
 // ============================================================================
 // Proposal turn — o integrador que conecta a Confirmation Policy pura
@@ -45,30 +46,43 @@ import { cancelCalendarEventProposal } from './calendar-event-cancel';
 //   runtime-state-storage.ts/local-task-execution.ts): `conflict` é
 //   terminal, nunca dispara retry/fallback/reinterpretação.
 //
-// --- `confirmed` executa, de verdade -------------------------------------
+// --- `confirmed` executa, de verdade — dois caminhos, por actionType -----
 //
-// Quando a policy retorna `confirmed`, este módulo chama
-// `executeCreateLocalTask` com `expectedStateId` (do `getRuntimeState`
-// desta mesma leitura), `proposalId`/`task` (extraídos da MESMA
-// `ProposalState` já em mãos) e `now` (o mesmo recebido por esta função) —
-// nunca um novo identificador gerado aqui, nunca um novo relógio lido.
-// Resultado do wrapper mapeia 1:1: `created` -> `confirmed` (com o
-// `itemId` real), `conflict` -> `conflict`, `error` -> `error`. Nenhuma
-// mutação de storage própria deste módulo acontece nesse caminho — a
-// única operação externa é essa única chamada.
+// Para `create_local_task`: quando a policy retorna `confirmed`, este
+// módulo chama `executeCreateLocalTask` com `expectedStateId` (do
+// `getRuntimeState` desta mesma leitura), `proposalId`/`task` (extraídos
+// da MESMA `ProposalState` já em mãos) e `now` (o mesmo recebido por esta
+// função) — nunca um novo identificador gerado aqui, nunca um novo
+// relógio lido. Resultado do wrapper mapeia 1:1: `created` -> `confirmed`
+// (com o `itemId` real), `conflict` -> `conflict`, `error` -> `error`.
+// Nenhuma mutação de storage própria deste módulo acontece nesse caminho —
+// a única operação externa é essa única chamada. Comportamento preservado
+// EXATAMENTE como era antes da Subfase 9 — zero mudança.
+//
+// Para `create_calendar_event` (Subfase 9 — conectar o "sim" ao lifecycle
+// seguro): este módulo chama `confirmCalendarEvent`
+// (`./calendar-event-confirmation.ts`), o pequeno orquestrador que faz
+// claim -> Google `events.insert` -> finalize. `proposal-turn.ts` NUNCA
+// reimplementa esses três passos nem chama claim/execução Google/finalize
+// diretamente — só a abstração `confirmCalendarEvent`, e só mapeia o
+// resultado dela para o vocabulário externo deste módulo
+// (`ProposalTurnResult`). Ver `calendar-event-confirmation.ts` para o
+// contrato completo (semântica de cada status, prova de race com
+// cancelamento, recuperação de resposta perdida).
 //
 // --- `actionType` não suportada (defensivo, hoje inalcançável) -----------
 //
-// `ProposedAction` hoje só tem a variante `create_local_task` (ver
-// proposed-action.ts) — o `if` abaixo que verifica `action.actionType` é
-// estruturalmente inalcançável enquanto isso for verdade. Mantido mesmo
-// assim como invariante explícita: se `ProposedAction` um dia crescer para
-// uma union real e este integrador não for atualizado para conhecer a
-// nova variante, cair aqui representa uma proposta persistida que este
-// handler não sabe executar — uma inconsistência interna real, não um
-// caminho de negócio válido. Por isso `error` (nunca um novo status
-// inventado, nunca uma tentativa de "adivinhar" a ação, nunca consumo da
-// runtime row, nunca chamada ao executor).
+// `ProposedAction` hoje só tem as duas variantes já tratadas acima
+// (`create_local_task`/`create_calendar_event`, ver proposed-action.ts) —
+// o `if` que verifica `action.actionType` nesse ponto é estruturalmente
+// inalcançável enquanto isso for verdade. Mantido mesmo assim como
+// invariante explícita: se `ProposedAction` um dia crescer para uma
+// terceira variante e este integrador não for atualizado para conhecê-la,
+// cair aqui representa uma proposta persistida que este handler não sabe
+// executar — uma inconsistência interna real, não um caminho de negócio
+// válido. Por isso `error` (nunca um novo status inventado, nunca uma
+// tentativa de "adivinhar" a ação, nunca consumo da runtime row, nunca
+// chamada a qualquer executor).
 //
 // --- `cancelled` — dois caminhos, por actionType (Subfase 5) -------------
 //
@@ -130,6 +144,16 @@ export type ProposalTurnResult =
   // conversation-entry.ts/presentation-ui.ts).
   | { status: 'execution_started' }
   | { status: 'confirmed'; itemId: string }
+  // Subfase 9 da criação de compromissos no Google Calendar: resultados
+  // explícitos do lifecycle claim -> Google -> finalize
+  // (`calendar-event-confirmation.ts`), mapeados 1:1 a partir de
+  // `ConfirmCalendarEventResult`. Nunca reaproveita `confirmed` (que
+  // carrega `itemId`, um conceito de `create_local_task`/tabela `items` —
+  // create_calendar_event não tem item local nenhum).
+  | { status: 'calendar_event_confirmed' }
+  | { status: 'calendar_authorization_required' }
+  | { status: 'calendar_execution_uncertain' }
+  | { status: 'calendar_finalization_pending' }
   | { status: 'conflict' }
   | { status: 'error' };
 
@@ -178,6 +202,33 @@ export async function resolveProposalConversationalTurn(
 
     case 'confirmed': {
       const action = proposalState.action;
+
+      // Subfase 9: create_calendar_event usa o orquestrador
+      // claim -> Google -> finalize. create_local_task continua exatamente
+      // como antes, sem nenhuma mudança.
+      if (action.actionType === 'create_calendar_event') {
+        const confirmationResult = await confirmCalendarEvent({
+          expectedStateId,
+          proposalId: proposalState.proposalId,
+          action,
+        });
+
+        switch (confirmationResult.status) {
+          case 'completed':
+            return { status: 'calendar_event_confirmed' };
+          case 'authorization_required':
+            return { status: 'calendar_authorization_required' };
+          case 'execution_uncertain':
+            return { status: 'calendar_execution_uncertain' };
+          case 'finalization_pending':
+            return { status: 'calendar_finalization_pending' };
+          case 'conflict':
+            return { status: 'conflict' };
+          case 'error':
+            return { status: 'error' };
+        }
+      }
+
       if (action.actionType !== 'create_local_task') {
         // Ver "actionType não suportada" no cabeçalho — inalcançável hoje,
         // mantido como invariante explícita.

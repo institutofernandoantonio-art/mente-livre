@@ -295,6 +295,11 @@ check(
       // já autorizada acima desde a Subfase 1, ganha diff nesta subfase só
       // pela exportação de um validador já existente — nenhuma lógica nova):
       'src/lib/conversation/calendar-event-execution.ts',
+      // Subfase 9 (conectar o "sim" ao lifecycle seguro claim -> Google ->
+      // finalize): novo orquestrador, isolado dos três já existentes;
+      // proposal-turn.ts/conversation-entry.ts/presentation-ui.ts ganham
+      // diff de novo, agora no ramo `confirmed` de create_calendar_event:
+      'src/lib/conversation/calendar-event-confirmation.ts',
     ]);
     const changed = changedFilesUnder('src/lib/conversation/');
     for (const file of changed) {
