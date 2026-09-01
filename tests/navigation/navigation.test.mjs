@@ -177,12 +177,17 @@ check(
 // Nota histórica: a versão anterior deste teste exigia zero diff em
 // ConversationPanel.tsx — válido enquanto nenhuma subfase posterior tinha
 // motivo legítimo para tocá-lo. A subfase de query_calendar read-only
-// autoriza explicitamente uma única mudança nele (captura/envio do
-// timezone do browser); a asserção de "byte-for-byte" ficou obsoleta por
-// isso, não por regressão real. Reescrita para permitir EXATAMENTE essa
-// mudança, continuando a proibir tudo o que sempre foi proibido.
+// autorizou explicitamente uma única mudança nele (captura/envio do
+// timezone do browser). A Subfase 8 (preview claro da proposta de evento)
+// autoriza uma segunda: `ProposalPreview` passou a tratar
+// `create_calendar_event`, chamando `buildEventProposalPreview`
+// (presentation-ui.ts) — uma formatação pura, sem nenhum novo import de
+// `@/lib/google`/token/admin. As invariantes reais (zero lógica de OAuth/
+// Calendar API, zero componente novo — a lógica nova vive DENTRO da
+// função `ProposalPreview` já existente, nunca numa 4ª função) continuam
+// checadas abaixo, incondicionalmente.
 check(
-  '10. ConversationPanel.tsx: única mudança permitida é a captura/envio de timezone — zero lógica Calendar/Supabase/token/localStorage, zero componente novo',
+  '10. ConversationPanel.tsx: mudanças permitidas são timezone (Subfase de query_calendar) e o preview de create_calendar_event (Subfase 8) — zero lógica de OAuth/Calendar API/token/localStorage, zero componente novo',
   () => {
     assert.ok(
       panelCode.includes('Intl.DateTimeFormat().resolvedOptions().timeZone'),
@@ -192,6 +197,13 @@ check(
       /sendConversationMessage\(\s*text\s*,\s*timezone\s*\)/.test(panelCode),
       'timezone não está sendo enviado como 2º argumento de sendConversationMessage',
     );
+
+    // Subfase 8: preview de create_calendar_event existe e usa o helper
+    // puro importado de presentation-ui.ts — nunca uma segunda
+    // implementação de formatação de data/hora dentro do componente.
+    assert.ok(panelCode.includes("actionType === 'create_calendar_event'"));
+    assert.ok(panelCode.includes('buildEventProposalPreview'));
+    assert.ok(!/new Intl\.DateTimeFormat/.test(panelCode), 'formatação de data/hora não deveria existir no client — só em presentation-ui.ts');
 
     const forbidden = [
       'supabase',

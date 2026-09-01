@@ -12,6 +12,7 @@ import {
   mapEntryResultToUiEffect,
   formatDeadlinePreview,
   formatDurationPreview,
+  buildEventProposalPreview,
   type UiMessageContent,
 } from '@/lib/conversation/presentation-ui';
 
@@ -35,7 +36,11 @@ import {
 // Este componente NUNCA:
 // - importa Supabase/`conversation-entry` internals/`runtime-state-storage`/
 //   `conversation-turn`/`proposal-turn`/`intent-extraction`/`confirmation`/
-//   `local-task-execution`/Anthropic/Calendar;
+//   `local-task-execution`/Anthropic/`../google/calendar`/tokens — o ÚNICO
+//   contato com o domínio "calendar" é `buildEventProposalPreview`
+//   (presentation-ui.ts, Subfase 8), uma formatação pura de instantes já
+//   validados que o servidor devolveu — zero OAuth, zero fetch, zero
+//   Calendar API real;
 // - conhece `stateId`/`proposalId`/`userId`/`expiresAt`/`ConversationState`/
 //   `ProposalState` — o único id que o DTO de envio chega a carregar
 //   (`confirmed.itemId`) é deliberadamente descartado por
@@ -231,11 +236,39 @@ function MessageBubble({ message }: { message: UiMessage }) {
 }
 
 function ProposalPreview({ action }: { action: ProposedAction }) {
+  // Subfase 8 (preview claro da proposta de evento): `event` já chega
+  // com instante absoluto + timezone IANA validados — este componente só
+  // FORMATA (via buildEventProposalPreview, presentation-ui.ts), nunca
+  // recalcula "hoje"/"amanhã", nunca usa o timezone do browser/servidor.
+  // Nenhum dado interno (proposalId/stateId/googleEventId/token) chega
+  // até aqui — `action` é exatamente o `ProposedAction` já público.
+  if (action.actionType === 'create_calendar_event') {
+    const preview = buildEventProposalPreview(action.event);
+
+    return (
+      <div className="flex flex-col gap-1">
+        <p className="font-medium">Compromisso: {preview.title}</p>
+        {preview.description && <p className="text-ink-soft">{preview.description}</p>}
+        {preview.dateSpan === 'same_day' ? (
+          <>
+            <p className="text-ink-soft">Data: {preview.date}</p>
+            <p className="text-ink-soft">Horário: {preview.timeRange}</p>
+          </>
+        ) : (
+          <>
+            <p className="text-ink-soft">Início: {preview.startText}</p>
+            <p className="text-ink-soft">Fim: {preview.endText}</p>
+          </>
+        )}
+        <p className="text-ink-soft">Aviso: {preview.reminderMinutes} minutos antes</p>
+        <p className="mt-1 text-xs text-ink-soft">Responda &quot;sim&quot; ou &quot;não&quot; para confirmar.</p>
+      </div>
+    );
+  }
+
   if (action.actionType !== 'create_local_task') {
-    // Outra variante de ProposedAction ainda não tem preview nesta
-    // subfase — estruturalmente inalcançável hoje (nenhum caminho real
-    // ainda produz isso), guarda de tipo necessária só porque
-    // ProposedAction virou uma union de duas variantes.
+    // Guarda de tipo defensiva — inalcançável hoje (ProposedAction só tem
+    // as duas variantes já tratadas acima).
     return null;
   }
 

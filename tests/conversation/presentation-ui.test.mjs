@@ -21,6 +21,7 @@ import {
   mapEntryResultToUiEffect,
   formatDeadlinePreview,
   formatDurationPreview,
+  buildEventProposalPreview,
 } from '../../src/lib/conversation/presentation-ui.ts';
 
 const results = [];
@@ -302,6 +303,166 @@ check('19. formatDurationPreview({minutes:30}) -> "30 min"', () => {
 });
 
 // ============================================================================
+// SUBFASE 8 — buildEventProposalPreview (preview claro da proposta de
+// evento, ANTES da confirmação). Instantes/timezone sempre determinísticos
+// e explícitos — nunca depende do timezone da máquina rodando o teste.
+// ============================================================================
+
+// Mesmo exemplo do enunciado da subfase: "amanhã às 14h... por 1 hora" em
+// America/Sao_Paulo (UTC-3, sem horário de verão desde 2019) — 14:00-15:00
+// local = 17:00-18:00 UTC.
+function calendarEvent(overrides = {}) {
+  return {
+    title: 'Reunião com Ricardo',
+    description: null,
+    start: '2026-09-02T17:00:00.000Z',
+    end: '2026-09-02T18:00:00.000Z',
+    timezone: 'America/Sao_Paulo',
+    reminderMinutesBeforeStart: 30,
+    ...overrides,
+  };
+}
+
+check('32. create_calendar_event produz preview visível (não-null, com título)', () => {
+  const preview = buildEventProposalPreview(calendarEvent());
+  assert.ok(preview);
+  assert.equal(preview.title, 'Reunião com Ricardo');
+});
+
+check('33. título correto (preservado verbatim)', () => {
+  const preview = buildEventProposalPreview(calendarEvent({ title: 'Título distintivo' }));
+  assert.equal(preview.title, 'Título distintivo');
+});
+
+check('34. descrição presente é exibida (verbatim)', () => {
+  const preview = buildEventProposalPreview(calendarEvent({ description: 'Pauta: roadmap do trimestre' }));
+  assert.equal(preview.description, 'Pauta: roadmap do trimestre');
+});
+
+check('35. description null é omitida (preview.description === null)', () => {
+  const preview = buildEventProposalPreview(calendarEvent({ description: null }));
+  assert.equal(preview.description, null);
+});
+
+check('35b. description só de espaços é tratada como ausente (nunca mostra linha vazia)', () => {
+  const preview = buildEventProposalPreview(calendarEvent({ description: '   ' }));
+  assert.equal(preview.description, null);
+});
+
+check('36. data é formatada no timezone do EVENTO (14:00-15:00 America/Sao_Paulo -> 02/09/2026, mesmo dia)', () => {
+  const preview = buildEventProposalPreview(calendarEvent());
+  assert.equal(preview.dateSpan, 'same_day');
+  assert.equal(preview.date, '02/09/2026');
+});
+
+check('37 e 11. start/end no mesmo dia -> timeRange conciso "14:00 às 15:00"', () => {
+  const preview = buildEventProposalPreview(calendarEvent());
+  assert.equal(preview.dateSpan, 'same_day');
+  assert.equal(preview.timeRange, '14:00 às 15:00');
+});
+
+check('38. timezone diferente produz horário local correspondente (America/New_York, UTC-4 em setembro)', () => {
+  const preview = buildEventProposalPreview(
+    calendarEvent({ timezone: 'America/New_York', start: '2026-09-02T17:00:00.000Z', end: '2026-09-02T18:00:00.000Z' }),
+  );
+  assert.equal(preview.dateSpan, 'same_day');
+  assert.equal(preview.timeRange, '13:00 às 14:00');
+});
+
+check(
+  '9. resultado NUNCA depende do timezone do PROCESSO rodando o teste — só de event.timezone (America/Sao_Paulo, testado sob 3 TZ de processo diferentes)',
+  () => {
+    const originalTz = process.env.TZ;
+    try {
+      const results = [];
+      for (const machineTz of ['UTC', 'America/Los_Angeles', 'Asia/Tokyo']) {
+        process.env.TZ = machineTz;
+        results.push(buildEventProposalPreview(calendarEvent()));
+      }
+      for (const result of results) {
+        assert.deepEqual(result, results[0], `resultado divergiu conforme o TZ do processo: ${JSON.stringify(result)}`);
+      }
+      assert.equal(results[0].date, '02/09/2026');
+      assert.equal(results[0].timeRange, '14:00 às 15:00');
+    } finally {
+      if (originalTz === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = originalTz;
+      }
+    }
+  },
+);
+
+check(
+  '10. instante próximo da meia-noite UTC mostra o dia civil CORRETO no timezone do evento (nunca o dia civil de UTC)',
+  () => {
+    // 2026-09-03T02:00:00.000Z é 2026-09-02T23:00 em America/Sao_Paulo
+    // (UTC-3) — o dia civil de UTC (03) diverge do dia civil do evento
+    // (02). start/end (23:00-23:30 local) permanecem no MESMO dia civil
+    // do evento — o preview precisa refletir o timezone do EVENTO, nunca UTC.
+    const preview = buildEventProposalPreview(
+      calendarEvent({ start: '2026-09-03T02:00:00.000Z', end: '2026-09-03T02:30:00.000Z' }),
+    );
+    assert.equal(preview.dateSpan, 'same_day');
+    assert.equal(preview.date, '02/09/2026', 'deveria usar o dia civil de America/Sao_Paulo, não o de UTC (03)');
+  },
+);
+
+check(
+  '12 e 39 (dateSpan). evento atravessando meia-noite (no timezone do evento) NUNCA esconde a mudança de data — mostra início/fim por extenso',
+  () => {
+    // 23:30 -> 00:30 em America/Sao_Paulo, cruzando meia-noite local.
+    const preview = buildEventProposalPreview(
+      calendarEvent({ start: '2026-09-03T02:30:00.000Z', end: '2026-09-03T03:30:00.000Z' }),
+    );
+    assert.equal(preview.dateSpan, 'crosses_midnight');
+    assert.equal(preview.startText, '02/09/2026 23:30');
+    assert.equal(preview.endText, '03/09/2026 00:30');
+    // Nenhum campo `date`/`timeRange` do formato "mesmo dia" deveria
+    // coexistir aqui — os dois formatos são mutuamente exclusivos.
+    assert.equal('date' in preview, false);
+    assert.equal('timeRange' in preview, false);
+  },
+);
+
+check('13. reminder mostra exatamente 30 minutos (reflete reminderMinutesBeforeStart, invariante do ProposedAction)', () => {
+  const preview = buildEventProposalPreview(calendarEvent());
+  assert.equal(preview.reminderMinutes, 30);
+});
+
+check('14. preview NUNCA contém a string ISO bruta de start/end', () => {
+  const preview = buildEventProposalPreview(calendarEvent());
+  const serialized = JSON.stringify(preview);
+  assert.ok(!serialized.includes('2026-09-02T17:00:00.000Z'));
+  assert.ok(!serialized.includes('2026-09-02T18:00:00.000Z'));
+  assert.ok(!serialized.includes('T'), 'preview não deveria conter marcador ISO "T" de datetime bruto');
+});
+
+check('15. preview NUNCA contém o identificador IANA técnico do timezone (ex.: "America/Sao_Paulo")', () => {
+  const preview = buildEventProposalPreview(calendarEvent());
+  const serialized = JSON.stringify(preview);
+  assert.ok(!serialized.includes('America/'));
+  assert.ok(!serialized.includes('Sao_Paulo'));
+});
+
+check('16, 17 e 18. preview NUNCA contém proposalId/stateId/googleEventId — a função nem os recebe como input', () => {
+  const preview = buildEventProposalPreview(calendarEvent());
+  const serialized = JSON.stringify(preview);
+  assert.ok(!/proposalId|stateId|googleEventId/i.test(serialized));
+  // Garantia estrutural: a assinatura da função só aceita 1 argumento
+  // (`event`), nunca um segundo parâmetro para runtime/proposal state.
+  assert.equal(buildEventProposalPreview.length, 1);
+});
+
+check('1. create_local_task preview continua igual — formatDeadlinePreview/formatDurationPreview inalterados', () => {
+  // Reafirma os testes 15-19 acima, que já provam isso — checagem
+  // explícita de regressão nomeada para esta subfase.
+  assert.equal(formatDeadlinePreview(null), null);
+  assert.equal(formatDurationPreview({ minutes: 45 }), '45 min');
+});
+
+// ============================================================================
 // AUDITORIA ESTÁTICA DE CONTRATO — ConversationPanel.tsx / page.tsx / proxy.ts
 // ============================================================================
 
@@ -421,6 +582,43 @@ check('24g. timezone só existe dentro de handleSubmit — nunca em useState/use
   // 2 ocorrências reais no código: a declaração (`const timezone = ...`) e
   // o uso no envio (`sendConversationMessage(text, timezone)`).
   assert.equal(occurrences, 2, 'timezone deve aparecer exatamente 2 vezes no código real (declaração + uso)');
+});
+
+// ============================================================================
+// 19-21. SUBFASE 8 — texto de confirmação explícito; zero Calendar write
+// alcançável a partir do preview/client.
+// ============================================================================
+
+check(
+  '19. preview de create_calendar_event deixa explícito que é PROPOSTA aguardando confirmação — nunca afirma "criado"/"agendado"/"já está na agenda"',
+  () => {
+    const previewBlockMatch = panelCode.match(/if \(action\.actionType === 'create_calendar_event'\) \{([\s\S]*?)\n  \}/);
+    assert.ok(previewBlockMatch, 'branch de create_calendar_event não encontrado em ProposalPreview');
+    const block = previewBlockMatch[1];
+    assert.ok(/Responda|Quer confirmar/i.test(block), 'texto de confirmação explícita não encontrado');
+    const forbiddenClaims = ['criado', 'Criado', 'agendado', 'Agendado', 'já está na agenda', 'confirmado no Google'];
+    for (const claim of forbiddenClaims) {
+      assert.ok(!block.includes(claim), `afirmação prematura encontrada no preview: "${claim}"`);
+    }
+  },
+);
+
+check('20 e 21. ConversationPanel/ProposalPreview nunca alcançam Calendar write — zero claim/finalize/execute/cancel importado ou chamado', () => {
+  const forbidden = [
+    'claimCalendarEventExecution',
+    'finalizeCalendarEventExecution',
+    'executeCreateCalendarEvent',
+    'cancelCalendarEventProposal',
+    'calendar-event-claim',
+    'calendar-event-finalize',
+    'calendar-event-execution',
+    'calendar-event-cancel',
+    'events.insert',
+    'googleapis.com',
+  ];
+  for (const token of forbidden) {
+    assert.ok(!panelCode.includes(token), `token proibido encontrado: ${token}`);
+  }
 });
 
 check("25. '/conversa' está em AAL2_REQUIRED_PATHS", () => {

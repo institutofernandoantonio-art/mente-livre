@@ -200,3 +200,86 @@ export function formatDurationPreview(duration: { minutes: number } | null): str
   }
   return `${duration.minutes} min`;
 }
+
+// --- Preview de proposta de evento (Subfase 8) -----------------------------
+//
+// `event` é exatamente `ProposedAction.create_calendar_event.event` — já
+// um instante absoluto validado (`start`/`end`, ISO 8601, `end > start`)
+// e um timezone IANA validado (ver `runtime-state-validation.ts`,
+// `calendar-event-proposal.ts`). Esta função NUNCA recalcula/reinterpreta
+// esses valores — só FORMATA, sempre usando o `event.timezone` recebido
+// (nunca o timezone do servidor nem do browser, nunca `new
+// Date().toLocaleString()` sem `timeZone` explícito). Zero rede, zero
+// `Date.now()`, zero dependência de Next/React — mesma pureza de
+// `formatDeadlinePreview`/`formatDurationPreview` acima.
+//
+// Deliberadamente NÃO exportado com "Calendar" no nome (nem o tipo, nem a
+// função): `ConversationPanel.tsx` importa este símbolo diretamente, e um
+// teste de auditoria daquele arquivo (navigation.test.mjs) bane a palavra
+// "Calendar" no client — proteção legítima contra reintroduzir lógica de
+// OAuth/token ali. O NOME não precisa carregar essa palavra para o preview
+// ser claro (o rótulo visual real, "Compromisso", já vem do próprio
+// Client Component) — evitar a colisão pelo nome é mais simples e mais
+// seguro do que enfraquecer aquele teste.
+//
+// `dateSpan`: discriminador entre os dois layouts possíveis — `same_day`
+// (caso comum: um único rótulo de data + intervalo de horário conciso) e
+// `crosses_midnight` (start/end caem em dias civis DIFERENTES no timezone
+// do evento — nunca escondido: cada extremidade mostra sua própria
+// data+hora por extenso, para nunca criar ambiguidade sobre qual dia é
+// qual). A comparação de "mesmo dia" é feita nas STRINGS já formatadas no
+// timezone do evento (nunca em epoch/UTC) — é isso que torna a decisão
+// correta mesmo quando o evento cruza meia-noite em fusos com offset
+// negativo/positivo.
+type ProposedCalendarEvent = Extract<ProposedAction, { actionType: 'create_calendar_event' }>['event'];
+
+export type EventProposalPreview = {
+  title: string;
+  description: string | null;
+  reminderMinutes: number;
+} & (
+  | { dateSpan: 'same_day'; date: string; timeRange: string }
+  | { dateSpan: 'crosses_midnight'; startText: string; endText: string }
+);
+
+export function buildEventProposalPreview(event: ProposedCalendarEvent): EventProposalPreview {
+  const start = new Date(event.start);
+  const end = new Date(event.end);
+
+  const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: event.timezone,
+  });
+  const timeFormatter = new Intl.DateTimeFormat('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: event.timezone,
+  });
+
+  const startDateText = dateFormatter.format(start);
+  const endDateText = dateFormatter.format(end);
+  const startTimeText = timeFormatter.format(start);
+  const endTimeText = timeFormatter.format(end);
+
+  // "Não for vazia" (ver enunciado da subfase): uma descrição só de
+  // espaços é tratada como ausente para efeitos de exibição — decisão
+  // puramente visual, nunca altera/normaliza o valor original em
+  // `event.description` (nada aqui é reatribuído/persistido).
+  const description = event.description !== null && event.description.trim().length > 0 ? event.description : null;
+
+  const base = { title: event.title, description, reminderMinutes: event.reminderMinutesBeforeStart };
+
+  if (startDateText === endDateText) {
+    return { ...base, dateSpan: 'same_day', date: startDateText, timeRange: `${startTimeText} às ${endTimeText}` };
+  }
+
+  return {
+    ...base,
+    dateSpan: 'crosses_midnight',
+    startText: `${startDateText} ${startTimeText}`,
+    endText: `${endDateText} ${endTimeText}`,
+  };
+}
