@@ -117,6 +117,37 @@ check('6. callback de OAuth não referencia nem exige calendar.events em nenhum 
   assert.ok(!callbackCodeOnly.includes('scope'), 'callback não deveria validar/ler scope — token exchange já basta');
 });
 
+// ============================================================================
+// 7-9. getGoogleCalendarAccessToken (Subfase 6 — primitiva segura de
+// escrita events.insert): extraído de dentro de getGoogleCalendarBusyTimes,
+// EXPORTADO para reuso, sem duplicar refresh/lookup em lugar nenhum.
+// ============================================================================
+
+check('7. getGoogleCalendarAccessToken é exportado (reutilizável pela futura escrita de eventos)', () => {
+  assert.ok(/export async function getGoogleCalendarAccessToken\(\)/.test(codeOnly));
+});
+
+check('8. getGoogleCalendarBusyTimes REUTILIZA getGoogleCalendarAccessToken — nunca duplica lookup/refresh', () => {
+  const fnMatch = codeOnly.match(/export async function getGoogleCalendarBusyTimes\([\s\S]*?\n\}/);
+  assert.ok(fnMatch, 'getGoogleCalendarBusyTimes não encontrada');
+  const body = fnMatch[0];
+  assert.ok(body.includes('await getGoogleCalendarAccessToken()'));
+  // Nenhuma segunda leitura de google_calendar_connections/admin client
+  // dentro desta função — essa lógica agora vive só dentro de
+  // getGoogleCalendarAccessToken.
+  assert.ok(!body.includes('createAdminClient'));
+  assert.ok(!body.includes('google_calendar_connections'));
+});
+
+check('9. refreshGoogleAccessToken (troca do refresh_token por access token) é chamada de UM só lugar — dentro de getGoogleCalendarAccessToken', () => {
+  const callSites = [...codeOnly.matchAll(/refreshGoogleAccessToken\(/g)];
+  // 1 na definição da função + 1 na única chamada real (dentro de
+  // getGoogleCalendarAccessToken) — nunca uma segunda chamada em
+  // getGoogleCalendarBusyTimes ou em qualquer outro lugar do arquivo.
+  const definitionMatch = codeOnly.match(/async function refreshGoogleAccessToken\(/g) ?? [];
+  assert.equal(callSites.length - definitionMatch.length, 1, 'refreshGoogleAccessToken deveria ser CHAMADA exatamente 1 vez em todo o arquivo');
+});
+
 // --- Resumo -------------------------------------------------------------
 
 const passed = results.filter((r) => r.pass).length;

@@ -486,11 +486,15 @@ function isValidProposedActionTask(value: unknown): boolean {
 
 // `create_calendar_event` — mesmo shape produzido por
 // `buildCreateCalendarEventAction` (calendar-event-proposal.ts, Subfase 1
-// da criação de compromissos no Google Calendar). Nenhum código real
-// ainda persiste isto (conversation-turn.ts/proposal-turn.ts intocados
-// nesta subfase) — este validador existe para já estar correto quando essa
-// integração acontecer, sem precisar revisitar este arquivo depois.
-function isValidProposedCalendarEventEvent(value: unknown): boolean {
+// da criação de compromissos no Google Calendar). Exportada a partir da
+// Subfase 6 (primitiva segura de escrita `events.insert`) — reaproveitada
+// byte-a-byte por `calendar-event-execution.ts` para validar
+// `ProposedAction.create_calendar_event.event` antes de qualquer chamada
+// ao Google, exatamente a mesma disciplina "reutilize validators
+// existentes, nunca crie regras divergentes" já aplicada em todo o
+// projeto (ver `isValidStructuredIntent`, exportada pelo mesmo motivo).
+// Nenhuma lógica foi alterada — só a visibilidade do símbolo.
+export function isValidProposedCalendarEventEvent(value: unknown): boolean {
   if (!isPlainObject(value)) return false;
   if (
     !hasExactKeys(value, ['title', 'description', 'start', 'end', 'timezone', 'reminderMinutesBeforeStart'])

@@ -122,16 +122,18 @@ async function refreshGoogleAccessToken(refreshToken: string): Promise<string | 
   return typeof accessToken === 'string' && accessToken ? accessToken : null;
 }
 
-// Consulta só os blocos ocupados do calendário primário do usuário atual,
-// numa janela [timeMin, timeMax) — nunca título/descrição/participantes/
-// local/id do evento (freebusy.query nem devolve isso). Nada é persistido
-// nem cacheado; cada chamada busca em tempo real. Retorna null em
-// qualquer falha (sem conexão, refresh inválido, erro da API) — mesmo
-// padrão de falha silenciosa/genérica já usado no resto do projeto.
-export async function getGoogleCalendarBusyTimes(
-  timeMin: string,
-  timeMax: string,
-): Promise<GoogleCalendarBusyBlock[] | null> {
+// Deriva o access token do Google do usuário AUTENTICADO ATUAL — único
+// ponto do projeto que toca `google_calendar_connections`/admin client
+// para obter um access token. Extraído nesta subfase (Subfase 6 da
+// criação de compromissos no Google Calendar) de dentro de
+// `getGoogleCalendarBusyTimes`, sem nenhuma mudança de comportamento —
+// reaproveitado também pela futura escrita de eventos
+// (`src/lib/conversation/calendar-event-execution.ts`), que NUNCA duplica
+// esta lógica de OAuth/refresh/lookup. Retorna null em qualquer falha
+// (sem sessão, sem conexão, refresh inválido) — mesmo padrão de falha
+// silenciosa/genérica já usado no resto do projeto; nunca lança, nunca
+// distingue os motivos para quem chama.
+export async function getGoogleCalendarAccessToken(): Promise<string | null> {
   const supabase = await createClient();
   const { data: claims } = await supabase.auth.getClaims();
   const userId = claims?.claims.sub;
@@ -166,7 +168,20 @@ export async function getGoogleCalendarBusyTimes(
     return null;
   }
 
-  const accessToken = await refreshGoogleAccessToken(connection.refresh_token);
+  return refreshGoogleAccessToken(connection.refresh_token);
+}
+
+// Consulta só os blocos ocupados do calendário primário do usuário atual,
+// numa janela [timeMin, timeMax) — nunca título/descrição/participantes/
+// local/id do evento (freebusy.query nem devolve isso). Nada é persistido
+// nem cacheado; cada chamada busca em tempo real. Retorna null em
+// qualquer falha (sem conexão, refresh inválido, erro da API) — mesmo
+// padrão de falha silenciosa/genérica já usado no resto do projeto.
+export async function getGoogleCalendarBusyTimes(
+  timeMin: string,
+  timeMax: string,
+): Promise<GoogleCalendarBusyBlock[] | null> {
+  const accessToken = await getGoogleCalendarAccessToken();
   if (!accessToken) {
     return null;
   }

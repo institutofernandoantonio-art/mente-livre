@@ -278,6 +278,11 @@ check(
       // próprio arquivo):
       'src/lib/conversation/calendar-event-cancel.ts',
       'src/lib/conversation/proposal-turn.ts',
+      // Subfase 6 (primitiva segura de escrita events.insert — isolada,
+      // testável, SEM wiring em proposal-turn.ts; runtime-state-validation.ts,
+      // já autorizada acima desde a Subfase 1, ganha diff nesta subfase só
+      // pela exportação de um validador já existente — nenhuma lógica nova):
+      'src/lib/conversation/calendar-event-execution.ts',
     ]);
     const changed = changedFilesUnder('src/lib/conversation/');
     for (const file of changed) {

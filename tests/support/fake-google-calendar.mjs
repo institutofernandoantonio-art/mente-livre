@@ -4,12 +4,16 @@
 // runtime do Next.js, sem exigir nenhum parâmetro de injeção de
 // dependência na API de produção real.
 //
-// Usado SOMENTE pelos testes de calendar-query.ts (via o specifier exato
-// `../google/calendar`, escrito naquele arquivo) e, transitivamente, pelos
-// testes de conversation-turn.ts que exercitam query_calendar através do
-// dublê de calendar-query (ver fake-calendar-query.mjs) — mas o dublê de
-// calendar-query nunca importa este arquivo, então na prática só
-// calendar-query.test.mjs carrega este dublê de fato.
+// Usado pelos testes de calendar-query.ts/calendar-event-availability.ts
+// (via o specifier exato `../google/calendar`, escrito naqueles arquivos)
+// e, transitivamente, pelos testes de conversation-turn.ts que exercitam
+// query_calendar através do dublê de calendar-query (ver
+// fake-calendar-query.mjs) — mas o dublê de calendar-query nunca importa
+// este arquivo, então na prática só calendar-query.test.mjs carrega este
+// dublê de fato. `getGoogleCalendarAccessToken` (Subfase 6 da criação de
+// compromissos no Google Calendar) é usado por
+// tests/conversation/calendar-event-execution.test.mjs, mesmo specifier
+// `../google/calendar` escrito em calendar-event-execution.ts.
 //
 // Nenhuma lógica de OAuth/refresh/token storage é duplicada aqui — só
 // delegação para um handler configurável por teste.
@@ -21,8 +25,13 @@ function unconfigured(name) {
 
 export const handlers = {
   getGoogleCalendarBusyTimes: unconfigured('getGoogleCalendarBusyTimes'),
+  getGoogleCalendarAccessToken: unconfigured('getGoogleCalendarAccessToken'),
 };
 
 export async function getGoogleCalendarBusyTimes(...args) {
   return handlers.getGoogleCalendarBusyTimes(...args);
+}
+
+export async function getGoogleCalendarAccessToken(...args) {
+  return handlers.getGoogleCalendarAccessToken(...args);
 }
