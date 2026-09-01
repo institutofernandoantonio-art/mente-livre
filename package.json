@@ -23,7 +23,11 @@
     "test:tasks-actions": "node --experimental-strip-types tests/tarefas/tasks-actions.test.mjs",
     "test:navigation": "node tests/navigation/navigation.test.mjs",
     "test:calendar-query": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/calendar-query.test.mjs",
-    "test:google-calendar": "node tests/google/calendar.test.mjs"
+    "test:google-calendar": "node tests/google/calendar.test.mjs",
+    "test:calendar-callback": "node tests/google/callback.test.mjs",
+    "test:calendar-reconnect-migration": "node tests/google/reconnect-migration.test.mjs",
+    "test:calendar-revoke-unused-grants": "node tests/google/revoke-unused-grants-migration.test.mjs",
+    "test:calendar-revoke-maintenance-privileges": "node tests/google/revoke-maintenance-privileges-migration.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

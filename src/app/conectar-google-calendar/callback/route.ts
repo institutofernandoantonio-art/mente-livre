@@ -88,13 +88,20 @@ export async function GET(request: Request) {
     redirect('/entrada?calendar=error');
   }
 
-  const { error: insertError } = await supabase
-    .from('google_calendar_connections')
-    .insert({ user_id: userId, refresh_token: refreshToken });
+  // RPC (não insert/upsert direto na tabela): permite tanto a primeira
+  // conexão quanto reconectar uma conta que já tinha uma linha — sem isso,
+  // uma reconexão sempre falhava com `23505 unique_violation` (user_id é
+  // unique), mascarado como o mesmo erro genérico de qualquer outra causa
+  // (bug real confirmado em produção). `user_id` nunca é enviado por este
+  // código — a função (public.reconnect_google_calendar, que só repassa
+  // para private.reconnect_google_calendar, migration 20260831020000)
+  // deriva o usuário de auth.uid() internamente; este client nunca tem
+  // (e não precisa ter) nenhum GRANT de SELECT/UPDATE/DELETE na tabela.
+  const { error: rpcError } = await supabase.rpc('reconnect_google_calendar', {
+    p_refresh_token: refreshToken,
+  });
 
-  if (insertError) {
-    // Cobre também o caso de já existir conexão (user_id é unique) —
-    // mesma resposta genérica, sem diferenciar o motivo.
+  if (rpcError) {
     redirect('/entrada?calendar=error');
   }
 

@@ -264,20 +264,24 @@ check(
 
 // Nota histórica: a versão anterior deste teste exigia zero diff em todo
 // `src/lib/google/` — válido enquanto nenhuma subfase posterior tinha
-// motivo legítimo para tocá-lo. A subfase de correção de menor privilégio
-// do OAuth do Calendar autoriza explicitamente reduzir o escopo solicitado
-// em `calendar.ts` (remover `calendar.events`, manter só
-// `calendar.events.freebusy`); a asserção de "diretório inteiro intacto"
-// ficou obsoleta por isso, não por vazamento de escopo real. Reescrita
-// para permitir EXATAMENTE essa mudança de escopo, continuando a proibir
-// qualquer Calendar write ou mudança inesperada — a auditoria estrutural
-// completa (escopo exato, zero write, callback não exige scope) já é
-// feita por tests/google/calendar.test.mjs.
+// motivo legítimo para tocá-lo. Depois passou a exigir uma lista EXATA de
+// diff (`assert.deepEqual`) — mas isso reintroduz o mesmo problema por
+// outro caminho: assim que a mudança daquela subfase é commitada, o diff
+// desaparece e a lista exata deixa de bater, mesmo sem nenhuma regressão
+// real. Reescrita para o mesmo padrão allowlist já usado no teste 13
+// (`src/lib/conversation/`): tolera ZERO ou mais arquivos dentre os
+// autorizados, nunca exige um número exato — nunca mais fica obsoleta só
+// por causa do estado do diff/commit. As invariantes de CONTEÚDO (escopo
+// exato, zero write) continuam checadas incondicionalmente, não dependem
+// de diff nenhum.
 check(
-  '14. src/lib/google/: única mudança permitida é o escopo OAuth reduzido a calendar.events.freebusy — zero Calendar write, zero outro arquivo tocado',
+  '14. src/lib/google/: só calendar.ts pode ter diff, e o escopo OAuth continua reduzido a calendar.events.freebusy — zero Calendar write',
   () => {
+    const allowed = new Set(['src/lib/google/calendar.ts']);
     const changed = changedFilesUnder('src/lib/google/');
-    assert.deepEqual(changed, ['src/lib/google/calendar.ts'], 'só calendar.ts deveria ter diff em src/lib/google/');
+    for (const file of changed) {
+      assert.ok(allowed.has(file), `arquivo não autorizado com diff em src/lib/google/: ${file}`);
+    }
 
     // A checagem da URL usa o arquivo BRUTO (sem o stripping de
     // comentários de readCodeOnly, que trunca ingenuamente qualquer linha
