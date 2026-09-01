@@ -52,30 +52,35 @@ function check(name, fn) {
 }
 
 // ============================================================================
-// 1-3. Escopo solicitado — só freebusy, nunca calendar.events (write)
+// 1-3. Escopos solicitados — Subfase 7 (ampliação controlada do OAuth):
+// calendar.ts APENAS IMPORTA a lista centralizada de ./calendar-scopes —
+// nunca a redefine. A auditoria da lista EM SI (quais 2 escopos, ausência
+// de escopo mais amplo, zero duplicação) vive em
+// tests/google/calendar-scopes.test.mjs, junto do arquivo que a declara.
 // ============================================================================
 
-check('1. GOOGLE_CALENDAR_SCOPES é EXATAMENTE calendar.events.freebusy, nenhum outro escopo concatenado', () => {
-  const match = codeOnly.match(/const GOOGLE_CALENDAR_SCOPES = '([^']*)'/);
-  assert.ok(match, 'GOOGLE_CALENDAR_SCOPES não encontrado');
-  assert.equal(
-    match[1],
-    'https://www.googleapis.com/auth/calendar.events.freebusy',
-    'escopo deve ser exatamente a string de freebusy, sem espaço/segundo escopo concatenado',
-  );
+check('1. calendar.ts IMPORTA GOOGLE_CALENDAR_REQUIRED_SCOPES de ./calendar-scopes — nunca a redefine', () => {
+  assert.ok(codeOnly.includes("import { GOOGLE_CALENDAR_REQUIRED_SCOPES } from './calendar-scopes'"));
+  assert.ok(!codeOnly.includes('export const GOOGLE_CALENDAR_REQUIRED_SCOPES'), 'a lista não deveria ser (re)definida aqui');
 });
 
-check('2. zero escopo de escrita (calendar.events, sem o sufixo .freebusy) solicitado', () => {
-  // Checagem precisa: 'calendar.events.freebusy' CONTÉM a substring
-  // 'calendar.events' — por isso o teste busca especificamente pelo
-  // escopo de escrita como token isolado (delimitado por espaço/aspas),
-  // nunca um simples `.includes('calendar.events')` ingênuo (que daria
-  // falso positivo já na própria string de freebusy).
-  const writeScopePattern = /auth\/calendar\.events(?!\.freebusy)/;
-  assert.ok(
-    !writeScopePattern.test(codeOnly),
-    'escopo de escrita calendar.events (sem .freebusy) não deveria mais ser solicitado',
-  );
+check(
+  '2. nenhuma string de escopo solta/literal em calendar.ts fora do import — a URL só chega via GOOGLE_CALENDAR_REQUIRED_SCOPES.join',
+  () => {
+    // Nenhuma ocorrência de uma URL de escopo real (`auth/calendar...`)
+    // deveria existir como literal neste arquivo — a única fonte é o
+    // valor importado.
+    assert.ok(!/'https:\/\/www\.googleapis\.com\/auth\/calendar/.test(codeOnly), 'string de escopo solta encontrada em calendar.ts');
+  },
+);
+
+check('escopos concatenados com espaço (formato exigido pelo parâmetro scope da URL de autorização)', () => {
+  assert.ok(codeOnly.includes('GOOGLE_CALENDAR_REQUIRED_SCOPES.join(\' \')'));
+});
+
+check('GOOGLE_CALENDAR_SCOPES (string local, resultado do join) nunca é exportado — só usado internamente por connectGoogleCalendar', () => {
+  assert.ok(!codeOnly.includes('export const GOOGLE_CALENDAR_SCOPES'));
+  assert.ok(!codeOnly.includes('export { GOOGLE_CALENDAR_SCOPES'));
 });
 
 check('3. escopo é de fato usado na URL de autorização (authorizeUrl.searchParams)', () => {
@@ -109,12 +114,19 @@ check('5. zero chamada de escrita ao Google Calendar (events.insert/update/delet
 });
 
 // ============================================================================
-// 6. Callback nunca exigiu (e continua sem exigir) calendar.events
+// 6. Callback REUTILIZA a mesma lista centralizada — nunca duplica a
+// string de escopo (correção/ampliação desta subfase: antes da Subfase 7
+// o callback não precisava validar scope algum, porque só 1 escopo
+// existia; agora que 2 são solicitados juntos, validar o que foi
+// realmente concedido é obrigatório — ver "5. Callback VALIDA os escopos
+// concedidos" abaixo).
 // ============================================================================
 
-check('6. callback de OAuth não referencia nem exige calendar.events em nenhum ponto', () => {
-  assert.ok(!callbackCodeOnly.includes('calendar.events'), 'callback não deveria referenciar o escopo de escrita');
-  assert.ok(!callbackCodeOnly.includes('scope'), 'callback não deveria validar/ler scope — token exchange já basta');
+check('6. callback IMPORTA GOOGLE_CALENDAR_REQUIRED_SCOPES de @/lib/google/calendar-scopes — nunca uma string de escopo solta/duplicada', () => {
+  assert.ok(callbackCodeOnly.includes("import { GOOGLE_CALENDAR_REQUIRED_SCOPES } from '@/lib/google/calendar-scopes'"));
+  // Nenhuma URL de escopo literal solta no callback — a ÚNICA fonte é o
+  // import acima.
+  assert.ok(!/https:\/\/www\.googleapis\.com\/auth\/calendar/.test(callbackCodeOnly));
 });
 
 // ============================================================================

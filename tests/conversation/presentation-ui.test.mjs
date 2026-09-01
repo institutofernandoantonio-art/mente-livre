@@ -442,7 +442,7 @@ check("25. '/conversa' está em AAL2_REQUIRED_PATHS", () => {
 // de regressão real. Reescrito para checar o CONTEÚDO do arquivo (estável
 // independentemente do estado do git/commit) em vez do diff.
 check(
-  '26. /entrada: BrainDumpForm.tsx byte-for-byte intacto; page.tsx contém o link já commitado para /conversa e não tem diff nesta subfase',
+  '26. /entrada: BrainDumpForm.tsx byte-for-byte intacto; page.tsx contém o link já commitado para /conversa e a única adição autorizada da Subfase 7 (calendar=permissions)',
   () => {
     const root = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -451,11 +451,34 @@ check(
       .trim();
     assert.equal(brainDumpDiff, '', 'BrainDumpForm.tsx foi modificado — esperado zero diff');
 
-    // Nesta subfase (query_calendar read-only), /entrada/page.tsx não deve
-    // ser tocado — zero diff é a prova correta, não a ausência de linhas
-    // adicionadas (que hoje é sempre vazia, tenha ou não diff real).
-    const pageDiff = execSync('git diff -- src/app/entrada/page.tsx', { cwd: root }).toString().trim();
-    assert.equal(pageDiff, '', 'src/app/entrada/page.tsx foi modificado nesta subfase — esperado zero diff');
+    // Nota histórica: este teste antes exigia diff VAZIO em page.tsx — só
+    // válido enquanto nenhuma subfase posterior tinha motivo legítimo para
+    // tocá-lo. A Subfase 7 (ampliação controlada do OAuth) autoriza
+    // explicitamente UMA adição: o parágrafo de `calendar === "permissions"`
+    // (consentimento incompleto). Mesma lição já aplicada acima para o link
+    // de /conversa: checagem de CONTEÚDO, estável para sempre, nunca
+    // depende do arquivo estar ou não commitado — em vez de reexigir diff
+    // vazio (que ficaria inatingível assim que o commit desta subfase
+    // acontecer) ou aceitar cegamente qualquer diff (que esconderia uma
+    // mudança não autorizada).
+    const pageDiff = execSync('git diff -- src/app/entrada/page.tsx', { cwd: root }).toString();
+    const removedLines = pageDiff.split('\n').filter((line) => line.startsWith('-') && !line.startsWith('---'));
+    assert.equal(removedLines.length, 0, 'nenhuma linha deveria ser REMOVIDA de entrada/page.tsx nesta subfase');
+    const addedLines = pageDiff
+      .split('\n')
+      .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+      .map((line) => line.slice(1).trim());
+    const allowedAddedLines = new Set([
+      '',
+      '{calendar === "permissions" && (',
+      '<p role="alert" className="mb-4 text-center text-sm text-alert-500">',
+      'Para agendar compromissos, o Mente Livre precisa da permissão de criar eventos no seu Google Agenda.',
+      '</p>',
+      ')}',
+    ]);
+    for (const line of addedLines) {
+      assert.ok(allowedAddedLines.has(line), `linha adicionada não autorizada em entrada/page.tsx: ${JSON.stringify(line)}`);
+    }
 
     // O link para /conversa (da subfase de navegação, já commitado em
     // 2bb4cad) continua presente no CONTEÚDO real do arquivo — checagem
@@ -464,6 +487,10 @@ check(
     assert.ok(
       /<Link href="\/conversa" className=\{buttonVariants\("secondary"\)\}>/.test(entradaPageCode),
       'link para /conversa ausente de entrada/page.tsx',
+    );
+    assert.ok(
+      entradaPageCode.includes('Para agendar compromissos, o Mente Livre precisa da permissão de criar eventos no seu Google Agenda.'),
+      'mensagem de permissão incompleta (Subfase 7) ausente de entrada/page.tsx',
     );
 
     // Nenhuma lógica de BrainDump/Calendar/MFA/logout foi alterada — mesmo

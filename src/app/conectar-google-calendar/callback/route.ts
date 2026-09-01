@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { GOOGLE_CALENDAR_REQUIRED_SCOPES } from '@/lib/google/calendar-scopes';
 
 const STATE_COOKIE_NAME = 'google_calendar_oauth_state';
 
@@ -86,6 +87,41 @@ export async function GET(request: Request) {
   // incompleta — access_token (se vier) nunca é lido nem usado aqui.
   if (typeof refreshToken !== 'string' || !refreshToken) {
     redirect('/entrada?calendar=error');
+  }
+
+  // --- Consentimento parcial (Subfase 6) ------------------------------
+  //
+  // Dois escopos são solicitados juntos (ver GOOGLE_CALENDAR_REQUIRED_SCOPES,
+  // importada de '@/lib/google/calendar-scopes' acima) — o usuário pode desmarcar
+  // um deles na tela do Google. Mecanismo oficial do Google para checar o que foi
+  // REALMENTE concedido: o campo `scope` da própria resposta do token
+  // endpoint (espaço-delimitado) — nunca uma segunda chamada ao Google
+  // para "confirmar" (isso seria efeito externo extra só para validar
+  // permissão, explicitamente fora de escopo). Ausência do campo `scope`
+  // (formato inesperado) é tratada com a MESMA suspeita que uma concessão
+  // parcial real — nunca assumida como "tudo concedido" — fail closed.
+  //
+  // Crítico: esta checagem acontece ANTES de qualquer chamada à RPC. Uma
+  // concessão parcial (ou uma resposta sem `scope` confiável) NUNCA
+  // substitui uma conexão já existente — se o usuário já tinha uma conexão
+  // funcional (mesmo que só freebusy) e esta tentativa de reconexão falha
+  // aqui, a linha antiga em `google_calendar_connections` permanece
+  // exatamente como estava, porque a RPC simplesmente nunca é chamada
+  // neste caminho.
+  const grantedScopeField =
+    typeof tokenPayload === 'object' && tokenPayload !== null && 'scope' in tokenPayload
+      ? (tokenPayload as { scope?: unknown }).scope
+      : undefined;
+
+  if (typeof grantedScopeField !== 'string' || !grantedScopeField) {
+    redirect('/entrada?calendar=permissions');
+  }
+
+  const grantedScopes = new Set(grantedScopeField.split(' ').filter((scope) => scope.length > 0));
+  const hasAllRequiredScopes = GOOGLE_CALENDAR_REQUIRED_SCOPES.every((scope) => grantedScopes.has(scope));
+
+  if (!hasAllRequiredScopes) {
+    redirect('/entrada?calendar=permissions');
   }
 
   // RPC (não insert/upsert direto na tabela): permite tanto a primeira

@@ -303,10 +303,20 @@ check(
 // por causa do estado do diff/commit. As invariantes de CONTEÚDO (escopo
 // exato, zero write) continuam checadas incondicionalmente, não dependem
 // de diff nenhum.
+// Nota histórica (Subfase 7 — ampliação controlada do OAuth): o teste
+// exigia só `calendar.ts` no allowlist e o literal freebusy-only DENTRO
+// dele. A lista de escopos foi extraída para `calendar-scopes.ts` (motivo
+// técnico: `calendar.ts` é um arquivo `'use server'`, que só pode
+// exportar funções async — nunca uma constante/array), e um segundo
+// escopo de escrita mínimo (`calendar.events.owned`) foi adicionado,
+// ainda SEM nenhum `events.insert` real alcançável (`calendar-event-
+// execution.ts` continua sem wiring). Allowlist e checagem de literal
+// atualizadas para essa nova estrutura, mesma disciplina de sempre: zero
+// escopo mais amplo, zero Calendar write.
 check(
-  '14. src/lib/google/: só calendar.ts pode ter diff, e o escopo OAuth continua reduzido a calendar.events.freebusy — zero Calendar write',
+  '14. src/lib/google/: só calendar.ts e calendar-scopes.ts podem ter diff; escopo OAuth continua reduzido a freebusy + calendar.events.owned — zero Calendar write',
   () => {
-    const allowed = new Set(['src/lib/google/calendar.ts']);
+    const allowed = new Set(['src/lib/google/calendar.ts', 'src/lib/google/calendar-scopes.ts']);
     const changed = changedFilesUnder('src/lib/google/');
     for (const file of changed) {
       assert.ok(allowed.has(file), `arquivo não autorizado com diff em src/lib/google/: ${file}`);
@@ -319,18 +329,32 @@ check(
     // (readCodeOnly) — o comentário do próprio arquivo documentando a
     // AUSÊNCIA de events.insert/update/delete contém essas palavras como
     // texto explicativo, o que daria falso positivo se lido bruto.
-    const calendarCodeRaw = readFileSync(
-      fileURLToPath(new URL('../../src/lib/google/calendar.ts', import.meta.url)),
+    const scopesCodeRaw = readFileSync(
+      fileURLToPath(new URL('../../src/lib/google/calendar-scopes.ts', import.meta.url)),
       'utf8',
     );
     assert.ok(
-      calendarCodeRaw.includes("'https://www.googleapis.com/auth/calendar.events.freebusy'"),
-      'escopo freebusy-only não encontrado',
+      scopesCodeRaw.includes("'https://www.googleapis.com/auth/calendar.events.freebusy'"),
+      'escopo freebusy não encontrado',
     );
-    const calendarCode = readCodeOnly('../../src/lib/google/calendar.ts');
-    const forbidden = ['events.insert', 'events.update', 'events.delete', 'calendar.events '];
-    for (const token of forbidden) {
-      assert.ok(!calendarCode.includes(token), `token proibido encontrado: ${token}`);
+    assert.ok(
+      scopesCodeRaw.includes("'https://www.googleapis.com/auth/calendar.events.owned'"),
+      'escopo de escrita mínimo (calendar.events.owned) não encontrado',
+    );
+    assert.ok(
+      !scopesCodeRaw.includes("'https://www.googleapis.com/auth/calendar.events'"),
+      'escopo de escrita amplo (calendar.events, sem .owned) não deveria estar presente',
+    );
+    assert.ok(
+      !scopesCodeRaw.includes("'https://www.googleapis.com/auth/calendar'"),
+      'escopo mais amplo (calendar puro) não deveria estar presente',
+    );
+    for (const relPath of ['../../src/lib/google/calendar.ts', '../../src/lib/google/calendar-scopes.ts']) {
+      const code = readCodeOnly(relPath);
+      const forbidden = ['events.insert', 'events.update', 'events.delete', 'calendar.events '];
+      for (const token of forbidden) {
+        assert.ok(!code.includes(token), `token proibido encontrado em ${relPath}: ${token}`);
+      }
     }
   },
 );

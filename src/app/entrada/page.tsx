@@ -40,6 +40,11 @@ export default async function EntradaPage({
             Não foi possível conectar ao Google Calendar. Tente novamente.
           </p>
         )}
+        {calendar === "permissions" && (
+          <p role="alert" className="mb-4 text-center text-sm text-alert-500">
+            Para agendar compromissos, o Mente Livre precisa da permissão de criar eventos no seu Google Agenda.
+          </p>
+        )}
 
         <Card>
           <BrainDumpForm />

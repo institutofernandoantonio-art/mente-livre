@@ -6,19 +6,17 @@ import { redirect } from 'next/navigation';
 import { headers, cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { GOOGLE_CALENDAR_REQUIRED_SCOPES } from './calendar-scopes';
 
-// Só calendar.events.freebusy (checar disponibilidade) — princípio de
-// menor privilégio: a V1 nunca escreve no Google Calendar (zero
-// events.insert/update/delete em todo o projeto, ver getGoogleCalendarBusyTimes
-// abaixo), então nunca deve SOLICITAR o escopo de escrita `calendar.events`.
-// Pedir um escopo sensível que nunca é exercido não é só desnecessário: para
-// este app (consentimento granular, não verificado), solicitar dois escopos
-// sensíveis juntos faz o Google tratar uma concessão PARCIAL (usuário marca
-// só freebusy) como negação da autorização inteira — o redirect de volta
-// chega sem `code`, e a conexão nunca se completa. Solicitar só o escopo
-// realmente usado elimina essa falha por construção: não há mais um segundo
-// escopo para o usuário desmarcar.
-const GOOGLE_CALENDAR_SCOPES = 'https://www.googleapis.com/auth/calendar.events.freebusy';
+// Escopos solicitados, concatenados com espaço (formato exigido pelo
+// parâmetro `scope` da URL de autorização) — a partir da ÚNICA lista
+// centralizada em `./calendar-scopes.ts` (ver aquele arquivo para a
+// justificativa completa de cada escopo e por que vive separado deste:
+// `calendar.ts` é um arquivo `'use server'`, que só pode exportar funções
+// async, nunca uma constante). Este módulo NUNCA reexporta a lista —
+// quem precisar dela (o callback do OAuth) importa diretamente de
+// `./calendar-scopes`.
+const GOOGLE_CALENDAR_SCOPES = GOOGLE_CALENDAR_REQUIRED_SCOPES.join(' ');
 
 const STATE_COOKIE_NAME = 'google_calendar_oauth_state';
 const STATE_COOKIE_MAX_AGE_SECONDS = 10 * 60;

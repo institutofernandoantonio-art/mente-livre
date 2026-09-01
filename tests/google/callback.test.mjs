@@ -103,10 +103,104 @@ check('8. redirect_uri continua derivado de url.origin (nunca hardcoded)', () =>
   assert.ok(codeOnly.includes('const redirectUri = `${url.origin}/conectar-google-calendar/callback`'));
 });
 
-check('9. resultado final continua ?calendar=connected/?calendar=error, nada novo', () => {
-  assert.ok(codeOnly.includes("redirect('/entrada?calendar=connected')"));
-  const errorOccurrences = codeOnly.split("redirect('/entrada?calendar=error')").length - 1;
-  assert.ok(errorOccurrences >= 1);
+check(
+  '9. resultado final: ?calendar=connected (sucesso) / ?calendar=error (falha técnica) / ?calendar=permissions (consentimento incompleto, Subfase 7) — nenhum quarto destino',
+  () => {
+    assert.ok(codeOnly.includes("redirect('/entrada?calendar=connected')"));
+    const errorOccurrences = codeOnly.split("redirect('/entrada?calendar=error')").length - 1;
+    assert.ok(errorOccurrences >= 1);
+    const permissionsOccurrences = codeOnly.split("redirect('/entrada?calendar=permissions')").length - 1;
+    assert.equal(permissionsOccurrences, 2, 'esperava exatamente 2 pontos de redirect para calendar=permissions (scope ausente/malformado e scope incompleto)');
+    // Todo redirect() do arquivo é para um destino literal conhecido —
+    // nenhum quarto valor de calendar= foi introduzido.
+    const allRedirectTargets = [...codeOnly.matchAll(/redirect\('([^']+)'\)/g)].map((m) => m[1]);
+    const allowedTargets = new Set(['/entrada?calendar=error', '/entrada?calendar=connected', '/entrada?calendar=permissions']);
+    for (const target of allRedirectTargets) {
+      assert.ok(allowedTargets.has(target), `destino de redirect inesperado: ${target}`);
+    }
+  },
+);
+
+// ============================================================================
+// 10-14. Consentimento parcial (Subfase 7) — a RPC só é chamada DEPOIS de
+// TODAS as validações (refresh_token presente + todos os escopos
+// obrigatórios concedidos); qualquer falha nessas validações nunca toca a
+// conexão existente, porque a RPC simplesmente não é alcançada.
+// ============================================================================
+
+check('10, 11 e 12. RPC (reconnect_google_calendar) só é alcançável DEPOIS da validação de refresh_token E de scope — nunca antes', () => {
+  const rpcIndex = codeOnly.indexOf(".rpc('reconnect_google_calendar'");
+  assert.ok(rpcIndex !== -1, 'chamada RPC não encontrada');
+
+  const refreshTokenCheckIndex = codeOnly.indexOf("typeof refreshToken !== 'string'");
+  assert.ok(refreshTokenCheckIndex !== -1, 'checagem de refresh_token não encontrada');
+  assert.ok(refreshTokenCheckIndex < rpcIndex, 'checagem de refresh_token deveria vir ANTES da chamada RPC');
+
+  const scopeFieldCheckIndex = codeOnly.indexOf("typeof grantedScopeField !== 'string'");
+  assert.ok(scopeFieldCheckIndex !== -1, 'checagem do campo scope não encontrada');
+  assert.ok(scopeFieldCheckIndex > refreshTokenCheckIndex, 'checagem de scope deveria vir DEPOIS da checagem de refresh_token');
+  assert.ok(scopeFieldCheckIndex < rpcIndex, 'checagem do campo scope deveria vir ANTES da chamada RPC');
+
+  const requiredScopesCheckIndex = codeOnly.indexOf('hasAllRequiredScopes');
+  assert.ok(requiredScopesCheckIndex !== -1, 'checagem de escopos obrigatórios não encontrada');
+  assert.ok(requiredScopesCheckIndex < rpcIndex, 'checagem de escopos obrigatórios deveria vir ANTES da chamada RPC');
+});
+
+check('13. scope obrigatório ausente redireciona para calendar=permissions ANTES de tocar a RPC (nunca altera a conexão existente)', () => {
+  const hasAllScopesBlock = codeOnly.match(/if \(!hasAllRequiredScopes\) \{([\s\S]*?)\}/);
+  assert.ok(hasAllScopesBlock, 'branch de escopo insuficiente não encontrado');
+  assert.ok(hasAllScopesBlock[1].includes("redirect('/entrada?calendar=permissions')"));
+  assert.ok(!hasAllScopesBlock[1].includes('.rpc('), 'branch de escopo insuficiente nunca deveria chamar a RPC');
+});
+
+check('14. todos os escopos concedidos -> grantedScopes.has() confere CADA escopo de GOOGLE_CALENDAR_REQUIRED_SCOPES antes de prosseguir para a RPC', () => {
+  assert.ok(codeOnly.includes('GOOGLE_CALENDAR_REQUIRED_SCOPES.every((scope) => grantedScopes.has(scope))'));
+});
+
+// ============================================================================
+// 15-18. Segurança — zero token exposto (query string, UI, log), zero
+// corpo bruto do Google propagado
+// ============================================================================
+
+check('15 e 16. nenhum redirect() carrega token/scope na query string — todo destino é um literal fixo /entrada?calendar=...', () => {
+  const allRedirectTargets = [...codeOnly.matchAll(/redirect\(([^)]+)\)/g)].map((m) => m[1]);
+  for (const target of allRedirectTargets) {
+    assert.ok(/^'\/entrada\?calendar=(connected|error|permissions)'$/.test(target.trim()), `redirect com argumento não-literal ou suspeito: ${target}`);
+  }
+});
+
+check('17. nenhum console.log/error/warn em todo o arquivo (zero risco de logar token/scope)', () => {
+  assert.ok(!codeOnly.includes('console.'));
+});
+
+check('18. tokenPayload bruto nunca é passado adiante — só usado via type-guard + acesso de propriedade, nunca repassado inteiro', () => {
+  // `tokenPayload` só deveria aparecer: na declaração, na atribuição
+  // (`= await tokenResponse.json()`), e dentro dos dois blocos de
+  // extração (`typeof tokenPayload === 'object' && ... && 'x' in
+  // tokenPayload ? (tokenPayload as {...}).x : undefined`) — nunca como
+  // argumento solto de redirect()/console/JSON.stringify/qualquer função,
+  // e nunca devolvido diretamente.
+  assert.ok(!/redirect\([^)]*tokenPayload/.test(codeOnly), 'tokenPayload nunca deveria ir para redirect()');
+  assert.ok(!/console\.[a-z]+\([^)]*tokenPayload/.test(codeOnly), 'tokenPayload nunca deveria ser logado');
+  assert.ok(!/JSON\.stringify\([^)]*tokenPayload/.test(codeOnly), 'tokenPayload nunca deveria ser serializado de volta');
+  assert.ok(!/return\s+tokenPayload/.test(codeOnly), 'tokenPayload nunca deveria ser retornado diretamente');
+  // Toda ocorrência restante precisa estar dentro de uma checagem
+  // `typeof tokenPayload`/`tokenPayload !==`/`in tokenPayload`/
+  // `(tokenPayload as` ou na atribuição/declaração original — nunca solto.
+  const allowedContexts = [
+    'let tokenPayload: unknown;',
+    'tokenPayload = await tokenResponse.json();',
+    "typeof tokenPayload === 'object' && tokenPayload !== null && 'refresh_token' in tokenPayload",
+    '(tokenPayload as { refresh_token?: unknown }).refresh_token',
+    "typeof tokenPayload === 'object' && tokenPayload !== null && 'scope' in tokenPayload",
+    '(tokenPayload as { scope?: unknown }).scope',
+  ];
+  let remaining = codeOnly;
+  for (const context of allowedContexts) {
+    assert.ok(remaining.includes(context), `contexto esperado não encontrado: ${context}`);
+    remaining = remaining.replace(context, '');
+  }
+  assert.ok(!remaining.includes('tokenPayload'), 'ocorrência inesperada de tokenPayload fora dos contextos permitidos');
 });
 
 // --- Resumo -------------------------------------------------------------
