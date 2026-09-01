@@ -211,6 +211,35 @@ check('14h. calendar_information: busyBlockCount nunca aparece no texto (não me
 });
 
 // ============================================================================
+// 14i-14j. create_event — schedule_conflict/calendar_unavailable (Subfase 2
+// da criação de compromissos no Google Calendar) — mensagens mínimas, só
+// para o switch exaustivo compilar (UI completa fica para subfase própria).
+// ============================================================================
+
+check('14i. schedule_conflict -> "Você já tem um compromisso nesse horário.", clearInput true', () => {
+  const effect = mapEntryResultToUiEffect({ status: 'schedule_conflict' });
+  assert.deepEqual(effect, {
+    message: { role: 'assistant', kind: 'text', text: 'Você já tem um compromisso nesse horário.' },
+    clearInput: true,
+  });
+});
+
+check(
+  '14j. calendar_unavailable -> "Não consegui confirmar sua disponibilidade agora. Tente novamente.", clearInput FALSE (transitório — permite reenviar a mesma resposta)',
+  () => {
+    const effect = mapEntryResultToUiEffect({ status: 'calendar_unavailable' });
+    assert.deepEqual(effect, {
+      message: {
+        role: 'assistant',
+        kind: 'text',
+        text: 'Não consegui confirmar sua disponibilidade agora. Tente novamente.',
+      },
+      clearInput: false,
+    });
+  },
+);
+
+// ============================================================================
 // 15-19. FORMATAÇÃO DE PREVIEW (visual, nunca lógica)
 // ============================================================================
 

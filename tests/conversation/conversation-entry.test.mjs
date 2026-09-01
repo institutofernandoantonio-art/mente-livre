@@ -828,6 +828,33 @@ await check('54. now continua exato e timezone nunca afeta o roteamento inicial 
   assert.equal(getCalls, 1);
 });
 
+// ============================================================================
+// 55-56. create_event — schedule_conflict / calendar_unavailable (Subfase 2
+// da criação de compromissos no Google Calendar)
+// ============================================================================
+
+await check('55. first-turn schedule_conflict/calendar_unavailable -> traduzidos verbatim (mesmo nome nas duas camadas)', async () => {
+  for (const status of ['schedule_conflict', 'calendar_unavailable']) {
+    setHandlers({
+      getRuntimeState: async () => ({ status: 'not_found' }),
+      extractStructuredIntent: async () => ({ status: 'extracted', intent: VALID_INTENT }),
+      resolveFirstConversationalTurn: async () => ({ status }),
+    });
+    const result = await handleConversationMessage('reunião amanhã às 14h', NOW, TIMEZONE);
+    assert.deepEqual(result, { status });
+  }
+});
+
+await check('56. clarification schedule_conflict/calendar_unavailable -> traduzidos verbatim', async () => {
+  for (const status of ['schedule_conflict', 'calendar_unavailable']) {
+    foundClarification({
+      resolveClarificationConversationalTurn: async () => ({ status }),
+    });
+    const result = await handleConversationMessage('1 hora', NOW, TIMEZONE);
+    assert.deepEqual(result, { status });
+  }
+});
+
 // --- Resumo -------------------------------------------------------------
 
 const passed = results.filter((r) => r.pass).length;

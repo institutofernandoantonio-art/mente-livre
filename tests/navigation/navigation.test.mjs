@@ -261,6 +261,10 @@ check(
       'src/lib/conversation/runtime-state-validation.ts',
       'src/lib/conversation/calendar-event-proposal.ts',
       'src/lib/conversation/timezone.ts',
+      // Subfase 2 (wiring de create_event até "IA recomenda": build +
+      // freeBusy + ProposalState — zero Calendar write, proposal-turn.ts
+      // intocado):
+      'src/lib/conversation/calendar-event-availability.ts',
     ]);
     const changed = changedFilesUnder('src/lib/conversation/');
     for (const file of changed) {

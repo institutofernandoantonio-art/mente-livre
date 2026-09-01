@@ -30,6 +30,7 @@ import {
 import { handlers as storageHandlers } from '../support/fake-runtime-state-storage.mjs';
 import { handlers as orchestrationHandlers } from '../support/fake-orchestration.mjs';
 import { handlers as calendarHandlers } from '../support/fake-calendar-query.mjs';
+import { handlers as calendarAvailabilityHandlers } from '../support/fake-calendar-event-availability.mjs';
 
 const results = [];
 function record(name, pass, detail) {
@@ -72,6 +73,13 @@ function setHandlers(overrides = {}) {
   // de create_task/cancel_event já existentes, que nunca deveriam chamar
   // calendar-query.ts).
   calendarHandlers.resolveCalendarQuery = overrides.resolveCalendarQuery ?? neverCalled('resolveCalendarQuery');
+  // Mesmo racional: default "neverCalled" — qualquer teste que NÃO
+  // configure checkCalendarEventAvailability explicitamente está, por
+  // construção, provando "zero freeBusy" para aquele cenário (ex.: todos
+  // os testes de create_task/query_calendar/not_materializable/invalid,
+  // que nunca deveriam chegar a chamar isso).
+  calendarAvailabilityHandlers.checkCalendarEventAvailability =
+    overrides.checkCalendarEventAvailability ?? neverCalled('checkCalendarEventAvailability');
 }
 
 // --- Fixtures reais (nenhum dado pessoal) -----------------------------
@@ -827,26 +835,33 @@ await check('23. arquivo-fonte não referencia nenhum código de Execution/UI/ro
 // Execution (subfase de query_calendar read-only)
 // ============================================================================
 
-await check('26. import de Calendar restrito à fronteira sancionada (./calendar-query), nunca à API do Google direto', () => {
-  const sourcePath = fileURLToPath(new URL('../../src/lib/conversation/conversation-turn.ts', import.meta.url));
-  const codeOnly = readFileSync(sourcePath, 'utf8')
-    .split('\n')
-    .map((line) => line.replace(/\/\/.*$/, ''))
-    .join('\n');
+await check(
+  '26. import de Calendar restrito às fronteiras sancionadas (./calendar-query, ./calendar-event-proposal, ./calendar-event-availability), nunca à API do Google direto',
+  () => {
+    const sourcePath = fileURLToPath(new URL('../../src/lib/conversation/conversation-turn.ts', import.meta.url));
+    const codeOnly = readFileSync(sourcePath, 'utf8')
+      .split('\n')
+      .map((line) => line.replace(/\/\/.*$/, ''))
+      .join('\n');
 
-  assert.ok(codeOnly.includes("from './calendar-query'"));
-  const forbidden = [
-    'getGoogleCalendarBusyTimes',
-    "from '../google/calendar'",
-    "from '@/lib/google/calendar'",
-    'googleapis.com',
-    'freeBusy',
-    'GOOGLE_CLIENT',
-  ];
-  for (const token of forbidden) {
-    assert.ok(!codeOnly.includes(token), `acesso direto à API do Google encontrado: ${token}`);
-  }
-});
+    assert.ok(codeOnly.includes("from './calendar-query'"));
+    // Subfase 2 da criação de compromissos no Google Calendar: as duas
+    // fronteiras novas de create_event, mesma disciplina de sempre.
+    assert.ok(codeOnly.includes("from './calendar-event-proposal'"));
+    assert.ok(codeOnly.includes("from './calendar-event-availability'"));
+    const forbidden = [
+      'getGoogleCalendarBusyTimes',
+      "from '../google/calendar'",
+      "from '@/lib/google/calendar'",
+      'googleapis.com',
+      'freeBusy',
+      'GOOGLE_CLIENT',
+    ];
+    for (const token of forbidden) {
+      assert.ok(!codeOnly.includes(token), `acesso direto à API do Google encontrado: ${token}`);
+    }
+  },
+);
 
 const queryCalendarIntentReady = {
   missingFields: [],
@@ -958,6 +973,423 @@ await check(
     );
   },
 );
+
+// ============================================================================
+// 32-46. create_event — build + freeBusy + proposta (Subfase 2 da criação
+// de compromissos no Google Calendar)
+// ============================================================================
+
+const FIXED_START = '2027-03-14T14:00:00.000Z';
+const FIXED_END = '2027-03-14T15:00:00.000Z';
+
+function createEventIntentReady(overrides = {}) {
+  return {
+    missingFields: [],
+    confidence: 0.9,
+    intentType: 'create_event',
+    task: { kind: 'new_task', title: 'Reunião com Ricardo', description: null },
+    temporalWindow: {
+      expression: 'amanhã às 14h',
+      resolved: { kind: 'fixed', start: FIXED_START, end: FIXED_END },
+    },
+    duration: { source: 'stated', value: { minutes: 60 }, confidence: 1 },
+    participants: [],
+    calendarAction: 'create',
+    ...overrides,
+  };
+}
+
+const EXPECTED_CALENDAR_EVENT_ACTION = {
+  actionType: 'create_calendar_event',
+  event: {
+    title: 'Reunião com Ricardo',
+    description: null,
+    start: FIXED_START,
+    end: FIXED_END,
+    timezone: TIMEZONE,
+    reminderMinutesBeforeStart: 30,
+  },
+};
+
+function relativeDayCreateEventIntent(day, hour, minute) {
+  return createEventIntentReady({
+    temporalWindow: { expression: 'horário', resolved: { kind: 'relative_day', day, time: { hour, minute } } },
+  });
+}
+
+// 2027-03-13T15:00:00Z = 10:00 local em America/New_York -> "amanhã" =
+// 14/03/2027, dia de spring-forward (2h EST -> 3h EDT).
+const NY_SPRING_FORWARD_NOW = Date.UTC(2027, 2, 13, 15, 0, 0);
+// 2027-11-07T15:00:00Z = 10:00 local (EST) em America/New_York -> "hoje" =
+// 07/11/2027, dia de fall-back.
+const NY_FALL_BACK_NOW = Date.UTC(2027, 10, 7, 15, 0, 0);
+
+// --- First turn — livre (1-7) ----------------------------------------------
+
+await check(
+  '32. first-turn create_event ready + freeBusy livre -> proposal_saved via replace, janela exata, action create_calendar_event',
+  async () => {
+    let replaceCalls = 0;
+    let capturedNext = null;
+    let availabilityCalls = 0;
+    let capturedAvailabilityArgs = null;
+    setHandlers({
+      getRuntimeState: async () => ({ status: 'not_found' }),
+      replaceRuntimeState: async (next) => {
+        replaceCalls++;
+        capturedNext = next;
+        return { status: 'saved', value: { stateId: 'new-id', kind: next.kind, state: next.state } };
+      },
+      checkCalendarEventAvailability: async (start, end) => {
+        availabilityCalls++;
+        capturedAvailabilityArgs = { start, end };
+        return { status: 'available' };
+      },
+    });
+
+    const result = await resolveFirstConversationalTurn(createEventIntentReady(), NOW, EXPIRATIONS, TIMEZONE);
+
+    assert.equal(result.status, 'proposal_saved');
+    assert.equal(availabilityCalls, 1);
+    // Janela EXATA do ProposedAction materializado — nunca arredondada.
+    assert.deepEqual(capturedAvailabilityArgs, { start: FIXED_START, end: FIXED_END });
+    assert.equal(replaceCalls, 1);
+    assert.equal(capturedNext.kind, 'proposal');
+    assert.equal(capturedNext.state.status, 'awaiting_confirmation');
+    assert.equal(typeof capturedNext.state.proposalId, 'string');
+    assert.ok(capturedNext.state.proposalId.length > 0);
+    assert.equal(result.action, capturedNext.state.action);
+    assert.deepEqual(result.action, EXPECTED_CALENDAR_EVENT_ACTION);
+  },
+);
+
+// --- First turn — ocupado (8-12) --------------------------------------------
+
+await check(
+  '33. first-turn create_event ready + freeBusy ocupado -> schedule_conflict, zero replace, zero ProposalState, zero dado bruto do Google',
+  async () => {
+    setHandlers({
+      getRuntimeState: async () => ({ status: 'not_found' }),
+      checkCalendarEventAvailability: async () => ({ status: 'busy' }),
+    });
+
+    const result = await resolveFirstConversationalTurn(createEventIntentReady(), NOW, EXPIRATIONS, TIMEZONE);
+
+    assert.deepEqual(result, { status: 'schedule_conflict' });
+    // storageHandlers.replaceRuntimeState continua "neverCalled" — se o
+    // código chamasse replace, este teste já teria lançado antes daqui.
+  },
+);
+
+// --- First turn — Calendar indisponível (13-16) -----------------------------
+
+await check(
+  '34. first-turn create_event ready + Calendar indisponível -> calendar_unavailable, zero write, zero fallback/retry',
+  async () => {
+    let availabilityCalls = 0;
+    setHandlers({
+      getRuntimeState: async () => ({ status: 'not_found' }),
+      checkCalendarEventAvailability: async () => {
+        availabilityCalls++;
+        return { status: 'unavailable' };
+      },
+    });
+
+    const result = await resolveFirstConversationalTurn(createEventIntentReady(), NOW, EXPIRATIONS, TIMEZONE);
+
+    assert.deepEqual(result, { status: 'calendar_unavailable' });
+    assert.equal(availabilityCalls, 1);
+    // storageHandlers.replaceRuntimeState continua "neverCalled".
+  },
+);
+
+// --- Materialização falha (17-20) — zero freeBusy em qualquer caso ---------
+
+// `next_free_slot` com duration já `stated`: a Clarification Policy
+// considera isso `ready` (não é `unresolved`, não pede `time` — só
+// `relative_day` pede — e duration já está resolvida), mas o BUILDER
+// (Subfase 1) nunca materializa esse kind (fora de escopo, "next horário
+// livre" exigiria busca, não é um instante conhecido) — por isso é o
+// fixture certo para provar `not_materializable` vindo do builder, nunca
+// da Clarification Policy (que já intercepta `unresolved` antes deste
+// branch sequer ser alcançado — testado à parte em clarification.test.mjs).
+const NEXT_FREE_SLOT_WINDOW = {
+  expression: 'quando eu tiver um horário livre',
+  resolved: { kind: 'next_free_slot', minDurationMinutes: 60 },
+};
+
+await check('35. first-turn create_event ready (next_free_slot) mas not_materializable pelo builder -> zero freeBusy', async () => {
+  setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
+
+  const result = await resolveFirstConversationalTurn(
+    createEventIntentReady({ temporalWindow: NEXT_FREE_SLOT_WINDOW }),
+    NOW,
+    EXPIRATIONS,
+    TIMEZONE,
+  );
+
+  assert.deepEqual(result, { status: 'not_materializable' });
+  // calendarAvailabilityHandlers continua "neverCalled" (default) — se o
+  // código chamasse freeBusy aqui, este teste já teria lançado antes.
+});
+
+await check('36. first-turn create_event com timezone inválido -> not_materializable, zero freeBusy', async () => {
+  setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
+
+  const result = await resolveFirstConversationalTurn(createEventIntentReady(), NOW, EXPIRATIONS, 'Nao/Existe');
+
+  assert.deepEqual(result, { status: 'not_materializable' });
+});
+
+await check(
+  '37. first-turn create_event com horário civil inexistente (spring-forward, America/New_York) -> not_materializable, zero freeBusy',
+  async () => {
+    setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
+
+    const result = await resolveFirstConversationalTurn(
+      relativeDayCreateEventIntent('tomorrow', 2, 30),
+      NY_SPRING_FORWARD_NOW,
+      EXPIRATIONS,
+      'America/New_York',
+    );
+
+    assert.deepEqual(result, { status: 'not_materializable' });
+  },
+);
+
+await check(
+  '38. first-turn create_event com horário civil ambíguo (fall-back, America/New_York) -> not_materializable, zero freeBusy',
+  async () => {
+    setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
+
+    const result = await resolveFirstConversationalTurn(
+      relativeDayCreateEventIntent('today', 1, 30),
+      NY_FALL_BACK_NOW,
+      EXPIRATIONS,
+      'America/New_York',
+    );
+
+    assert.deepEqual(result, { status: 'not_materializable' });
+  },
+);
+
+// --- Clarification turn (21-26) --------------------------------------------
+
+await check(
+  '39. clarification turn: ready (duration resolvida) + freeBusy livre -> proposal_saved via advance, zero consume',
+  async () => {
+    let advanceCalls = 0;
+    let capturedExpectedStateId = null;
+    let capturedNext = null;
+    foundClarification('state-create-event', { status: 'ready', intent: createEventIntentReady() });
+    storageHandlers.advanceRuntimeState = async (expectedStateId, next) => {
+      advanceCalls++;
+      capturedExpectedStateId = expectedStateId;
+      capturedNext = next;
+      return { status: 'advanced', value: { stateId: 'new-id', kind: next.kind, state: next.state } };
+    };
+    calendarAvailabilityHandlers.checkCalendarEventAvailability = async () => ({ status: 'available' });
+
+    const result = await resolveClarificationConversationalTurn('1 hora', NOW, EXPIRATIONS, TIMEZONE);
+
+    assert.equal(result.status, 'proposal_saved');
+    assert.deepEqual(result.action, EXPECTED_CALENDAR_EVENT_ACTION);
+    assert.equal(advanceCalls, 1);
+    assert.equal(capturedExpectedStateId, 'state-create-event');
+    assert.equal(capturedNext.kind, 'proposal');
+    // storageHandlers.consumeRuntimeState continua "neverCalled" — ready ->
+    // proposed sempre usa advance, nunca consume (tem sucessor real).
+  },
+);
+
+await check(
+  '40. clarification turn: freeBusy livre mas advance recebe conflict -> conflict, sem retry/reconsulta',
+  async () => {
+    let availabilityCalls = 0;
+    let advanceCalls = 0;
+    foundClarification('state-create-event', { status: 'ready', intent: createEventIntentReady() });
+    calendarAvailabilityHandlers.checkCalendarEventAvailability = async () => {
+      availabilityCalls++;
+      return { status: 'available' };
+    };
+    storageHandlers.advanceRuntimeState = async () => {
+      advanceCalls++;
+      return { status: 'conflict' };
+    };
+
+    const result = await resolveClarificationConversationalTurn('1 hora', NOW, EXPIRATIONS, TIMEZONE);
+
+    assert.deepEqual(result, { status: 'conflict' });
+    assert.equal(availabilityCalls, 1);
+    assert.equal(advanceCalls, 1);
+  },
+);
+
+await check('41. clarification turn: create_event ready (next_free_slot) mas not_materializable pelo builder -> consumido (terminal)', async () => {
+  let consumeCalls = 0;
+  foundClarification('state-create-event', {
+    status: 'ready',
+    intent: createEventIntentReady({ temporalWindow: NEXT_FREE_SLOT_WINDOW }),
+  });
+  storageHandlers.consumeRuntimeState = async (expectedStateId) => {
+    consumeCalls++;
+    assert.equal(expectedStateId, 'state-create-event');
+    return { status: 'consumed', value: {} };
+  };
+
+  const result = await resolveClarificationConversationalTurn('1 hora', NOW, EXPIRATIONS, TIMEZONE);
+
+  assert.deepEqual(result, { status: 'not_materializable' });
+  assert.equal(consumeCalls, 1);
+});
+
+await check('42. clarification turn: schedule_conflict -> consumido (terminal), zero advance', async () => {
+  let consumeCalls = 0;
+  foundClarification('state-create-event', { status: 'ready', intent: createEventIntentReady() });
+  calendarAvailabilityHandlers.checkCalendarEventAvailability = async () => ({ status: 'busy' });
+  storageHandlers.consumeRuntimeState = async () => {
+    consumeCalls++;
+    return { status: 'consumed', value: {} };
+  };
+
+  const result = await resolveClarificationConversationalTurn('1 hora', NOW, EXPIRATIONS, TIMEZONE);
+
+  assert.deepEqual(result, { status: 'schedule_conflict' });
+  assert.equal(consumeCalls, 1);
+  // storageHandlers.advanceRuntimeState continua "neverCalled".
+});
+
+// `calendar_unavailable` é deliberadamente TRANSITÓRIO na clarificação
+// (aprovado nesta subfase) — o oposto de `schedule_conflict`/
+// `not_materializable`, que continuam terminais. Falha técnica/transiente
+// de rede/infra, não uma decisão semântica sobre o pedido do usuário: a
+// clarification row original precisa sobreviver intacta para que a MESMA
+// resposta possa ser reenviada quando o Calendar voltar.
+await check(
+  '43. clarification turn: calendar_unavailable -> TRANSITÓRIO — zero consume/advance/replace, clarification original preservada',
+  async () => {
+    setHandlers({
+      getRuntimeState: async () => ({
+        status: 'found',
+        value: {
+          stateId: 'state-create-event',
+          kind: 'clarification',
+          state: fixtureConversationState({ field: 'duration', text: 'x' }),
+        },
+      }),
+      resolveClarificationTurn: async () => ({ status: 'ready', intent: createEventIntentReady() }),
+    });
+    calendarAvailabilityHandlers.checkCalendarEventAvailability = async () => ({ status: 'unavailable' });
+
+    const result = await resolveClarificationConversationalTurn('1 hora', NOW, EXPIRATIONS, TIMEZONE);
+
+    assert.deepEqual(result, { status: 'calendar_unavailable' });
+    // storageHandlers.consumeRuntimeState/advanceRuntimeState/
+    // replaceRuntimeState continuam "neverCalled" (default de
+    // setHandlers) — se o código chamasse qualquer um deles, este teste
+    // já teria lançado antes de chegar aqui.
+  },
+);
+
+await check(
+  '43b. depois de calendar_unavailable, repetir a MESMA resposta funciona quando o Calendar volta (freeBusy livre -> proposal_saved via advance)',
+  async () => {
+    // Simula duas chamadas separadas ao integrador com a MESMA resposta
+    // textual — a primeira vê o Calendar indisponível (não persiste
+    // nada); a segunda, sobre a MESMA clarification row (nunca consumida
+    // pela primeira), vê o Calendar disponível e segue o fluxo normal.
+    let advanceCalls = 0;
+    const stableClarificationState = fixtureConversationState({ field: 'duration', text: 'x' });
+    setHandlers({
+      getRuntimeState: async () => ({
+        status: 'found',
+        value: { stateId: 'state-retry', kind: 'clarification', state: stableClarificationState },
+      }),
+      resolveClarificationTurn: async () => ({ status: 'ready', intent: createEventIntentReady() }),
+    });
+    calendarAvailabilityHandlers.checkCalendarEventAvailability = async () => ({ status: 'unavailable' });
+
+    const firstAttempt = await resolveClarificationConversationalTurn('1 hora', NOW, EXPIRATIONS, TIMEZONE);
+    assert.deepEqual(firstAttempt, { status: 'calendar_unavailable' });
+
+    // "Calendar voltou" — mesma resposta, mesma clarification row (nunca
+    // tocada pela tentativa anterior, ver getRuntimeState acima, que
+    // continua devolvendo a MESMA `stableClarificationState`).
+    calendarAvailabilityHandlers.checkCalendarEventAvailability = async () => ({ status: 'available' });
+    storageHandlers.advanceRuntimeState = async (expectedStateId, next) => {
+      advanceCalls++;
+      assert.equal(expectedStateId, 'state-retry');
+      return { status: 'advanced', value: { stateId: 'new-id', kind: next.kind, state: next.state } };
+    };
+
+    const secondAttempt = await resolveClarificationConversationalTurn('1 hora', NOW, EXPIRATIONS, TIMEZONE);
+
+    assert.equal(secondAttempt.status, 'proposal_saved');
+    assert.deepEqual(secondAttempt.action, EXPECTED_CALENDAR_EVENT_ACTION);
+    assert.equal(advanceCalls, 1);
+  },
+);
+
+// --- Regressões (27-32) ------------------------------------------------
+
+await check(
+  '44. regressão: create_task (2) e query_calendar (27-30) continuam idênticos após o branch de create_event ser adicionado',
+  async () => {
+    // Reexecuta exatamente os dois cenários já cobertos pelos testes 2 e
+    // 27, provando que o novo branch `create_event` (inserido ANTES de
+    // buildProposedAction, e DEPOIS do desvio de query_calendar) nunca
+    // intercepta os outros intentTypes.
+    setHandlers({
+      getRuntimeState: async () => ({ status: 'not_found' }),
+      replaceRuntimeState: async (next) => ({
+        status: 'saved',
+        value: { stateId: 'new-id', kind: next.kind, state: next.state },
+      }),
+    });
+    const taskResult = await resolveFirstConversationalTurn(readyProposableIntent, NOW, EXPIRATIONS, TIMEZONE);
+    assert.equal(taskResult.status, 'proposal_saved');
+    assert.equal(taskResult.action.actionType, 'create_local_task');
+
+    setHandlers({ getRuntimeState: async () => ({ status: 'not_found' }) });
+    calendarHandlers.resolveCalendarQuery = async () => ({ status: 'available', scope: 'day' });
+    const queryResult = await resolveFirstConversationalTurn(queryCalendarIntentReady, NOW, EXPIRATIONS, TIMEZONE);
+    assert.deepEqual(queryResult, { status: 'calendar_information', result: { status: 'available', scope: 'day' } });
+    // calendarAvailabilityHandlers continua "neverCalled" nos dois casos
+    // acima — prova que nem create_task nem query_calendar passam pelo
+    // novo branch de create_event.
+  },
+);
+
+await check(
+  '45. nenhuma Calendar write API aparece no código real (conversation-turn.ts e calendar-event-availability.ts)',
+  () => {
+    const files = [
+      '../../src/lib/conversation/conversation-turn.ts',
+      '../../src/lib/conversation/calendar-event-availability.ts',
+    ];
+    const forbidden = ['POST', 'events.insert', 'events.update', 'events.patch', 'calendar/v3/calendars', '.insert(', '.update('];
+    for (const relativePath of files) {
+      const codeOnly = readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), 'utf8')
+        .split('\n')
+        .map((line) => line.replace(/(?<!:)\/\/.*$/, ''))
+        .join('\n');
+      for (const token of forbidden) {
+        assert.ok(!codeOnly.includes(token), `token proibido encontrado em ${relativePath}: ${token}`);
+      }
+    }
+  },
+);
+
+await check('46. checkCalendarEventAvailability nunca vaza intervalos brutos — action final não tem campo busy/intervals', () => {
+  assert.deepEqual(Object.keys(EXPECTED_CALENDAR_EVENT_ACTION.event).sort(), [
+    'description',
+    'end',
+    'reminderMinutesBeforeStart',
+    'start',
+    'timezone',
+    'title',
+  ]);
+});
 
 // --- Resumo -------------------------------------------------------------
 

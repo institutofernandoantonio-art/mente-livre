@@ -55,6 +55,11 @@ const CALENDAR_HOUR_BUSY_TEXT = 'Esse horário está ocupado na sua agenda.';
 const CALENDAR_HOUR_AVAILABLE_TEXT = 'Não encontrei compromisso nesse horário.';
 const CALENDAR_UNSUPPORTED_TEXT = 'Por enquanto, só consigo checar sua agenda para hoje ou amanhã.';
 const CALENDAR_ERROR_TEXT = 'Não consegui consultar seu Google Calendar agora.';
+// Subfase 2 da criação de compromissos no Google Calendar — mensagens
+// mínimas, só para o switch exaustivo compilar; a UI completa da proposta
+// de create_calendar_event (preview visual) fica para subfase própria.
+const SCHEDULE_CONFLICT_TEXT = 'Você já tem um compromisso nesse horário.';
+const CALENDAR_UNAVAILABLE_TEXT = 'Não consegui confirmar sua disponibilidade agora. Tente novamente.';
 
 function assistantText(text: string): UiMessageContent {
   return { role: 'assistant', kind: 'text', text };
@@ -109,7 +114,13 @@ export function mapPresentationBootstrap(state: ConversationPresentationState): 
 // --- Envio → mensagem de resposta + se o input deve ser limpo --------------
 //
 // `clearInput`: `needs_input`/`conflict`/`error` preservam o texto (o
-// usuário pode querer editar/reenviar); todos os outros limpam.
+// usuário pode querer editar/reenviar); `calendar_unavailable` também
+// preserva — é deliberadamente TRANSITÓRIO na clarificação (Subfase 2 da
+// criação de compromissos no Google Calendar: a clarification row
+// original nunca é consumida/avançada, exatamente para permitir reenviar
+// a MESMA resposta quando o Calendar voltar) — manter o texto já digitado
+// pronto para reenvio é a extensão natural dessa mesma decisão. Todos os
+// outros limpam.
 
 export type EntryResultUiEffect = {
   message: UiMessageContent;
@@ -124,6 +135,12 @@ export function mapEntryResultToUiEffect(result: ConversationEntryResult): Entry
       return { message: assistantProposal(result.action), clearInput: true };
     case 'calendar_information':
       return { message: assistantText(calendarInformationText(result.result)), clearInput: true };
+    case 'schedule_conflict':
+      return { message: assistantText(SCHEDULE_CONFLICT_TEXT), clearInput: true };
+    case 'calendar_unavailable':
+      // clearInput: false — deliberado (ver comentário acima): a mesma
+      // resposta digitada pode ser reenviada assim que o Calendar voltar.
+      return { message: assistantText(CALENDAR_UNAVAILABLE_TEXT), clearInput: false };
     case 'confirmed':
       // `result.itemId` deliberadamente nunca lido aqui — a UI não expõe
       // nem depende dele (ver cabeçalho do Client Component).

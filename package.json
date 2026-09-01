@@ -29,7 +29,8 @@
     "test:calendar-revoke-unused-grants": "node tests/google/revoke-unused-grants-migration.test.mjs",
     "test:calendar-revoke-maintenance-privileges": "node tests/google/revoke-maintenance-privileges-migration.test.mjs",
     "test:timezone": "node --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/timezone.test.mjs",
-    "test:calendar-event-proposal": "node --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/calendar-event-proposal.test.mjs"
+    "test:calendar-event-proposal": "node --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/calendar-event-proposal.test.mjs",
+    "test:calendar-event-availability": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/calendar-event-availability.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

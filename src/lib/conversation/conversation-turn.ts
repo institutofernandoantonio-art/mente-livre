@@ -4,6 +4,8 @@ import type { StructuredIntent } from './types';
 import { createConversationState } from './state';
 import { buildProposedAction } from './proposed-action';
 import type { ProposedAction } from './proposed-action';
+import { buildCreateCalendarEventAction, type CreateEventIntent } from './calendar-event-proposal';
+import { checkCalendarEventAvailability } from './calendar-event-availability';
 import { createProposalState, type ProposalState } from './proposal-state';
 import { resolveClarificationTurn } from './orchestration';
 import { resolveCalendarQuery, type CalendarQueryResult } from './calendar-query';
@@ -156,6 +158,69 @@ import type { RuntimeStateAdvanceResult } from './runtime-state-storage';
 // `ClarificationTurnResult`, da Reference Resolution) — os dois nomes de
 // `not_found` do resto da pilha nunca aparecem juntos sob o mesmo rótulo
 // aqui, exatamente para não confundir um com o outro.
+//
+// --- create_event: materialização + freeBusy ANTES de propor (Subfase 2
+// da criação de compromissos no Google Calendar) -----------------------
+//
+// Espelha exatamente o desvio já existente de `query_calendar` (ver acima)
+// — `create_event` também nunca passa por `buildProposedAction`: usa
+// `attemptCreateEvent()` (privada, abaixo), que chama SEMPRE
+// `buildCreateCalendarEventAction(intent, now, timezone)` (Subfase 1,
+// `./calendar-event-proposal.ts`) e, só se o resultado for `built`,
+// `checkCalendarEventAvailability(start, end)` (`./calendar-event-
+// availability.ts`) — a MESMA janela `[start, end]` do `ProposedAction`
+// materializado, nunca arredondada/ampliada, nunca uma segunda busca de
+// horário. Nenhuma lógica temporal é reimplementada aqui — este módulo só
+// orquestra a ORDEM (build → freeBusy → decidir) e a PERSISTÊNCIA
+// (replace no primeiro turno, advance+CAS na clarificação), exatamente
+// como já faz para `create_task`.
+//
+// Mapeamento de status do builder (documentado aqui por ser uma decisão
+// desta subfase, não do builder em si — ver `attemptCreateEvent`):
+// - `not_materializable` E `invalid` colapsam no MESMO status externo já
+//   existente `not_materializable`. `invalid` (dois fatos já resolvidos do
+//   intent que se contradizem, ver calendar-event-proposal.ts) tecnicamente
+//   carrega uma causa mais forte que "falta informação", mas o resultado
+//   prático é idêntico (não dá para propor nada agora, sem inventar dado)
+//   e, ao contrário de um `error` técnico/transiente, o problema é do
+//   PRÓPRIO intent — uma nova resposta nunca "conserta" o mesmo intent
+//   contraditório, então precisa ser TERMINAL (consumido na clarificação),
+//   exatamente como `not_materializable` já é. Reaproveitar `error` para
+//   isso quebraria o significado já estabelecido desse status neste
+//   arquivo (falha técnica, NUNCA consumida) — por isso os dois builder-
+//   failures colapsam no status já existente, em vez de um nome novo ou
+//   de `error`.
+// - `busy` do freeBusy vira `schedule_conflict`: zero ProposalState, zero
+//   escrita de runtime no primeiro turno; TERMINAL (consome) na
+//   clarificação — a proposta já foi tentada e rejeitada por um fato
+//   externo (agenda ocupada), não por falta de informação; não há
+//   resolvedor de "tente outro horário" nesta subfase (fora de escopo:
+//   `temporal_window` clarification).
+// - `unavailable` (freeBusy retornou null/erro) vira `calendar_unavailable`:
+//   zero write no primeiro turno (mesmo tratamento de `schedule_conflict`
+//   ali) — mas na clarificação é deliberadamente TRANSITÓRIO, não
+//   terminal: nunca `consumeAndReturn`, nunca `advanceRuntimeState`, nunca
+//   `replaceRuntimeState`. É uma falha TÉCNICA de rede/infra no momento da
+//   consulta, não uma decisão semântica sobre o pedido do usuário — a
+//   clarification row original (com o `pendingIntent` já resolvido pela
+//   resposta que acabou de chegar) precisa sobreviver intacta, exatamente
+//   como já chegou de `getRuntimeState` neste turno, para que o MESMO
+//   texto de resposta ("1 hora") possa ser reenviado depois, quando o
+//   Calendar voltar, sem o usuário precisar repetir a mensagem inteira.
+//   Nenhuma versão parcialmente resolvida do intent é persistida aqui —
+//   a row simplesmente não é tocada nesta subfase. Nunca assumido como
+//   livre nem como ocupado; zero retry/requery dentro do mesmo turno.
+// - Corrida (freeBusy livre, mas o `replace`/`advance` final devolve
+//   `conflict`): tratado pelo MESMO `translateAdvanceResult`/checagem de
+//   `saved` já usados por `create_task` — `conflict` nunca dispara uma
+//   segunda consulta ao Calendar nem um novo `build`, mesma disciplina
+//   anti-TOCTOU de sempre.
+//
+// Este módulo continua NUNCA chamando a API do Google diretamente —
+// `checkCalendarEventAvailability` é a única fronteira, e ela reaproveita
+// `getGoogleCalendarBusyTimes` exatamente como já está (zero escopo OAuth
+// novo, zero admin/service-role novo). Nenhum evento é criado nesta
+// subfase — `proposal-turn.ts` continua sem qualquer Calendar write.
 // ============================================================================
 
 // --- Resultados públicos -------------------------------------------------
@@ -201,6 +266,8 @@ export type FirstTurnResult =
   | { status: 'clarification_saved'; question: string }
   | { status: 'proposal_saved'; action: ProposedAction }
   | { status: 'calendar_information'; result: CalendarQueryResult }
+  | { status: 'schedule_conflict' }
+  | { status: 'calendar_unavailable' }
   | { status: 'already_active' }
   | { status: 'unsupported' }
   | { status: 'not_materializable' }
@@ -210,6 +277,8 @@ export type ClarificationTurnPersistenceResult =
   | { status: 'clarification_saved'; question: string }
   | { status: 'proposal_saved'; action: ProposedAction }
   | { status: 'calendar_information'; result: CalendarQueryResult }
+  | { status: 'schedule_conflict' }
+  | { status: 'calendar_unavailable' }
   | { status: 'no_active_runtime_state' }
   | { status: 'runtime_expired' }
   | { status: 'proposal_pending' }
@@ -220,6 +289,55 @@ export type ClarificationTurnPersistenceResult =
   | { status: 'not_materializable' }
   | { status: 'conflict' }
   | { status: 'error' };
+
+// --- create_event: build + freeBusy, sem decidir persistência --------------
+//
+// Compartilhado por primeiro turno e clarificação — as DUAS únicas
+// diferenças entre eles (replace vs advance/consume) ficam nos call sites
+// abaixo, nunca aqui. Ver "create_event: materialização + freeBusy" no
+// cabeçalho do arquivo para o racional completo de cada status.
+type CreateEventAttemptResult =
+  | { status: 'not_materializable' }
+  | { status: 'schedule_conflict' }
+  | { status: 'calendar_unavailable' }
+  // Só a guarda de tipo estruturalmente inalcançável abaixo — nunca o
+  // builder-invalid (que colapsa em not_materializable, ver cabeçalho).
+  | { status: 'error' }
+  | { status: 'available'; action: Extract<ProposedAction, { actionType: 'create_calendar_event' }> };
+
+async function attemptCreateEvent(
+  intent: CreateEventIntent,
+  now: number,
+  timezone: string,
+): Promise<CreateEventAttemptResult> {
+  const buildResult = buildCreateCalendarEventAction(intent, now, timezone);
+
+  if (buildResult.status === 'not_materializable' || buildResult.status === 'invalid') {
+    return { status: 'not_materializable' };
+  }
+
+  const { action } = buildResult;
+  if (action.actionType !== 'create_calendar_event') {
+    // Estruturalmente inalcançável: buildCreateCalendarEventAction só
+    // constrói esta variante quando status é 'built' — guarda de tipo
+    // exigida só porque o retorno é tipado como ProposedAction (a união
+    // inteira), nunca a variante já estreitada.
+    return { status: 'error' };
+  }
+
+  // Janela EXATA do ProposedAction materializado — nunca arredondada,
+  // nunca ampliada, nunca uma segunda busca por outro horário.
+  const availability = await checkCalendarEventAvailability(action.event.start, action.event.end);
+
+  switch (availability.status) {
+    case 'busy':
+      return { status: 'schedule_conflict' };
+    case 'unavailable':
+      return { status: 'calendar_unavailable' };
+    case 'available':
+      return { status: 'available', action };
+  }
+}
 
 // --- Primeiro turno (sem runtime state ainda) -------------------------
 
@@ -258,6 +376,34 @@ export async function resolveFirstConversationalTurn(
     // Zero write de runtime: nada fica pendente depois desta resposta.
     const result = await resolveCalendarQuery(intent, now, timezone);
     return { status: 'calendar_information', result };
+  }
+
+  if (intent.intentType === 'create_event') {
+    const attempt = await attemptCreateEvent(intent, now, timezone);
+
+    switch (attempt.status) {
+      case 'not_materializable':
+        return { status: 'not_materializable' };
+      case 'error':
+        return { status: 'error' };
+      case 'schedule_conflict':
+        return { status: 'schedule_conflict' };
+      case 'calendar_unavailable':
+        return { status: 'calendar_unavailable' };
+      case 'available': {
+        const proposalId = crypto.randomUUID();
+        const proposalState: ProposalState = createProposalState(
+          attempt.action,
+          proposalId,
+          now,
+          expirations.proposalExpiresAt,
+        );
+        const saved = await replaceRuntimeState({ kind: 'proposal', state: proposalState }, now);
+        return saved.status === 'saved'
+          ? { status: 'proposal_saved', action: attempt.action }
+          : { status: 'error' };
+      }
+    }
   }
 
   const buildResult = buildProposedAction(intent);
@@ -365,6 +511,53 @@ export async function resolveClarificationConversationalTurn(
         // não tem sucessor, a clarification row não deve sobreviver a ela.
         const result = await resolveCalendarQuery(turnResult.intent, now, timezone);
         return consumeAndReturn(expectedStateId, now, { status: 'calendar_information', result });
+      }
+
+      if (turnResult.intent.intentType === 'create_event') {
+        const attempt = await attemptCreateEvent(turnResult.intent, now, timezone);
+
+        switch (attempt.status) {
+          case 'not_materializable':
+            // Terminal — ver "CONSUME: terminal sem sucessor" no cabeçalho.
+            return consumeAndReturn(expectedStateId, now, { status: 'not_materializable' });
+          case 'error':
+            // Guarda estruturalmente inalcançável (ver attemptCreateEvent)
+            // — falha técnica genuína, nunca consumida, mesma disciplina
+            // já usada para `error` de orchestration neste arquivo.
+            return { status: 'error' };
+          case 'schedule_conflict':
+            // Terminal — a proposta já foi tentada e rejeitada por um fato
+            // externo (agenda ocupada); não há resolvedor de "outro
+            // horário" nesta subfase.
+            return consumeAndReturn(expectedStateId, now, { status: 'schedule_conflict' });
+          case 'calendar_unavailable':
+            // TRANSITÓRIO, nunca terminal — ver "unavailable" no
+            // cabeçalho do arquivo. Zero consume, zero advance, zero
+            // replace: a clarification row original (já com o
+            // pendingIntent resolvido pela resposta deste turno)
+            // permanece exatamente como veio de getRuntimeState, para que
+            // a MESMA resposta possa ser reenviada quando o Calendar
+            // voltar. Nenhuma versão parcial é persistida aqui.
+            return { status: 'calendar_unavailable' };
+          case 'available': {
+            const proposalId = crypto.randomUUID();
+            const proposalState: ProposalState = createProposalState(
+              attempt.action,
+              proposalId,
+              now,
+              expirations.proposalExpiresAt,
+            );
+            const advanceResult = await advanceRuntimeState(
+              expectedStateId,
+              { kind: 'proposal', state: proposalState },
+              now,
+            );
+            return translateAdvanceResult(advanceResult, {
+              status: 'proposal_saved',
+              action: attempt.action,
+            });
+          }
+        }
       }
 
       const buildResult = buildProposedAction(turnResult.intent);

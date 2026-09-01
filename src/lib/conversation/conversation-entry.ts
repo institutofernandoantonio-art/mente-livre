@@ -99,6 +99,14 @@ export type ConversationEntryResult =
   | { status: 'clarification_required'; question: string }
   | { status: 'proposal_ready'; action: ProposedAction }
   | { status: 'calendar_information'; result: CalendarQueryResult }
+  // Subfase 2 da criação de compromissos no Google Calendar:
+  // `schedule_conflict` (freeBusy encontrou ocupação na janela exata do
+  // ProposedAction) e `calendar_unavailable` (Calendar não conectado ou
+  // falha técnica na consulta) — nenhum dos dois carrega dado do Google
+  // (nem intervalos, nem tokens); ver conversation-turn.ts para o
+  // mapeamento completo.
+  | { status: 'schedule_conflict' }
+  | { status: 'calendar_unavailable' }
   | { status: 'confirmed'; itemId: string }
   | { status: 'cancelled' }
   | { status: 'needs_input' }
@@ -127,6 +135,10 @@ function translateFirstTurnResult(result: FirstTurnResult): ConversationEntryRes
       return { status: 'proposal_ready', action: result.action };
     case 'calendar_information':
       return { status: 'calendar_information', result: result.result };
+    case 'schedule_conflict':
+      return { status: 'schedule_conflict' };
+    case 'calendar_unavailable':
+      return { status: 'calendar_unavailable' };
     case 'already_active':
       // Corrida: a leitura classificadora deste dispatcher viu ausência/
       // expiração, mas outra requisição criou um runtime state ativo
@@ -149,6 +161,10 @@ function translateClarificationResult(result: ClarificationTurnPersistenceResult
       return { status: 'proposal_ready', action: result.action };
     case 'calendar_information':
       return { status: 'calendar_information', result: result.result };
+    case 'schedule_conflict':
+      return { status: 'schedule_conflict' };
+    case 'calendar_unavailable':
+      return { status: 'calendar_unavailable' };
     case 'ambiguous':
     case 'unrecognized':
     case 'reference_not_found':

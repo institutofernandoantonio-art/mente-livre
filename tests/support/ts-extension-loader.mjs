@@ -71,6 +71,20 @@
 //    para o MESMO arquivo real, a partir de um diretório diferente) —
 //    nunca colidem.
 //
+//    `conversation-turn.ts` importa estaticamente
+//    `./calendar-event-availability` (que, através de `../google/calendar`,
+//    também depende de `next/headers`) — redirecionado para
+//    fake-calendar-event-availability.mjs, pelo MESMO motivo/racional de
+//    `./calendar-query` acima (controle direto de
+//    available/busy/unavailable, sem fabricar blocos ocupados). Mesmo
+//    cuidado de especificidade: um futuro
+//    tests/conversation/calendar-event-availability.test.mjs importaria o
+//    módulo real por `../../src/lib/conversation/calendar-event-
+//    availability.ts`, specifier distinto, nunca interceptado por este
+//    redirect. `buildCreateCalendarEventAction` (`./calendar-event-
+//    proposal`) NUNCA é redirecionado — é 100% puro (Subfase 1), carregado
+//    real nos testes, mesmo padrão já usado para `buildProposedAction`.
+//
 // API 100% nativa do Node (`node:module`), nenhuma dependência nova.
 const REDIRECTS = new Map([
   ['./runtime-state-storage', new URL('./fake-runtime-state-storage.mjs', import.meta.url).href],
@@ -83,6 +97,10 @@ const REDIRECTS = new Map([
   ['./conversation-entry', new URL('./fake-conversation-entry.mjs', import.meta.url).href],
   ['./calendar-query', new URL('./fake-calendar-query.mjs', import.meta.url).href],
   ['../google/calendar', new URL('./fake-google-calendar.mjs', import.meta.url).href],
+  [
+    './calendar-event-availability',
+    new URL('./fake-calendar-event-availability.mjs', import.meta.url).href,
+  ],
 ]);
 
 export async function resolve(specifier, context, nextResolve) {
