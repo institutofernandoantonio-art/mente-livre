@@ -265,6 +265,9 @@ check(
       // freeBusy + ProposalState — zero Calendar write, proposal-turn.ts
       // intocado):
       'src/lib/conversation/calendar-event-availability.ts',
+      // Subfase 3 (idempotência/claim atômico da execução — zero Calendar
+      // write, zero wiring em proposal-turn.ts):
+      'src/lib/conversation/calendar-event-claim.ts',
     ]);
     const changed = changedFilesUnder('src/lib/conversation/');
     for (const file of changed) {
