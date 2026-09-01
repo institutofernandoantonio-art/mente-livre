@@ -268,6 +268,9 @@ check(
       // Subfase 3 (idempotência/claim atômico da execução — zero Calendar
       // write, zero wiring em proposal-turn.ts):
       'src/lib/conversation/calendar-event-claim.ts',
+      // Subfase 4 (finalização atômica da execução — zero Calendar write,
+      // zero wiring em proposal-turn.ts):
+      'src/lib/conversation/calendar-event-finalize.ts',
     ]);
     const changed = changedFilesUnder('src/lib/conversation/');
     for (const file of changed) {
