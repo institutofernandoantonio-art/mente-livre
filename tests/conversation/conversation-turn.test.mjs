@@ -1391,6 +1391,41 @@ await check('46. checkCalendarEventAvailability nunca vaza intervalos brutos —
   ]);
 });
 
+// ============================================================================
+// SUBFASE 17 — `participants` não-vazio nunca bloqueia create_event
+// (integração ponta a ponta; a cobertura unitária de
+// evaluateClarification/collectMissingFields vive em clarification.test.mjs)
+// ============================================================================
+
+await check(
+  '47. fixture EXATO do bug real ("Ligar para Mota" com participante extraído) -> proposal_saved via replace, nunca clarification',
+  async () => {
+    let replaceCalls = 0;
+    let capturedNext = null;
+    setHandlers({
+      getRuntimeState: async () => ({ status: 'not_found' }),
+      replaceRuntimeState: async (next) => {
+        replaceCalls++;
+        capturedNext = next;
+        return { status: 'saved', value: { stateId: 'new-id', kind: next.kind, state: next.state } };
+      },
+      checkCalendarEventAvailability: async () => ({ status: 'available' }),
+    });
+
+    const intent = createEventIntentReady({
+      task: { kind: 'new_task', title: 'Ligar para Mota', description: null },
+      participants: [{ raw: 'Mota', resolvedId: null }],
+    });
+
+    const result = await resolveFirstConversationalTurn(intent, NOW, EXPIRATIONS, TIMEZONE);
+
+    assert.equal(result.status, 'proposal_saved', 'nunca deveria virar clarification_saved por causa de participants');
+    assert.equal(replaceCalls, 1);
+    assert.equal(capturedNext.kind, 'proposal');
+    assert.equal(capturedNext.state.action.event.title, 'Ligar para Mota');
+  },
+);
+
 // --- Resumo -------------------------------------------------------------
 
 const passed = results.filter((r) => r.pass).length;

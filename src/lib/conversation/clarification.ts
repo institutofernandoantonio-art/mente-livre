@@ -178,10 +178,28 @@ function collectMissingFields(intent: StructuredIntent): MissingField[] {
       if (!isDurationKnown(intent.duration)) {
         fields.push('duration');
       }
-      const hasUnresolvedParticipant = intent.participants.some((p) => p.resolvedId === null);
-      if (hasUnresolvedParticipant) {
-        fields.push('participant');
-      }
+      // `participants` NUNCA bloqueia `create_event` nesta V1 — decisão
+      // corrigida nesta subfase, não um descuido. Motivo: por contrato do
+      // prompt (ver intent-extraction.ts), <ParticipantRef>.resolvedId é
+      // SEMPRE null (não existe resolução de contatos no projeto), então a
+      // checagem antiga (`resolvedId === null` -> pedir 'participant') era
+      // um beco sem saída estrutural — disparava para QUALQUER
+      // `participants` não-vazio, sempre, e `orchestration.ts` não tem
+      // nenhum resolver para o campo 'participant' (cai em `unsupported`,
+      // terminal, sem sucessor). Na prática isso quebrava frases comuns em
+      // que a NLU (sem exemplo/regra de desambiguação no prompt) extrai
+      // como "participante" um nome que na verdade é só o OBJETO da ação/
+      // título ("ligar para Mota", "falar com Ricardo", "reunião com
+      // Paulo") — nenhuma dessas frases pede para convidar ninguém.
+      // `intent.participants` continua existindo no StructuredIntent (a
+      // NLU pode continuar preenchendo), mas nunca é lido por
+      // `calendar-event-proposal.ts` nem por `../google/calendar.ts` — o
+      // evento final nunca carrega attendees, com ou sem esta checagem.
+      // Convites reais ficam fora de escopo até a V1 ganhar suporte a
+      // attendees; quando isso acontecer, a regra certa precisará
+      // distinguir "convidado pedido explicitamente" de "nome mencionado
+      // como conteúdo da ação" — uma distinção que este código, sozinho,
+      // não tem como fazer hoje.
       return fields;
     }
 

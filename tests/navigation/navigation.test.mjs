@@ -305,6 +305,11 @@ check(
       // virarem `fixed`/outra data silenciosamente; zero mudança em
       // qualquer outro módulo conversacional):
       'src/lib/conversation/intent-extraction.ts',
+      // Subfase 17 (correção do bug de "participant" bloqueando
+      // create_event — `participants` não-vazio nunca mais gera
+      // clarification, já que attendees estão fora da V1 e o campo nunca
+      // é lido em nenhum outro lugar do pipeline):
+      'src/lib/conversation/clarification.ts',
     ]);
     const changed = changedFilesUnder('src/lib/conversation/');
     for (const file of changed) {
