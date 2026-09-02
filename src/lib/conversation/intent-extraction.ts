@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { isValidStructuredIntent } from './runtime-state-validation';
-import type { StructuredIntent } from './types';
+import type { StructuredIntent, TemporalWindow } from './types';
 
 // ============================================================================
 // Intent extraction — a fronteira que transforma texto livre do usuário em
@@ -65,7 +65,162 @@ import type { StructuredIntent } from './types';
 // HTTP não-ok, ou o ENVELOPE HTTP do provider não tem o shape esperado
 // (não é sobre o que o modelo disse, é sobre a chamada em si ter
 // funcionado). Nenhum dos dois vaza corpo bruto do provider.
-// ============================================================================
+//
+// --- Guard determinístico: coerência "hoje"/"amanhã" explícitos ----------
+// (Subfase 13 da criação de compromissos no Google Calendar — causa raiz
+// comprovada por reprodução real: a mesma frase "Agende amanhã às 17h30
+// uma reunião de teste por 30 minutos." produziu, em 3 chamadas reais
+// idênticas à Anthropic, 2 respostas corretas (`relative_day`/`tomorrow`/
+// 17:30) e 1 resposta errada (`fixed`, dia 03/09 em vez de 02/09, hora
+// civil local tratada como se já fosse UTC) — ver relatório da Subfase 13
+// para o histórico completo.)
+//
+// Princípio: LLM interpreta -> CÓDIGO DETERMINÍSTICO valida -> só depois o
+// intent é aceito. Este guard NUNCA corrige/reescreve o intent (isso
+// criaria um segundo parser temporal paralelo à NLU) — ele só COMPARA o
+// texto original com o `TemporalWindow` já produzido e, em caso de
+// divergência explícita, derruba a extração inteira para `invalid` (o
+// mesmo status já usado para "o modelo respondeu algo que não é um
+// StructuredIntent válido segundo o contrato real" — ver seção acima).
+// `invalid` já é, em todo o pipeline (`conversation-entry.ts`), um
+// caminho seguro e terminal: nunca chega a `resolveCalendarQuery`,
+// `attemptCreateEvent`, freeBusy, `ProposedAction`/`ProposalState`, claim
+// ou Google write.
+//
+// Escopo MÍNIMO e deliberado (ver relatório para o porquê de cada
+// exclusão): só reconhece "hoje"/"amanhã"/"amanha" (case-insensitive,
+// sem acento) SEGUIDO ou PRECEDIDO por um horário explícito no texto
+// original nos formatos já usados no produto ("17h", "17h30", "17:30",
+// com ou sem "às"/"as" antes). Qualquer outra expressão temporal ("fim da
+// tarde", "depois de amanhã", "próxima semana", dias da semana, datas por
+// extenso) continua 100% responsabilidade da NLU/Clarification Policy
+// existente — este guard nunca tenta entendê-las, sempre `not_applicable`
+// para elas. Dia relativo SEM horário explícito ("amanhã", sozinho)
+// também é `not_applicable` — nunca inventa nem exige um horário.
+//
+// Aplica-se a QUALQUER `intentType` que carregue um campo `temporalWindow`
+// (`create_task`, `create_event`, `plan_task`, `query_calendar`,
+// `suggest_time`, `reschedule_event`) — nunca dois guards diferentes para
+// `query_calendar` e `create_event`. `set_reminder` usa um campo
+// diferente (`reminderWindow`) e fica fora desta primeira versão (ver
+// limitações no relatório da subfase); `capture_thought`/`cancel_event`/
+// `request_followup`/`conversational_question` não têm nenhum campo de
+// janela temporal e são sempre `not_applicable` aqui.
+//
+// Zero I/O, zero `Date.now()`, zero Google, zero Supabase, zero Anthropic,
+// zero mutação do intent recebido — só compara texto vs. intent já
+// produzido, os dois já em mãos de quem chama.
+export type ExplicitRelativeDateTimeConsistency = 'valid' | 'mismatch' | 'not_applicable';
+
+type ExplicitDayTime = { day: 'today' | 'tomorrow'; hour: number; minute: number };
+
+// Remove acentos (NFD + descarte dos diacríticos combinantes) só para
+// comparação — nunca usado para nada além de reconhecer "amanhã"/"amanha"
+// e "às"/"as" de forma equivalente. O texto original de quem chama nunca
+// é alterado por este módulo.
+function stripDiacritics(value: string): string {
+  return value.normalize('NFD').replace(/\p{Diacritic}/gu, '');
+}
+
+// "depois de amanhã" (dia SEGUINTE a amanhã) nunca deve ser confundido com
+// o "amanhã" simples que este guard entende — mascarado ANTES da busca do
+// dia, com o mesmo número de caracteres (nunca desloca posições), para que
+// o "amanha" embutido nele jamais conte como um match de `tomorrow`.
+const DAY_AFTER_TOMORROW_RE = /\bdepois de amanha\b/g;
+
+// Extrai, SOMENTE do texto original, um par (dia relativo, hora civil)
+// quando ambos aparecem de forma explícita e inequívoca — nunca um
+// palpite. `null` significa "este guard não tem opinião sobre este
+// texto" (ambíguo, ausente, ou fora do escopo mínimo documentado acima).
+function extractExplicitDayTime(text: string): ExplicitDayTime | null {
+  const normalized = stripDiacritics(text.toLowerCase()).replace(DAY_AFTER_TOMORROW_RE, (match) =>
+    ' '.repeat(match.length),
+  );
+
+  const hasToday = /\bhoje\b/.test(normalized);
+  const hasTomorrow = /\bamanha\b/.test(normalized);
+
+  // Nem um nem outro, OU os dois ao mesmo tempo (frase ambígua, ex.: "hoje
+  // ou amanhã") -> sem opinião, nunca um palpite entre os dois.
+  if (hasToday === hasTomorrow) {
+    return null;
+  }
+  const day: 'today' | 'tomorrow' = hasToday ? 'today' : 'tomorrow';
+
+  // Formatos cobertos, do mais específico ao mais genérico: "17h30",
+  // "17:30", "17h" sozinho (minuto implícito 0). "às"/"as" nunca é exigido
+  // pela regex — é só um prefixo opcional do português. Faixa 0-23/0-59 já
+  // embutida na própria regex (nunca aceita, por ex., "25h" como hora).
+  const hourMinuteMatch = normalized.match(/\b([01]?\d|2[0-3])h([0-5]\d)\b/);
+  const colonMatch = normalized.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  const bareHourMatch = normalized.match(/\b([01]?\d|2[0-3])h(?!\d)/);
+  const match = hourMinuteMatch ?? colonMatch ?? bareHourMatch;
+  if (!match) {
+    return null;
+  }
+
+  const hour = Number(match[1]);
+  const minute = match[2] === undefined ? 0 : Number(match[2]);
+
+  return { day, hour, minute };
+}
+
+// Único ponto que sabe QUAIS `intentType` carregam um `TemporalWindow` a
+// validar aqui — switch explícito, nunca `as`/acesso solto a uma
+// propriedade que nem todo membro da união tem (mesmo padrão já usado em
+// clarification.ts). `null` = "este intentType está fora do escopo deste
+// guard" (nunca um erro).
+function extractTemporalWindowForGuard(intent: StructuredIntent): TemporalWindow | null {
+  switch (intent.intentType) {
+    case 'create_task':
+    case 'create_event':
+    case 'plan_task':
+    case 'query_calendar':
+    case 'suggest_time':
+    case 'reschedule_event':
+      return intent.temporalWindow;
+    case 'capture_thought':
+    case 'cancel_event':
+    case 'set_reminder':
+    case 'request_followup':
+    case 'conversational_question':
+      return null;
+  }
+}
+
+// API pública do guard — pura, sem I/O, comparando só texto vs. intent já
+// produzidos por quem chama (ver cabeçalho desta seção para o contrato
+// completo). `mismatch` é a única saída que deve derrubar a extração.
+export function validateExplicitRelativeDateTimeConsistency(
+  text: string,
+  intent: StructuredIntent,
+): ExplicitRelativeDateTimeConsistency {
+  const explicit = extractExplicitDayTime(text);
+  if (explicit === null) {
+    return 'not_applicable';
+  }
+
+  const window = extractTemporalWindowForGuard(intent);
+  if (window === null) {
+    return 'not_applicable';
+  }
+
+  const resolved = window.resolved;
+  if (resolved.kind !== 'relative_day') {
+    // `fixed`/`anchored_start`/`next_free_slot`/`relative_to_event`/
+    // `unresolved` nunca podem substituir silenciosamente um "hoje"/
+    // "amanhã às X" explícito no texto original — ver causa raiz da
+    // Subfase 13.
+    return 'mismatch';
+  }
+  if (resolved.day !== explicit.day || resolved.time === null) {
+    return 'mismatch';
+  }
+  if (resolved.time.hour !== explicit.hour || resolved.time.minute !== explicit.minute) {
+    return 'mismatch';
+  }
+  return 'valid';
+}
 
 export type ExtractIntentResult =
   | { status: 'extracted'; intent: StructuredIntent }
@@ -177,6 +332,8 @@ Nunca marque como "stated" algo que você inferiu, nem invente um "value" para a
 - {"kind":"relative_to_event","anchor":"before"|"after","eventReference":<EventReference>} — relativo a outro evento/tarefa.
 - {"kind":"unresolved"} — nenhuma informação temporal suficiente para os outros formatos.
 
+Regra obrigatória sobre "hoje"/"amanhã": quando o texto do usuário disser explicitamente "hoje às X" ou "amanhã às X" (com horário explícito), o resultado DEVE usar {"kind":"relative_day","day":"today"|"tomorrow","time":{"hour":X,...}} — NUNCA converta essas expressões para "fixed" nem para "anchored_start". "fixed" só deve ser usado para uma referência temporal já absoluta e apropriada ao contrato (ex.: uma data completa dita pelo usuário, "10 de outubro às 14h"), nunca como substituto de "hoje"/"amanhã".
+
 Regras gerais, sempre válidas:
 - Nunca invente informação que não está no texto nem é dedução razoável e explícita a partir dele.
 - Nunca decida se uma ação está confirmada, autorizada, ou deve ser executada — isso não é sua função.
@@ -281,6 +438,16 @@ export async function extractStructuredIntent(text: string, now: number): Promis
   // Única fonte de verdade sobre o shape — nunca `as StructuredIntent`,
   // nunca um segundo validator manual escrito aqui.
   if (!isValidStructuredIntent(parsed)) {
+    return { status: 'invalid' };
+  }
+
+  // Guard determinístico (Subfase 13) — depois do shape validado, antes de
+  // entregar ao dispatcher. `mismatch` reaproveita o mesmo `invalid` já
+  // usado para "o modelo respondeu algo que não é um StructuredIntent
+  // válido" (ver seção "Guard determinístico" acima) — nunca um status
+  // novo, nunca uma segunda chamada, nunca uma correção automática do
+  // intent.
+  if (validateExplicitRelativeDateTimeConsistency(text, parsed) === 'mismatch') {
     return { status: 'invalid' };
   }
 

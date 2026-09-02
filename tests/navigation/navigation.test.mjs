@@ -300,6 +300,11 @@ check(
       // proposal-turn.ts/conversation-entry.ts/presentation-ui.ts ganham
       // diff de novo, agora no ramo `confirmed` de create_calendar_event:
       'src/lib/conversation/calendar-event-confirmation.ts',
+      // Subfase 13 (guard determinístico de coerência temporal na
+      // fronteira da NLU — impede "hoje"/"amanhã às X" explícitos de
+      // virarem `fixed`/outra data silenciosamente; zero mudança em
+      // qualquer outro módulo conversacional):
+      'src/lib/conversation/intent-extraction.ts',
     ]);
     const changed = changedFilesUnder('src/lib/conversation/');
     for (const file of changed) {

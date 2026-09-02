@@ -18,7 +18,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { extractStructuredIntent } from '../../src/lib/conversation/intent-extraction.ts';
+import {
+  extractStructuredIntent,
+  validateExplicitRelativeDateTimeConsistency,
+} from '../../src/lib/conversation/intent-extraction.ts';
 
 const results = [];
 function record(name, pass, detail) {
@@ -347,6 +350,337 @@ await check('17b. API key nunca aparece no corpo da requisição (só no header)
   const rawBody = calls[0].options.body;
   assert.ok(!rawBody.includes(process.env.ANTHROPIC_API_KEY), 'API key não deveria vazar para o corpo');
   assert.equal(calls[0].options.headers['x-api-key'], process.env.ANTHROPIC_API_KEY);
+});
+
+// ============================================================================
+// SUBFASE 13 — GUARD DETERMINÍSTICO DE COERÊNCIA TEMPORAL
+//
+// Causa raiz comprovada por reprodução real (ver relatório da subfase): a
+// mesma frase "Agende amanhã às 17h30 uma reunião de teste por 30
+// minutos." produziu, em 3 chamadas reais à Anthropic, 2 respostas
+// corretas (relative_day/tomorrow/17:30) e 1 errada (fixed, dia 03/09 em
+// vez de 02/09, hora local tratada como se já fosse UTC).
+// ============================================================================
+
+// --- Helper puro: validateExplicitRelativeDateTimeConsistency --------------
+
+function relativeDayIntent(day, time) {
+  return {
+    missingFields: [],
+    confidence: 0.9,
+    intentType: 'query_calendar',
+    temporalWindow: { expression: 'x', resolved: { kind: 'relative_day', day, time } },
+  };
+}
+
+function windowIntent(resolved) {
+  return {
+    missingFields: [],
+    confidence: 0.9,
+    intentType: 'query_calendar',
+    temporalWindow: { expression: 'x', resolved },
+  };
+}
+
+await check('G1. "amanhã às 17h30" + relative_day tomorrow 17:30 -> valid', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'Agende amanhã às 17h30 uma reunião de teste por 30 minutos.',
+    relativeDayIntent('tomorrow', { hour: 17, minute: 30 }),
+  );
+  assert.equal(result, 'valid');
+});
+
+await check('G2. mesma frase + fixed -> mismatch (fixture EXATA do bug real observado)', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'Agende amanhã às 17h30 uma reunião de teste por 30 minutos.',
+    windowIntent({ kind: 'fixed', start: '2026-09-03T17:30:00.000Z', end: '2026-09-03T18:00:00.000Z' }),
+  );
+  assert.equal(result, 'mismatch');
+});
+
+await check('G3. mesma frase + anchored_start -> mismatch', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'Agende amanhã às 17h30 uma reunião de teste por 30 minutos.',
+    windowIntent({ kind: 'anchored_start', start: '2026-09-02T20:30:00.000Z' }),
+  );
+  assert.equal(result, 'mismatch');
+});
+
+await check('G4. mesma frase + relative_day tomorrow 17:00 (hora errada) -> mismatch', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'Agende amanhã às 17h30 uma reunião de teste por 30 minutos.',
+    relativeDayIntent('tomorrow', { hour: 17, minute: 0 }),
+  );
+  assert.equal(result, 'mismatch');
+});
+
+await check('G5. mesma frase + relative_day today 17:30 (dia errado) -> mismatch', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'Agende amanhã às 17h30 uma reunião de teste por 30 minutos.',
+    relativeDayIntent('today', { hour: 17, minute: 30 }),
+  );
+  assert.equal(result, 'mismatch');
+});
+
+await check('G6. "amanha as 17h30" (sem acento) -> reconhecido, valid', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'amanha as 17h30',
+    relativeDayIntent('tomorrow', { hour: 17, minute: 30 }),
+  );
+  assert.equal(result, 'valid');
+});
+
+await check('G7. uppercase ("AMANHÃ ÀS 17H30") -> reconhecido, valid', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'AMANHÃ ÀS 17H30',
+    relativeDayIntent('tomorrow', { hour: 17, minute: 30 }),
+  );
+  assert.equal(result, 'valid');
+});
+
+await check('G8. "amanhã às 17:30" (dois-pontos) -> reconhecido, valid', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'amanhã às 17:30',
+    relativeDayIntent('tomorrow', { hour: 17, minute: 30 }),
+  );
+  assert.equal(result, 'valid');
+});
+
+await check('G9. "amanhã 17h30" (sem "às") -> reconhecido, valid', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'amanhã 17h30',
+    relativeDayIntent('tomorrow', { hour: 17, minute: 30 }),
+  );
+  assert.equal(result, 'valid');
+});
+
+await check('G10. "hoje às 9h" + relative_day today 09:00 -> valid', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'hoje às 9h',
+    relativeDayIntent('today', { hour: 9, minute: 0 }),
+  );
+  assert.equal(result, 'valid');
+});
+
+await check('G11. "hoje às 9h" + relative_day tomorrow -> mismatch', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'hoje às 9h',
+    relativeDayIntent('tomorrow', { hour: 9, minute: 0 }),
+  );
+  assert.equal(result, 'mismatch');
+});
+
+await check('G12. hora inválida "25h" -> not_applicable (nunca aceita hora fora de 0-23)', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'amanhã às 25h',
+    relativeDayIntent('tomorrow', { hour: 17, minute: 30 }),
+  );
+  assert.equal(result, 'not_applicable');
+});
+
+await check('G13. texto sem "hoje"/"amanhã" -> not_applicable', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'sexta-feira às 17h30',
+    windowIntent({ kind: 'fixed', start: '2026-09-05T17:30:00.000Z', end: '2026-09-05T18:00:00.000Z' }),
+  );
+  assert.equal(result, 'not_applicable');
+});
+
+await check('G14. "amanhã" sem horário explícito -> not_applicable (nunca inventa hora)', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'amanhã',
+    windowIntent({ kind: 'relative_day', day: 'tomorrow', time: null }),
+  );
+  assert.equal(result, 'not_applicable');
+});
+
+await check('G15. "depois de amanhã às 17h30" NÃO vira "tomorrow" simples -> not_applicable', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'depois de amanhã às 17h30',
+    relativeDayIntent('tomorrow', { hour: 17, minute: 30 }),
+  );
+  assert.equal(result, 'not_applicable');
+});
+
+await check('G16. "amanhã à noite" sem hora explícita -> not_applicable', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'amanhã à noite',
+    windowIntent({ kind: 'relative_day', day: 'tomorrow', time: null }),
+  );
+  assert.equal(result, 'not_applicable');
+});
+
+await check('G17. helper nunca lê duração (ignora completamente o campo)', () => {
+  const intent = {
+    missingFields: [],
+    confidence: 0.9,
+    intentType: 'create_event',
+    task: { kind: 'new_task', title: 'x', description: null },
+    temporalWindow: { expression: 'x', resolved: { kind: 'relative_day', day: 'tomorrow', time: { hour: 17, minute: 30 } } },
+    duration: { source: 'stated', value: { minutes: 999999 }, confidence: 0.9 }, // absurdo, de propósito
+    participants: [],
+    calendarAction: 'create',
+  };
+  const result = validateExplicitRelativeDateTimeConsistency('amanhã às 17h30', intent);
+  assert.equal(result, 'valid', 'duração absurda não deveria influenciar o veredito');
+});
+
+await check('G18. helper é puro — nunca muta o intent recebido', () => {
+  const intent = relativeDayIntent('tomorrow', { hour: 17, minute: 30 });
+  const before = JSON.stringify(intent);
+  validateExplicitRelativeDateTimeConsistency('amanhã às 17h30', intent);
+  assert.equal(JSON.stringify(intent), before);
+});
+
+await check('G18b. create_task com temporalWindow null -> not_applicable (nunca lança)', () => {
+  const intent = {
+    missingFields: [],
+    confidence: 0.9,
+    intentType: 'create_task',
+    task: { kind: 'new_task', title: 'x', description: null },
+    temporalWindow: null,
+    duration: null,
+    deadline: null,
+  };
+  const result = validateExplicitRelativeDateTimeConsistency('amanhã às 17h30', intent);
+  assert.equal(result, 'not_applicable');
+});
+
+await check('G18c. intentType sem temporalWindow (cancel_event) -> not_applicable', () => {
+  const result = validateExplicitRelativeDateTimeConsistency('amanhã às 17h30', VALID_CANCEL_EVENT);
+  assert.equal(result, 'not_applicable');
+});
+
+// --- Integração real: extractStructuredIntent aplica o guard ---------------
+
+function fixedWindowResponse(startIso, endIso) {
+  return {
+    missingFields: [],
+    confidence: 0.98,
+    intentType: 'create_event',
+    task: { kind: 'new_task', title: 'Reunião de teste', description: null },
+    temporalWindow: { expression: 'amanhã às 17h30', resolved: { kind: 'fixed', start: startIso, end: endIso } },
+    duration: { source: 'stated', value: { minutes: 30 }, confidence: 0.98 },
+    participants: [],
+    calendarAction: 'create',
+  };
+}
+
+function relativeDayResponse(day, hour, minute) {
+  return {
+    missingFields: [],
+    confidence: 0.98,
+    intentType: 'create_event',
+    task: { kind: 'new_task', title: 'Reunião de teste', description: null },
+    temporalWindow: { expression: 'amanhã às 17h30', resolved: { kind: 'relative_day', day, time: { hour, minute } } },
+    duration: { source: 'stated', value: { minutes: 30 }, confidence: 0.98 },
+    participants: [],
+    calendarAction: 'create',
+  };
+}
+
+const CREATE_EVENT_TEXT = 'Agende amanhã às 17h30 uma reunião de teste por 30 minutos.';
+
+await check('G19. texto amanhã 17h30 + resposta correta (relative_day) -> intent aceito', async () => {
+  ensureApiKey();
+  capturingFetch(() => providerOkResponse(JSON.stringify(relativeDayResponse('tomorrow', 17, 30))));
+  const result = await extractStructuredIntent(CREATE_EVENT_TEXT, NOW);
+  assert.equal(result.status, 'extracted');
+  assert.equal(result.intent.temporalWindow.resolved.kind, 'relative_day');
+});
+
+await check(
+  'G20/G17-real. texto amanhã 17h30 + fixed ERRADO (fixture EXATA do bug) -> intent REJEITADO (invalid)',
+  async () => {
+    ensureApiKey();
+    const calls = capturingFetch(() =>
+      providerOkResponse(JSON.stringify(fixedWindowResponse('2026-09-03T17:30:00.000Z', '2026-09-03T18:00:00.000Z'))),
+    );
+    const result = await extractStructuredIntent(CREATE_EVENT_TEXT, NOW);
+    assert.deepEqual(result, { status: 'invalid' });
+    assert.equal(calls.length, 1, 'a NLU é chamada normalmente — o guard roda DEPOIS da resposta, nunca antes');
+  },
+);
+
+await check('G21. texto amanhã 17h30 + data absoluta errada -> nunca chega ao pipeline (invalid, não extracted)', async () => {
+  ensureApiKey();
+  capturingFetch(() =>
+    providerOkResponse(JSON.stringify(fixedWindowResponse('2026-09-10T00:00:00.000Z', '2026-09-10T00:30:00.000Z'))),
+  );
+  const result = await extractStructuredIntent(CREATE_EVENT_TEXT, NOW);
+  assert.equal(result.status, 'invalid');
+  assert.ok(!('intent' in result), 'resultado invalid nunca deveria carregar um intent');
+});
+
+await check('G22. texto "hoje às 14h" + resposta com day errado (tomorrow) -> rejeitado', async () => {
+  ensureApiKey();
+  capturingFetch(() => providerOkResponse(JSON.stringify(relativeDayResponse('tomorrow', 14, 0))));
+  const result = await extractStructuredIntent('Agende hoje às 14h uma call.', NOW);
+  assert.deepEqual(result, { status: 'invalid' });
+});
+
+await check('G23. query_calendar também protegido pelo mesmo guard', async () => {
+  ensureApiKey();
+  const wrongQueryResponse = {
+    missingFields: [],
+    confidence: 0.9,
+    intentType: 'query_calendar',
+    temporalWindow: { expression: 'amanhã às 17h30', resolved: { kind: 'fixed', start: '2026-09-03T17:30:00.000Z', end: '2026-09-03T18:30:00.000Z' } },
+  };
+  capturingFetch(() => providerOkResponse(JSON.stringify(wrongQueryResponse)));
+  const result = await extractStructuredIntent('Estou livre amanhã às 17h30?', NOW);
+  assert.deepEqual(result, { status: 'invalid' });
+});
+
+await check('G24. create_event também protegido pelo mesmo guard (mesma função, zero duplicação)', async () => {
+  ensureApiKey();
+  capturingFetch(() =>
+    providerOkResponse(JSON.stringify(fixedWindowResponse('2026-09-03T17:30:00.000Z', '2026-09-03T18:00:00.000Z'))),
+  );
+  const result = await extractStructuredIntent(CREATE_EVENT_TEXT, NOW);
+  assert.deepEqual(result, { status: 'invalid' });
+});
+
+await check('G25-G29. mismatch nunca chega perto de calendar query/freeBusy/ProposalState/claim/Google write', async () => {
+  // Prova estrutural, não de execução: `extractStructuredIntent` (este
+  // módulo) nunca importa nenhuma dessas peças (ver teste 19, auditoria
+  // estática já existente) — um `status:'invalid'` sai daqui e nunca
+  // carrega um `intent`, então NENHUM chamador rio abaixo
+  // (resolveCalendarQuery/attemptCreateEvent/ProposalState/claim/Google
+  // write) pode sequer ser invocado, porque nenhum deles recebe um intent
+  // a partir de um resultado sem a chave `intent`.
+  ensureApiKey();
+  capturingFetch(() =>
+    providerOkResponse(JSON.stringify(fixedWindowResponse('2026-09-03T17:30:00.000Z', '2026-09-03T18:00:00.000Z'))),
+  );
+  const result = await extractStructuredIntent(CREATE_EVENT_TEXT, NOW);
+  assert.equal(result.status, 'invalid');
+  assert.equal(Object.keys(result).length, 1, 'invalid carrega SÓ {status}, nunca um intent parcial/residual');
+});
+
+// --- Regressão: casos corretos continuam funcionando normalmente -----------
+
+await check('G30. regressão — "amanhã às 17h30" correto continua extraído normalmente', async () => {
+  ensureApiKey();
+  capturingFetch(() => providerOkResponse(JSON.stringify(relativeDayResponse('tomorrow', 17, 30))));
+  const result = await extractStructuredIntent(CREATE_EVENT_TEXT, NOW);
+  assert.equal(result.status, 'extracted');
+});
+
+await check('G31. regressão — texto sem "hoje"/"amanhã" com fixed nunca é rejeitado por este guard', async () => {
+  ensureApiKey();
+  capturingFetch(() =>
+    providerOkResponse(JSON.stringify(fixedWindowResponse('2026-09-10T14:00:00.000Z', '2026-09-10T14:30:00.000Z'))),
+  );
+  const result = await extractStructuredIntent('Agende uma reunião na sexta-feira às 14h.', NOW);
+  assert.equal(result.status, 'extracted', 'fixed continua válido quando o texto não diz hoje/amanhã explicitamente');
+});
+
+await check('G32. regressão — create_task (temporalWindow sempre null) nunca é afetado pelo guard', async () => {
+  ensureApiKey();
+  capturingFetch(() => providerOkResponse(JSON.stringify(VALID_CREATE_TASK)));
+  const result = await extractStructuredIntent('me lembra de ligar amanhã', NOW);
+  assert.equal(result.status, 'extracted');
 });
 
 // ============================================================================
