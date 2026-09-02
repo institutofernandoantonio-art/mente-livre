@@ -305,14 +305,92 @@ type CreateEventAttemptResult =
   | { status: 'error' }
   | { status: 'available'; action: Extract<ProposedAction, { actionType: 'create_calendar_event' }> };
 
+// --- Diagnóstico TEMPORÁRIO — Subfase 15 -----------------------------------
+//
+// Instrumentação mínima e temporária para investigar uma divergência real
+// de produção (freeBusy consultado diretamente no calendário mostrou
+// `busy: []` para a mesma janela que `create_event` classificou como
+// `busy`). Exceção DELIBERADA à disciplina "nunca console.*" já seguida em
+// outros módulos desta mesma pasta (cada um documenta "Este módulo NUNCA
+// ... usa `console.*`" no próprio cabeçalho) — nenhum desses outros
+// módulos foi tocado por esta subfase; só este único ponto, em
+// `conversation-turn.ts`, e só até o diagnóstico ser resolvido (remover
+// depois, junto com este comentário).
+//
+// Prefixo `[calendar-create-debug]` para localização fácil nos logs do
+// Vercel. Campos SEMPRE seguros por construção — nunca texto do usuário,
+// título, descrição, `user_id`, `stateId`/`proposalId`/`googleEventId`,
+// token, cookie, `Authorization`, ou payload bruto do Google:
+// - `dispatcherPath`: qual call site chamou (nunca inferido, sempre
+//   passado explicitamente pelo chamador);
+// - `intentType`: sempre `'create_event'` aqui (o único intentType que
+//   `attemptCreateEvent` recebe) — incluído mesmo assim, por clareza no
+//   log, nunca por necessidade de branch;
+// - `temporalKind`/`relativeDay`/`hour`/`minute`: lidos diretamente do
+//   `TemporalWindow.resolved` já presente no intent (o mesmo já validado
+//   pelo guard determinístico da Subfase 13) — nunca uma segunda
+//   interpretação de texto;
+// - `durationMinutes`: só o número, nunca o objeto `Duration` inteiro
+//   (que poderia um dia carregar mais campos);
+// - `materializedStart`/`materializedEnd`/`timezone`: exatamente o que
+//   `buildCreateCalendarEventAction` produziu, só disponível quando
+//   `status: 'built'`;
+// - `availabilityStatus`: o `status` de `checkCalendarEventAvailability`
+//   (nunca os `busyBlocks` em si — essa função já os esconde por design,
+//   ver cabeçalho de calendar-event-availability.ts; `busyBlockCount`
+//   pedido no enunciado desta subfase permanece `null` porque essa
+//   função não expõe contagem nenhuma, e este diagnóstico NÃO altera
+//   `calendar-event-availability.ts` para inventar uma).
+//
+// Zero persistência em banco, zero tabela nova, zero retorno ao browser
+// (`CreateEventAttemptResult`, o tipo de retorno real da função, é
+// idêntico ao de antes desta subfase — só o `console.info` foi
+// adicionado, nenhum campo novo em nenhum tipo de retorno).
+type CalendarCreateDebugDispatcherPath = 'nlu_first_turn' | 'clarification_turn';
+
+type CalendarCreateDebugFields = {
+  dispatcherPath: CalendarCreateDebugDispatcherPath;
+  intentType: 'create_event';
+  temporalKind: CreateEventIntent['temporalWindow']['resolved']['kind'];
+  relativeDay: 'today' | 'tomorrow' | null;
+  hour: number | null;
+  minute: number | null;
+  durationMinutes: number | null;
+  materializedStart: string | null;
+  materializedEnd: string | null;
+  timezone: string;
+  availabilityStatus: 'available' | 'busy' | 'unavailable' | null;
+  busyBlockCount: null;
+};
+
+function logCalendarCreateDebug(fields: CalendarCreateDebugFields): void {
+  console.info('[calendar-create-debug]', JSON.stringify(fields));
+}
+
 async function attemptCreateEvent(
   intent: CreateEventIntent,
   now: number,
   timezone: string,
+  dispatcherPath: CalendarCreateDebugDispatcherPath,
 ): Promise<CreateEventAttemptResult> {
+  const resolved = intent.temporalWindow.resolved;
+  const debugBase: Omit<CalendarCreateDebugFields, 'materializedStart' | 'materializedEnd' | 'availabilityStatus'> = {
+    dispatcherPath,
+    intentType: 'create_event',
+    temporalKind: resolved.kind,
+    relativeDay: resolved.kind === 'relative_day' ? resolved.day : null,
+    hour: resolved.kind === 'relative_day' && resolved.time !== null ? resolved.time.hour : null,
+    minute: resolved.kind === 'relative_day' && resolved.time !== null ? resolved.time.minute : null,
+    durationMinutes:
+      intent.duration !== null && intent.duration.source !== 'unresolved' ? intent.duration.value.minutes : null,
+    timezone,
+    busyBlockCount: null,
+  };
+
   const buildResult = buildCreateCalendarEventAction(intent, now, timezone);
 
   if (buildResult.status === 'not_materializable' || buildResult.status === 'invalid') {
+    logCalendarCreateDebug({ ...debugBase, materializedStart: null, materializedEnd: null, availabilityStatus: null });
     return { status: 'not_materializable' };
   }
 
@@ -322,12 +400,21 @@ async function attemptCreateEvent(
     // constrói esta variante quando status é 'built' — guarda de tipo
     // exigida só porque o retorno é tipado como ProposedAction (a união
     // inteira), nunca a variante já estreitada.
+    logCalendarCreateDebug({ ...debugBase, materializedStart: null, materializedEnd: null, availabilityStatus: null });
     return { status: 'error' };
   }
+
+  const debugWithMaterialization = {
+    ...debugBase,
+    materializedStart: action.event.start,
+    materializedEnd: action.event.end,
+  };
 
   // Janela EXATA do ProposedAction materializado — nunca arredondada,
   // nunca ampliada, nunca uma segunda busca por outro horário.
   const availability = await checkCalendarEventAvailability(action.event.start, action.event.end);
+
+  logCalendarCreateDebug({ ...debugWithMaterialization, availabilityStatus: availability.status });
 
   switch (availability.status) {
     case 'busy':
@@ -379,7 +466,7 @@ export async function resolveFirstConversationalTurn(
   }
 
   if (intent.intentType === 'create_event') {
-    const attempt = await attemptCreateEvent(intent, now, timezone);
+    const attempt = await attemptCreateEvent(intent, now, timezone, 'nlu_first_turn');
 
     switch (attempt.status) {
       case 'not_materializable':
@@ -514,7 +601,7 @@ export async function resolveClarificationConversationalTurn(
       }
 
       if (turnResult.intent.intentType === 'create_event') {
-        const attempt = await attemptCreateEvent(turnResult.intent, now, timezone);
+        const attempt = await attemptCreateEvent(turnResult.intent, now, timezone, 'clarification_turn');
 
         switch (attempt.status) {
           case 'not_materializable':

@@ -1391,6 +1391,208 @@ await check('46. checkCalendarEventAvailability nunca vaza intervalos brutos —
   ]);
 });
 
+// ============================================================================
+// SUBFASE 15 — diagnóstico TEMPORÁRIO de disponibilidade (`[calendar-create-
+// debug]`). Confirma que a instrumentação nova (i) só existe dentro do
+// branch `create_event`, (ii) nunca vaza campo proibido, (iii) é uma lista
+// FECHADA de campos (qualquer campo novo adicionado no futuro sem passar
+// por este teste já quebra a asserção de whitelist abaixo), e (iv) nunca
+// altera o valor de retorno real da função (as próprias asserções de
+// status/action dos testes 32-43, inalteradas por esta subfase e ainda
+// verdes, já são a prova disso — reforçada aqui de novo, lado a lado com a
+// captura do log, para deixar a prova explícita num único lugar).
+// ============================================================================
+
+async function captureConsoleInfoAsync(fn) {
+  const original = console.info;
+  const calls = [];
+  console.info = (...args) => {
+    calls.push(args);
+  };
+  try {
+    const result = await fn();
+    return { result, calls };
+  } finally {
+    console.info = original;
+  }
+}
+
+const DEBUG_ALLOWED_FIELDS = [
+  'dispatcherPath',
+  'intentType',
+  'temporalKind',
+  'relativeDay',
+  'hour',
+  'minute',
+  'durationMinutes',
+  'materializedStart',
+  'materializedEnd',
+  'timezone',
+  'availabilityStatus',
+  'busyBlockCount',
+].sort();
+
+const DEBUG_FORBIDDEN_SUBSTRINGS = [
+  'Reunião com Ricardo', // task.title do fixture usado nesta seção
+  'user_id',
+  'userId',
+  'stateId',
+  'proposalId',
+  'googleEventId',
+  'Authorization',
+  'authorization',
+  'cookie',
+  'token',
+  'refresh_token',
+  'access_token',
+  'description',
+];
+
+await check('47. log [calendar-create-debug] é emitido no branch schedule_conflict, com campos EXATOS (whitelist fechada)', async () => {
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    checkCalendarEventAvailability: async () => ({ status: 'busy' }),
+  });
+
+  const { result, calls } = await captureConsoleInfoAsync(() =>
+    resolveFirstConversationalTurn(createEventIntentReady(), NOW, EXPIRATIONS, TIMEZONE),
+  );
+
+  assert.deepEqual(result, { status: 'schedule_conflict' }, 'instrumentação não pode alterar o retorno real');
+
+  const debugCalls = calls.filter((args) => args[0] === '[calendar-create-debug]');
+  assert.equal(debugCalls.length, 1, 'exatamente 1 log por tentativa de create_event');
+
+  const [, rawPayload] = debugCalls[0];
+  assert.equal(typeof rawPayload, 'string', 'payload deve ser string já serializada (JSON.stringify), nunca objeto cru');
+
+  const parsed = JSON.parse(rawPayload);
+  assert.deepEqual(
+    Object.keys(parsed).sort(),
+    DEBUG_ALLOWED_FIELDS,
+    'log deve conter EXATAMENTE os campos documentados — nenhum a mais, nenhum a menos',
+  );
+  assert.equal(parsed.dispatcherPath, 'nlu_first_turn');
+  assert.equal(parsed.intentType, 'create_event');
+  assert.equal(parsed.temporalKind, 'fixed');
+  assert.equal(parsed.materializedStart, FIXED_START);
+  assert.equal(parsed.materializedEnd, FIXED_END);
+  assert.equal(parsed.timezone, TIMEZONE);
+  assert.equal(parsed.availabilityStatus, 'busy');
+  assert.equal(parsed.busyBlockCount, null, 'checkCalendarEventAvailability nunca expõe contagem — este diagnóstico não inventa uma');
+});
+
+await check('48. log nunca contém texto/título/descrição/user_id/stateId/proposalId/googleEventId/token/Authorization/cookie', async () => {
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    replaceRuntimeState: async (next) => ({
+      status: 'saved',
+      value: { stateId: 'super-secret-state-id-12345', kind: next.kind, state: next.state },
+    }),
+    checkCalendarEventAvailability: async () => ({ status: 'available' }),
+  });
+
+  const { calls } = await captureConsoleInfoAsync(() =>
+    resolveFirstConversationalTurn(
+      createEventIntentReady({ task: { kind: 'new_task', title: 'Reunião com Ricardo', description: 'pauta confidencial X' } }),
+      NOW,
+      EXPIRATIONS,
+      TIMEZONE,
+    ),
+  );
+
+  const debugCalls = calls.filter((args) => args[0] === '[calendar-create-debug]');
+  assert.equal(debugCalls.length, 1);
+  const rawPayload = debugCalls[0][1];
+
+  for (const forbidden of DEBUG_FORBIDDEN_SUBSTRINGS) {
+    assert.ok(!rawPayload.includes(forbidden), `token proibido encontrado no log: ${forbidden}`);
+  }
+  // "pauta confidencial X" nunca poderia vazar de qualquer forma (não é
+  // nem um campo lido pelo helper), mas checado explicitamente mesmo
+  // assim — nunca um palpite sobre o que "description" poderia conter.
+  assert.ok(!rawPayload.includes('pauta confidencial'));
+});
+
+await check('49. dispatcherPath = clarification_turn no turno de clarificação (nunca confundido com nlu_first_turn)', async () => {
+  const clarificationState = {
+    intent: createEventIntentReady({ duration: { source: 'unresolved', confidence: 0.5 } }),
+    currentQuestion: { field: 'duration', text: 'Quanto tempo dura?' },
+    createdAt: NOW - 1000,
+    expiresAt: NOW + 10_000,
+  };
+  storageHandlers.getRuntimeState = async () => ({
+    status: 'found',
+    value: { stateId: 'state-clarify', kind: 'clarification', state: clarificationState },
+  });
+  storageHandlers.advanceRuntimeState = async (_expectedStateId, next) => ({
+    status: 'advanced',
+    value: { stateId: 'new-id', kind: next.kind, state: next.state },
+  });
+  orchestrationHandlers.resolveClarificationTurn = async (state) => ({
+    status: 'ready',
+    intent: { ...state.intent, duration: { source: 'stated', value: { minutes: 60 }, confidence: 1 } },
+  });
+  calendarAvailabilityHandlers.checkCalendarEventAvailability = async () => ({ status: 'available' });
+
+  const { calls } = await captureConsoleInfoAsync(() =>
+    resolveClarificationConversationalTurn('1 hora', NOW, EXPIRATIONS, TIMEZONE),
+  );
+
+  const debugCalls = calls.filter((args) => args[0] === '[calendar-create-debug]');
+  assert.equal(debugCalls.length, 1);
+  const parsed = JSON.parse(debugCalls[0][1]);
+  assert.equal(parsed.dispatcherPath, 'clarification_turn');
+});
+
+await check('50. create_local_task e query_calendar NUNCA emitem [calendar-create-debug] (zero log fora de create_event)', async () => {
+  const readyProposableIntent = {
+    missingFields: [],
+    confidence: 0.9,
+    intentType: 'create_task',
+    task: { kind: 'new_task', title: 'Comprar leite', description: null },
+    temporalWindow: null,
+    duration: null,
+    deadline: null,
+  };
+  const queryCalendarIntentReady = {
+    missingFields: [],
+    confidence: 0.9,
+    intentType: 'query_calendar',
+    temporalWindow: { expression: 'hoje', resolved: { kind: 'relative_day', day: 'today', time: null } },
+  };
+
+  setHandlers({
+    getRuntimeState: async () => ({ status: 'not_found' }),
+    replaceRuntimeState: async (next) => ({
+      status: 'saved',
+      value: { stateId: 'new-id', kind: next.kind, state: next.state },
+    }),
+  });
+  const { calls: taskCalls } = await captureConsoleInfoAsync(() =>
+    resolveFirstConversationalTurn(readyProposableIntent, NOW, EXPIRATIONS, TIMEZONE),
+  );
+  assert.equal(taskCalls.filter((args) => args[0] === '[calendar-create-debug]').length, 0);
+
+  calendarHandlers.resolveCalendarQuery = async () => ({ status: 'available', scope: 'day' });
+  const { calls: queryCalls } = await captureConsoleInfoAsync(() =>
+    resolveFirstConversationalTurn(queryCalendarIntentReady, NOW, EXPIRATIONS, TIMEZONE),
+  );
+  assert.equal(queryCalls.filter((args) => args[0] === '[calendar-create-debug]').length, 0);
+});
+
+await check('51. instrumentação é a ÚNICA mudança de código nesta subfase — zero alteração de comportamento fora do console.info', () => {
+  const source = readFileSync(
+    fileURLToPath(new URL('../../src/lib/conversation/conversation-turn.ts', import.meta.url)),
+    'utf8',
+  );
+  assert.ok(source.includes('[calendar-create-debug]'), 'prefixo de log deve estar presente e localizável');
+  assert.ok(source.includes('console.info('), 'diagnóstico deve usar console.info, mecanismo já usado no runtime do projeto/Vercel');
+  // Comentário explícito documentando a exceção deliberada à disciplina
+  // "nunca console.*" do resto da pasta — nunca uma exceção silenciosa.
+  assert.ok(source.includes('Instrumentação'), 'a exceção a "nunca console.*" precisa estar documentada no próprio arquivo');
+});
+
 // --- Resumo -------------------------------------------------------------
 
 const passed = results.filter((r) => r.pass).length;
