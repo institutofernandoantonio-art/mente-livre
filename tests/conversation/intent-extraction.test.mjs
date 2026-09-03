@@ -22,6 +22,11 @@ import {
   extractStructuredIntent,
   validateExplicitRelativeDateTimeConsistency,
 } from '../../src/lib/conversation/intent-extraction.ts';
+// Módulos REAIS, 100% puros, não alterados nesta subfase — usados só na
+// seção "pipeline completo" abaixo, para provar ponta a ponta (guard ->
+// builder -> prévia) sem precisar de nenhum dublê novo.
+import { buildCreateCalendarEventAction } from '../../src/lib/conversation/calendar-event-proposal.ts';
+import { buildEventProposalPreview } from '../../src/lib/conversation/presentation-ui.ts';
 
 const results = [];
 function record(name, pass, detail) {
@@ -682,6 +687,161 @@ await check('G32. regressão — create_task (temporalWindow sempre null) nunca 
   const result = await extractStructuredIntent('me lembra de ligar amanhã', NOW);
   assert.equal(result.status, 'extracted');
 });
+
+// ============================================================================
+// SUBFASE 18 — divergência de 3h na prévia ("21:00" virava "18:00"):
+// horário mencionado SOZINHO, sem "hoje"/"amanhã" explícitos, também
+// precisa ser protegido (equivale a "hoje" em português). Fixture EXATA
+// do bug real: "Marca uma ligação às 21:00 por 30 minutos." -> a LLM
+// devolveu `fixed` com "21:00" embutido como se já fosse UTC; a prévia
+// (corretamente convertida para America/Sao_Paulo) mostrava 18:00.
+// ============================================================================
+
+const BARE_TIME_TEXT_21H = 'Marca uma ligação às 21:00 por 30 minutos.';
+
+await check('G33. "às 21h" SEM dia explícito + relative_day today 21:00 -> valid', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    BARE_TIME_TEXT_21H,
+    relativeDayIntent('today', { hour: 21, minute: 0 }),
+  );
+  assert.equal(result, 'valid');
+});
+
+await check('G34. fixture EXATA do bug real: "às 21h" sem dia + fixed (21:00 embutido como UTC) -> mismatch', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    BARE_TIME_TEXT_21H,
+    windowIntent({ kind: 'fixed', start: '2026-09-02T21:00:00.000Z', end: '2026-09-02T21:30:00.000Z' }),
+  );
+  assert.equal(result, 'mismatch');
+});
+
+await check('G35. "9h" sem dia + relative_day today 09:00 -> valid', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'Agende uma call às 9h.',
+    relativeDayIntent('today', { hour: 9, minute: 0 }),
+  );
+  assert.equal(result, 'valid');
+});
+
+await check('G36. "18h30" sem dia + relative_day today 18:30 -> valid', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'Marca uma call às 18h30.',
+    relativeDayIntent('today', { hour: 18, minute: 30 }),
+  );
+  assert.equal(result, 'valid');
+});
+
+await check('G37. "18h30" sem dia + fixed (embutido como UTC) -> mismatch', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'Marca uma call às 18h30.',
+    windowIntent({ kind: 'fixed', start: '2026-09-02T18:30:00.000Z', end: '2026-09-02T19:00:00.000Z' }),
+  );
+  assert.equal(result, 'mismatch');
+});
+
+await check('G38. "amanhã às 21h" continua funcionando (dia explícito tem precedência sobre a inferência de "hoje")', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'Agende amanhã às 21h uma call.',
+    relativeDayIntent('tomorrow', { hour: 21, minute: 0 }),
+  );
+  assert.equal(result, 'valid');
+});
+
+await check('G39. "sexta-feira às 21h" -> not_applicable (dia que o guard não entende, nunca um palpite de "hoje")', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'Marca uma ligação sexta-feira às 21:00.',
+    windowIntent({ kind: 'fixed', start: '2026-09-05T21:00:00.000Z', end: '2026-09-05T21:30:00.000Z' }),
+  );
+  assert.equal(result, 'not_applicable');
+});
+
+await check('G40. data explícita "10/10 às 21h" -> not_applicable (nunca inferido como "hoje")', () => {
+  const result = validateExplicitRelativeDateTimeConsistency(
+    'Marca uma ligação dia 10/10 às 21h.',
+    windowIntent({ kind: 'fixed', start: '2026-10-10T21:00:00.000Z', end: '2026-10-10T21:30:00.000Z' }),
+  );
+  assert.equal(result, 'not_applicable');
+});
+
+await check(
+  'G41/regressão real. texto "às 21h" sem dia + fixed ERRADO (fixture EXATA) -> intent REJEITADO na integração real (invalid)',
+  async () => {
+    ensureApiKey();
+    const calls = capturingFetch(() =>
+      providerOkResponse(JSON.stringify(fixedWindowResponse('2026-09-02T21:00:00.000Z', '2026-09-02T21:30:00.000Z'))),
+    );
+    const result = await extractStructuredIntent(BARE_TIME_TEXT_21H, NOW);
+    assert.deepEqual(result, { status: 'invalid' });
+    assert.equal(calls.length, 1, 'a NLU é chamada normalmente — o guard roda DEPOIS da resposta, nunca antes');
+  },
+);
+
+await check('G42. texto "às 21h" sem dia + resposta correta (relative_day today) -> intent aceito', async () => {
+  ensureApiKey();
+  capturingFetch(() => providerOkResponse(JSON.stringify(relativeDayResponse('today', 21, 0))));
+  const result = await extractStructuredIntent(BARE_TIME_TEXT_21H, NOW);
+  assert.equal(result.status, 'extracted');
+  assert.deepEqual(result.intent.temporalWindow.resolved, {
+    kind: 'relative_day',
+    day: 'today',
+    time: { hour: 21, minute: 0 },
+  });
+});
+
+await check('G43. regressão — "sexta-feira às 14h" com fixed continua aceito (guard nunca inventa "hoje" para outro dia)', async () => {
+  ensureApiKey();
+  capturingFetch(() =>
+    providerOkResponse(JSON.stringify(fixedWindowResponse('2026-09-05T17:00:00.000Z', '2026-09-05T17:30:00.000Z'))),
+  );
+  const result = await extractStructuredIntent('Agende uma reunião na sexta-feira às 14h.', NOW);
+  assert.equal(result.status, 'extracted');
+});
+
+// --- Pipeline completo: guard -> builder -> prévia (data/hora exibida) ----
+//
+// Prova ponta a ponta, com os módulos REAIS de materialização/exibição
+// (nenhum dublê nesta seção — calendar-event-proposal.ts e
+// presentation-ui.ts não foram alterados nesta subfase; usados aqui só
+// para confirmar que a correção na fronteira da NLU é suficiente para o
+// resto do pipeline, já comprovadamente correto, produzir a hora CERTA
+// na prévia final).
+
+const PIPELINE_TIMEZONE = 'America/Sao_Paulo';
+// now: 2026-09-02T18:00:00.000Z = 15:00 local em 02/09/2026.
+const PIPELINE_NOW = Date.parse('2026-09-02T18:00:00.000Z');
+
+const PIPELINE_CASES = [
+  { label: '21:00 -> 21:00', hour: 21, minute: 0, durationMinutes: 30, expectedTimeRange: '21:00 às 21:30' },
+  { label: '09:00 -> 09:00', hour: 9, minute: 0, durationMinutes: 30, expectedTimeRange: '09:00 às 09:30' },
+  { label: '18:30 -> 18:30', hour: 18, minute: 30, durationMinutes: 30, expectedTimeRange: '18:30 às 19:00' },
+];
+
+for (const { label, hour, minute, durationMinutes, expectedTimeRange } of PIPELINE_CASES) {
+  await check(`G44. pipeline completo (${label}), duração ${durationMinutes}min, hoje em America/Sao_Paulo`, () => {
+    // Intent já aprovado pelo guard (relative_day/today) — exatamente o
+    // shape que a extração real produz depois da correção desta subfase.
+    const intent = {
+      missingFields: [],
+      confidence: 0.98,
+      intentType: 'create_event',
+      task: { kind: 'new_task', title: 'Compromisso de teste', description: null },
+      temporalWindow: { expression: 'x', resolved: { kind: 'relative_day', day: 'today', time: { hour, minute } } },
+      duration: { source: 'stated', value: { minutes: durationMinutes }, confidence: 1 },
+      participants: [],
+      calendarAction: 'create',
+    };
+
+    const guardResult = validateExplicitRelativeDateTimeConsistency('x', intent);
+    assert.notEqual(guardResult, 'mismatch');
+
+    const build = buildCreateCalendarEventAction(intent, PIPELINE_NOW, PIPELINE_TIMEZONE);
+    assert.equal(build.status, 'built');
+
+    const preview = buildEventProposalPreview(build.action.event);
+    assert.equal(preview.date, '02/09/2026', 'data de hoje no fuso America/Sao_Paulo');
+    assert.equal(preview.timeRange, expectedTimeRange, 'horário exibido na prévia deve ser IDÊNTICO ao informado');
+  });
+}
 
 // ============================================================================
 // EXCEÇÃO INESPERADA — mesma convenção do resto do módulo (não testada

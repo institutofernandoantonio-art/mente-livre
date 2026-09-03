@@ -75,6 +75,17 @@ import type { StructuredIntent, TemporalWindow } from './types';
 // civil local tratada como se já fosse UTC) — ver relatório da Subfase 13
 // para o histórico completo.)
 //
+// EXTENSÃO (Subfase 18): mesma causa raiz, reproduzida de novo em
+// produção para um texto SEM "hoje"/"amanhã" explícitos ("Marca uma
+// ligação às 21:00 por 30 minutos.") — a LLM devolveu `fixed` com a hora
+// civil (21:00) embutida como se já fosse UTC, e a prévia (corretamente
+// convertida para America/Sao_Paulo, UTC-3) mostrou 18:00. O guard original
+// só comparava texto vs. intent quando havia "hoje"/"amanhã" explícito;
+// esta subfase estende o reconhecimento de "dia" para também cobrir um
+// horário mencionado SOZINHO, sem nenhuma palavra de dia (equivale a
+// "hoje" em português) — nunca um parser novo, mesma função, mesma
+// regex de hora, só mais um jeito de reconhecer "dia".
+//
 // Princípio: LLM interpreta -> CÓDIGO DETERMINÍSTICO valida -> só depois o
 // intent é aceito. Este guard NUNCA corrige/reescreve o intent (isso
 // criaria um segundo parser temporal paralelo à NLU) — ele só COMPARA o
@@ -88,15 +99,18 @@ import type { StructuredIntent, TemporalWindow } from './types';
 // ou Google write.
 //
 // Escopo MÍNIMO e deliberado (ver relatório para o porquê de cada
-// exclusão): só reconhece "hoje"/"amanhã"/"amanha" (case-insensitive,
-// sem acento) SEGUIDO ou PRECEDIDO por um horário explícito no texto
-// original nos formatos já usados no produto ("17h", "17h30", "17:30",
-// com ou sem "às"/"as" antes). Qualquer outra expressão temporal ("fim da
-// tarde", "depois de amanhã", "próxima semana", dias da semana, datas por
-// extenso) continua 100% responsabilidade da NLU/Clarification Policy
-// existente — este guard nunca tenta entendê-las, sempre `not_applicable`
-// para elas. Dia relativo SEM horário explícito ("amanhã", sozinho)
-// também é `not_applicable` — nunca inventa nem exige um horário.
+// exclusão): reconhece "hoje"/"amanhã"/"amanha" (case-insensitive, sem
+// acento) — ou a AUSÊNCIA de qualquer palavra de dia (ver
+// OTHER_DAY_REFERENCE_RE/achado da Subfase 18: um horário sozinho, sem
+// nenhuma referência de dia, significa "hoje" em português) — SEGUIDO ou
+// PRECEDIDO por um horário explícito no texto original nos formatos já
+// usados no produto ("17h", "17h30", "17:30", com ou sem "às"/"as"
+// antes). Qualquer outra expressão temporal ("fim da tarde", "depois de
+// amanhã", "próxima semana", dias da semana, datas por extenso) continua
+// 100% responsabilidade da NLU/Clarification Policy existente — este
+// guard nunca tenta entendê-las, sempre `not_applicable` para elas. Dia
+// relativo SEM horário explícito ("amanhã", sozinho) também é
+// `not_applicable` — nunca inventa nem exige um horário.
 //
 // Aplica-se a QUALQUER `intentType` que carregue um campo `temporalWindow`
 // (`create_task`, `create_event`, `plan_task`, `query_calendar`,
@@ -128,24 +142,56 @@ function stripDiacritics(value: string): string {
 // o "amanha" embutido nele jamais conte como um match de `tomorrow`.
 const DAY_AFTER_TOMORROW_RE = /\bdepois de amanha\b/g;
 
+// Qualquer menção a um dia DIFERENTE de "hoje" que este guard não sabe
+// interpretar — dia da semana, "semana que vem", "depois"/"ontem", ou uma
+// data explícita (DD/MM ou "dia N"). Escopo mínimo e deliberado, mesmo
+// espírito da lista de exclusões já documentada no cabeçalho desta seção
+// (nunca tenta entender "fim da tarde"/"próxima semana"/datas por
+// extenso) — presença de qualquer um destes sempre desliga a inferência
+// de "hoje implícito" abaixo, nunca um palpite sobre um dia que este
+// código não entende.
+const OTHER_DAY_REFERENCE_RE =
+  /\b(segunda|terca|quarta|quinta|sexta|sabado|domingo|semana|proxim[oa]|depois|ontem)\b|\d{1,2}\/\d{1,2}|\bdia\s+\d{1,2}\b/;
+
 // Extrai, SOMENTE do texto original, um par (dia relativo, hora civil)
 // quando ambos aparecem de forma explícita e inequívoca — nunca um
 // palpite. `null` significa "este guard não tem opinião sobre este
 // texto" (ambíguo, ausente, ou fora do escopo mínimo documentado acima).
 function extractExplicitDayTime(text: string): ExplicitDayTime | null {
-  const normalized = stripDiacritics(text.toLowerCase()).replace(DAY_AFTER_TOMORROW_RE, (match) =>
+  const preMaskNormalized = stripDiacritics(text.toLowerCase());
+  const normalized = preMaskNormalized.replace(DAY_AFTER_TOMORROW_RE, (match) =>
     ' '.repeat(match.length),
   );
 
   const hasToday = /\bhoje\b/.test(normalized);
   const hasTomorrow = /\bamanha\b/.test(normalized);
+  // Checado no texto ANTES do mascaramento de "depois de amanhã" — do
+  // contrário "depois" (que faz parte do próprio trecho mascarado)
+  // desapareceria junto, e "depois de amanhã às 17h30" cairia,
+  // incorretamente, na inferência de "hoje" abaixo.
+  const hasOtherDayReference = OTHER_DAY_REFERENCE_RE.test(preMaskNormalized);
 
-  // Nem um nem outro, OU os dois ao mesmo tempo (frase ambígua, ex.: "hoje
-  // ou amanhã") -> sem opinião, nunca um palpite entre os dois.
-  if (hasToday === hasTomorrow) {
+  let day: 'today' | 'tomorrow';
+  if (hasToday && !hasTomorrow) {
+    day = 'today';
+  } else if (hasTomorrow && !hasToday) {
+    day = 'tomorrow';
+  } else if (!hasToday && !hasTomorrow && !hasOtherDayReference) {
+    // Nem "hoje" nem "amanhã" nem qualquer outra referência de dia que
+    // este guard reconheça (ver OTHER_DAY_REFERENCE_RE) — em português,
+    // um horário de relógio mencionado sozinho ("às 21h") significa HOJE
+    // por padrão, nunca uma data que ninguém disse. Mesma causa raiz do
+    // achado real desta subfase: sem isso, um `fixed`/`anchored_start`
+    // com a hora civil embutida como se já fosse UTC passava batido
+    // (nunca comparado a nada, por falta de "hoje"/"amanhã" explícitos no
+    // texto) e a prévia mostrava um horário 3h adiantado/atrasado.
+    day = 'today';
+  } else {
+    // "hoje" e "amanhã" juntos (frase ambígua), OU alguma outra
+    // referência de dia que este guard não entende (dia da semana, data,
+    // "depois de amanhã", etc.) -> sem opinião, nunca um palpite.
     return null;
   }
-  const day: 'today' | 'tomorrow' = hasToday ? 'today' : 'tomorrow';
 
   // Formatos cobertos, do mais específico ao mais genérico: "17h30",
   // "17:30", "17h" sozinho (minuto implícito 0). "às"/"as" nunca é exigido
@@ -333,6 +379,8 @@ Nunca marque como "stated" algo que você inferiu, nem invente um "value" para a
 - {"kind":"unresolved"} — nenhuma informação temporal suficiente para os outros formatos.
 
 Regra obrigatória sobre "hoje"/"amanhã": quando o texto do usuário disser explicitamente "hoje às X" ou "amanhã às X" (com horário explícito), o resultado DEVE usar {"kind":"relative_day","day":"today"|"tomorrow","time":{"hour":X,...}} — NUNCA converta essas expressões para "fixed" nem para "anchored_start". "fixed" só deve ser usado para uma referência temporal já absoluta e apropriada ao contrato (ex.: uma data completa dita pelo usuário, "10 de outubro às 14h"), nunca como substituto de "hoje"/"amanhã".
+
+Regra obrigatória sobre horário sem dia explícito: quando o texto mencionar só um horário de relógio ("às 21h", "21:00", "9h") SEM dizer "amanhã" nem nenhum outro dia (nem dia da semana, nem data, nem "depois de amanhã"), isso significa HOJE nesse horário — o resultado DEVE usar {"kind":"relative_day","day":"today","time":{"hour":X,...}}, NUNCA "fixed"/"anchored_start". Você NUNCA tem o fuso horário real do usuário — um "fixed"/"anchored_start" com hora de relógio embutida (ex.: "21:00:00Z") seria interpretado como UTC e produziria um horário diferente do que a pessoa disse; "relative_day" é resolvido corretamente em outra camada, com o fuso horário real.
 
 Regras gerais, sempre válidas:
 - Nunca invente informação que não está no texto nem é dedução razoável e explícita a partir dele.
