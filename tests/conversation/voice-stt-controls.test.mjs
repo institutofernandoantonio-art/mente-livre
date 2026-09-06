@@ -85,10 +85,10 @@ check('tabela não armazena áudio nem transcript e tem RLS explícita', () => {
 });
 
 check('uso mensal calcula apenas metadados mínimos', () => {
-  assert.match(usage, /voice_transcription_usage/);
-  assert.match(usage, /duration_ms,estimated_cost_microusd,reserved_cost_microusd/);
-  assert.ok(!usage.includes('raw_text'));
-  assert.ok(!usage.includes('transcript'));
+  assert.match(usage, /\.select\('status,duration_ms,estimated_cost_microusd,reserved_cost_microusd'\)/);
+  assert.ok(!/\.select\([^)]*\braw_text\b/i.test(usage));
+  assert.ok(!/\.select\([^)]*\btranscript\b/i.test(usage));
+  assert.ok(!/\.select\([^)]*\baudio\b/i.test(usage));
 });
 
 check('nenhum arquivo do backend de voz faz log do conteúdo', () => {
