@@ -52,10 +52,18 @@ check('token Google permanece no servidor e reutiliza a primitiva existente', ()
 check('campos solicitados são mínimos e não incluem conteúdo pessoal desnecessário', () => {
   assert.ok(
     server.includes(
-      'items(id,summary,status,htmlLink,start(date,dateTime,timeZone),end(date,dateTime,timeZone))',
+      'items(summary,status,htmlLink,start(date,dateTime,timeZone))',
     ),
   );
-  for (const forbidden of ['description', 'attendees', 'location', 'attachments', 'conferenceData']) {
+  for (const forbidden of [
+    'description',
+    'attendees',
+    'location',
+    'attachments',
+    'conferenceData',
+    'end(date',
+    'items(id,',
+  ]) {
     assert.ok(!server.includes(forbidden), `campo proibido encontrado: ${forbidden}`);
   }
 });
