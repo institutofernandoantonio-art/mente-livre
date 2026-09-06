@@ -17,6 +17,13 @@ export class OpenAISttProvider implements SpeechToTextProvider {
   readonly provider = 'openai';
   readonly model = OPENAI_STT_MODEL;
 
+  constructor() {
+    // Falha antes da reserva financeira quando a integração foi ligada sem a
+    // chave dedicada. Assim, uma configuração incompleta não consome o teto
+    // interno do mês sem sequer existir possibilidade de chamada ao provedor.
+    getApiKey();
+  }
+
   async transcribe(request: TranscriptionRequest): Promise<TranscriptionResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
