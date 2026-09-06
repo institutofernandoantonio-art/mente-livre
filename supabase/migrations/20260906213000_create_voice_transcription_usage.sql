@@ -35,13 +35,14 @@ create table public.voice_transcription_usage (
 );
 
 comment on table public.voice_transcription_usage is
-  'Metadados mínimos de consumo da Fase 9B. Nunca armazena áudio, transcript ou conteúdo de agenda. O teto interno mensal é aplicado atomicamente antes de qualquer chamada ao provedor.';
+  'Metadados mínimos de consumo da Fase 9B. Nunca armazena áudio, transcript ou conteúdo de agenda. O teto interno mensal global do Mente Livre é aplicado atomicamente antes de qualquer chamada ao provedor.';
 
 alter table public.voice_transcription_usage enable row level security;
 
--- Leitura própria é necessária apenas para o resumo mensal exibido ao
--- usuário. Escrita direta é proibida; toda reserva/finalização passa pelas
--- RPCs SECURITY DEFINER abaixo.
+-- O usuário pode ler apenas o próprio consumo. Escrita direta é proibida;
+-- toda reserva/finalização passa por wrappers públicos estreitos que chamam
+-- funções privilegiadas no schema private (mesmo padrão já adotado no
+-- Google Calendar deste repositório).
 revoke all on public.voice_transcription_usage from anon, authenticated;
 grant select on public.voice_transcription_usage to authenticated;
 
@@ -70,12 +71,21 @@ create policy voice_transcription_usage_delete_never_direct
   to authenticated
   using (false);
 
--- Limite interno rígido do Mente Livre para o MVP: US$ 4,00 por mês UTC.
--- O projeto OpenAI dedicado deve ter um hard spend limit externo de
--- US$ 5,00/mês antes de a feature ser ativada em produção. O delta de
--- US$ 1,00 é margem de segurança contra atraso de contabilização/rounding
--- do provedor. Aumentar este teto exige nova migration + autorização.
-create or replace function public.reserve_voice_transcription_usage(
+-- O schema `private` já é usado por migrations anteriores e não é exposto
+-- em api.schemas. As instruções são repetidas de forma idempotente para que
+-- esta migration preserve a propriedade de segurança por si mesma.
+create schema if not exists private;
+revoke all on schema private from public;
+grant usage on schema private to authenticated;
+
+-- Limite interno rígido GLOBAL do Mente Livre para o MVP: US$ 4,00 por mês
+-- calendário UTC, compartilhado por todos os usuários do app. Não é US$ 4
+-- por usuário. O projeto OpenAI dedicado deve ter um hard spend limit
+-- externo de US$ 5,00/mês antes da feature ser ativada em produção. O delta
+-- de US$ 1,00 é margem adicional porque a aplicação para antes do provedor.
+-- Aumentar qualquer um desses limites exige autorização explícita do dono.
+
+create or replace function private.reserve_voice_transcription_usage(
   p_request_id uuid,
   p_provider text,
   p_model text,
@@ -110,12 +120,14 @@ begin
     return;
   end if;
 
-  -- Serializa as reservas do mesmo usuário no mesmo mês. Isso impede duas
-  -- chamadas concorrentes de passarem simultaneamente pelo cheque de teto.
+  -- Lock GLOBAL por mês, não por usuário. Sem isso, dois usuários poderiam
+  -- passar simultaneamente pelo cheque e ultrapassar o teto total do app.
   perform pg_advisory_xact_lock(
-    hashtextextended(v_user_id::text || ':' || v_month_start::text, 0)
+    hashtextextended('mente-livre-voice:' || v_month_start::text, 0)
   );
 
+  -- Idempotência continua por usuário + request_id: reenvio da mesma
+  -- gravação nunca abre uma segunda reserva nem chama paga novamente.
   select v.id
     into v_existing_id
     from public.voice_transcription_usage v
@@ -126,17 +138,16 @@ begin
     select coalesce(sum(v.reserved_cost_microusd), 0)
       into v_month_reserved
       from public.voice_transcription_usage v
-     where v.user_id = v_user_id
-       and v.created_at >= v_month_start
+     where v.created_at >= v_month_start
        and v.created_at < v_month_start + interval '1 month';
 
     return query select 'duplicate'::text, v_existing_id, v_month_reserved;
     return;
   end if;
 
-  -- Proteção adicional contra clique repetido/bot automatizado. Um comando
-  -- de voz de até 20s torna seis novas reservas por minuto mais do que o
-  -- suficiente para o uso humano do MVP.
+  -- Rate limit por usuário, separado do teto global. Um comando de voz de
+  -- até 20s torna seis novas reservas/minuto mais do que suficiente para o
+  -- uso humano do MVP e limita spam/repetição acidental.
   select count(*)::integer
     into v_recent_count
     from public.voice_transcription_usage v
@@ -148,11 +159,11 @@ begin
     return;
   end if;
 
+  -- Soma GLOBAL: todas as reservas do Mente Livre no mês, qualquer usuário.
   select coalesce(sum(v.reserved_cost_microusd), 0)
     into v_month_reserved
     from public.voice_transcription_usage v
-   where v.user_id = v_user_id
-     and v.created_at >= v_month_start
+   where v.created_at >= v_month_start
      and v.created_at < v_month_start + interval '1 month';
 
   if v_month_reserved + p_reserved_cost_microusd > v_internal_monthly_cap then
@@ -182,10 +193,36 @@ begin
 end;
 $$;
 
+revoke all on function private.reserve_voice_transcription_usage(uuid, text, text, bigint) from public;
+grant execute on function private.reserve_voice_transcription_usage(uuid, text, text, bigint) to authenticated;
+
+create or replace function public.reserve_voice_transcription_usage(
+  p_request_id uuid,
+  p_provider text,
+  p_model text,
+  p_reserved_cost_microusd bigint
+)
+returns table (status text, usage_id uuid, month_reserved_cost_microusd bigint)
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  return query
+    select *
+      from private.reserve_voice_transcription_usage(
+        p_request_id,
+        p_provider,
+        p_model,
+        p_reserved_cost_microusd
+      );
+end;
+$$;
+
 revoke all on function public.reserve_voice_transcription_usage(uuid, text, text, bigint) from public, anon;
 grant execute on function public.reserve_voice_transcription_usage(uuid, text, text, bigint) to authenticated;
 
-create or replace function public.finalize_voice_transcription_usage(
+create or replace function private.finalize_voice_transcription_usage(
   p_request_id uuid,
   p_status text,
   p_duration_ms integer,
@@ -219,10 +256,35 @@ begin
          completed_at = now()
    where v.user_id = v_user_id
      and v.request_id = p_request_id
-     and v.status = 'reserved';
+     and v.status = 'reserved'
+     and p_estimated_cost_microusd <= v.reserved_cost_microusd;
 
   get diagnostics v_updated = row_count;
   return v_updated = 1;
+end;
+$$;
+
+revoke all on function private.finalize_voice_transcription_usage(uuid, text, integer, bigint) from public;
+grant execute on function private.finalize_voice_transcription_usage(uuid, text, integer, bigint) to authenticated;
+
+create or replace function public.finalize_voice_transcription_usage(
+  p_request_id uuid,
+  p_status text,
+  p_duration_ms integer,
+  p_estimated_cost_microusd bigint
+)
+returns boolean
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  return private.finalize_voice_transcription_usage(
+    p_request_id,
+    p_status,
+    p_duration_ms,
+    p_estimated_cost_microusd
+  );
 end;
 $$;
 
