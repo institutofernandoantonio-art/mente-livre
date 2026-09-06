@@ -83,7 +83,7 @@ check('permissão é solicitada antes de depender de SpeechRecognition', () => {
 
 check('botão nunca some só porque SpeechRecognition não está disponível', () => {
   assert.ok(!voiceSource.includes('if (!supported) return null'));
-  assert.match(voiceSource, />Falar</);
+  assert.match(voiceSource, /listening \? 'Parar de ouvir' : 'Falar'/);
   assert.match(voiceSource, /Microfone liberado, mas este navegador não disponibilizou o reconhecimento de fala/);
   assert.match(voiceSource, /Siri e Ditado/);
 });
