@@ -35,16 +35,15 @@ function asInteger(value: number | string | null | undefined): number {
 
 export async function reserveVoiceUsage(input: {
   requestId: string;
-  provider: string;
-  model: string;
-  reservedCostMicrousd: number;
 }): Promise<{ status: VoiceReservationStatus; monthReservedMicrousd: number }> {
   const supabase = await createClient();
+
+  // A fronteira pública recebe SOMENTE o request_id. Provider, modelo e
+  // reserva financeira ficam fixos dentro da função privilegiada no banco.
+  // Isso evita que browser/rota escolham parâmetros capazes de distorcer o
+  // teto global do MVP.
   const { data, error } = await supabase.rpc('reserve_voice_transcription_usage', {
     p_request_id: input.requestId,
-    p_provider: input.provider,
-    p_model: input.model,
-    p_reserved_cost_microusd: input.reservedCostMicrousd,
   });
 
   if (error || !Array.isArray(data) || data.length !== 1) {
