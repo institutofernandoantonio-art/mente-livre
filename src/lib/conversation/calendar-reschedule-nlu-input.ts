@@ -65,7 +65,9 @@ export function prepareCalendarRescheduleNluInput(text: string): PreparedResched
 
   const removeStart = sourceTime.index;
   const removeEnd = removeStart + sourceTime[0].length;
-  const preparedSource = `${sourcePart.slice(0, removeStart).trimEnd()} ${sourcePart.slice(removeEnd).trimStart()}`;
+  const beforeSourceTime = sourcePart.slice(0, removeStart).trimEnd();
+  const cleanedBeforeSourceTime = beforeSourceTime.replace(/(?:^|\s)(?:às|as)\s*$/iu, '').trimEnd();
+  const preparedSource = `${cleanedBeforeSourceTime} ${sourcePart.slice(removeEnd).trimStart()}`;
   const prepared = stripSingleEnclosingQuotePair(
     `${preparedSource}${text.slice(lastPara.index)}`.replace(/\s{2,}/g, ' ').trim(),
   );
