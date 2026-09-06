@@ -1,0 +1,55 @@
+name: Quality Gates
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-gates-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, build e testes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      CI: true
+      NEXT_TELEMETRY_DISABLED: 1
+      # Valores deliberadamente fictícios: servem apenas para permitir que o
+      # Next.js compile caminhos que esperam variáveis presentes. Nenhum segredo
+      # real é necessário para lint/build/testes determinísticos desta suíte.
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-anon-key-not-a-service-role
+      SUPABASE_SECRET_KEY: ci-secret-key-placeholder
+      ANTHROPIC_API_KEY: ci-anthropic-key-placeholder
+      GOOGLE_CLIENT_ID: ci-google-client-id-placeholder
+      GOOGLE_CLIENT_SECRET: ci-google-client-secret-placeholder
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependências exatamente do lockfile
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build de produção
+        run: npm run build
+
+      - name: Testes automatizáveis
+        run: npm run test:ci
