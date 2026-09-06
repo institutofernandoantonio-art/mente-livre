@@ -28,16 +28,17 @@ check('consulta somente a agenda primary', () => {
   assert.ok(server.includes('/calendars/primary/events'));
 });
 
-check('limita a resposta a 4 compromissos ordenados pelo início', () => {
-  assert.ok(server.includes("url.searchParams.set('maxResults', '4')"));
+check('próximos compromissos continuam limitados a 4 e ordenados pelo início', () => {
+  assert.ok(server.includes('maxResults: 4'));
+  assert.ok(server.includes("url.searchParams.set('maxResults', String(input.maxResults))"));
   assert.ok(server.includes("url.searchParams.set('singleEvents', 'true')"));
   assert.ok(server.includes("url.searchParams.set('orderBy', 'startTime')"));
-  assert.ok(server.includes("url.searchParams.set('timeMin', new Date().toISOString())"));
+  assert.ok(server.includes('timeMin: new Date().toISOString()'));
 });
 
 check('usa timezone validado do browser para a leitura/apresentação', () => {
-  assert.ok(server.includes('isValidTimeZone(timeZone)'));
-  assert.ok(server.includes("url.searchParams.set('timeZone', timeZone)"));
+  assert.ok(server.includes('isValidTimeZone(input.timeZone)'));
+  assert.ok(server.includes("url.searchParams.set('timeZone', input.timeZone)"));
   assert.ok(ui.includes('Intl.DateTimeFormat().resolvedOptions().timeZone'));
 });
 
@@ -49,10 +50,10 @@ check('token Google permanece no servidor e reutiliza a primitiva existente', ()
   assert.ok(!ui.includes('authorization:'));
 });
 
-check('campos solicitados são mínimos e não incluem conteúdo pessoal desnecessário', () => {
+check('campos solicitados seguem mínimos para as duas experiências aprovadas', () => {
   assert.ok(
     server.includes(
-      'items(summary,status,htmlLink,start(date,dateTime,timeZone))',
+      'items(summary,status,htmlLink,start(date,dateTime,timeZone),end(date,dateTime,timeZone))',
     ),
   );
   for (const forbidden of [
@@ -61,7 +62,6 @@ check('campos solicitados são mínimos e não incluem conteúdo pessoal desnece
     'location',
     'attachments',
     'conferenceData',
-    'end(date',
     'items(id,',
   ]) {
     assert.ok(!server.includes(forbidden), `campo proibido encontrado: ${forbidden}`);
@@ -85,6 +85,13 @@ check('UI oferece acesso ao evento e ao Google Calendar sem criar segunda fonte 
   assert.ok(ui.includes('https://calendar.google.com/calendar/u/0/r'));
   assert.ok(!ui.includes('localStorage'));
   assert.ok(!ui.includes('sessionStorage'));
+});
+
+check('leitura conversacional usa janela explícita e limite controlado', () => {
+  assert.ok(server.includes('export async function getGoogleCalendarEventsInWindow'));
+  assert.ok(server.includes("url.searchParams.set('timeMin', input.timeMin)"));
+  assert.ok(server.includes("url.searchParams.set('timeMax', input.timeMax)"));
+  assert.ok(server.includes('Math.min(Math.max(value, 1), 10)'));
 });
 
 const passed = results.filter(Boolean).length;
