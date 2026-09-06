@@ -757,3 +757,35 @@ documentação (que não detalhava o formato exato).
 **`supabase/config.toml` e `supabase/.gitignore`** foram gerados por
 `supabase init` e são seguros para versionar — nenhum segredo literal
 neles; todo campo sensível usa `env(NOME_DA_VARIAVEL)`.
+
+---
+
+### Fase 9 começa por ditado do navegador, sem envio automático
+
+**Data:** 2026-09-06.
+**Fase:** Fase 9 — Voz (primeira fatia).
+**Decisão:** iniciar voz em `/conversa` por progressive enhancement usando
+`SpeechRecognition`/`webkitSpeechRecognition` quando o navegador ou
+aparelho oferecer essa capacidade. O idioma inicial é `pt-BR`; o
+reconhecimento é de um turno (`continuous = false`), sem resultados
+intermediários (`interimResults = false`) e com uma única alternativa. O
+resultado é apenas um transcript inserido no textarea já existente.
+**Segurança:** ditado nunca chama o dispatcher e nunca executa ação por si
+só. O microfone só começa após gesto explícito no botão; o transcript fica
+visível e editável; o usuário precisa revisar e tocar `Enviar`. Depois
+disso, o texto entra exatamente no pipeline conversacional já validado,
+inclusive mantendo as confirmações explícitas para criar, remarcar ou
+cancelar compromissos. Navegadores sem suporte não exibem o controle.
+**Privacidade/minimização:** nesta fatia o código do Mente Livre não usa
+`MediaRecorder`, `getUserMedia`, upload, `fetch` de áudio nem persistência
+de áudio. O reconhecimento pode depender do serviço do próprio
+navegador/plataforma; por isso a interface informa que essa capacidade é do
+aparelho. O Mente Livre recebe apenas o texto quando o usuário efetivamente
+o envia.
+**Motivo:** entregar a primeira experiência de voz reutilizando a camada de
+intenção/agenda já testada, com risco e custo mínimos, sem introduzir um
+novo provedor de STT, segredo, dependência, migration ou armazenamento de
+áudio antes de existir necessidade comprovada.
+**Fora desta fatia:** envio automático ao terminar de falar, modo mãos
+livres contínuo, wake word, resposta falada/TTS, gravação de áudio, serviço
+próprio de STT e mudança de `brain_dumps.source` para `voice`.

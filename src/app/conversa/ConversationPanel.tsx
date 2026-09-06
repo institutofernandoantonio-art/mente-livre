@@ -7,6 +7,7 @@ import { cn } from '@/lib/cn';
 import { sendConversationMessage } from '@/lib/conversation/actions';
 import { getConversationPresentationState } from '@/lib/conversation/presentation';
 import type { ProposedAction } from '@/lib/conversation/proposed-action';
+import { VoiceDictationButton } from './VoiceDictationButton';
 import {
   mapPresentationBootstrap,
   mapEntryResultToUiEffect,
@@ -32,6 +33,13 @@ import {
 // (localStorage/contexto global/estado do componente), nunca validado
 // aqui (validação real vive em `calendar-query.ts`, a única camada que
 // precisa dele). Mesma técnica já usada por `BrainDumpForm.tsx`.
+//
+// Fase 9 — primeira fatia de voz: `VoiceDictationButton` usa somente a API
+// de reconhecimento de fala disponibilizada pelo navegador/aparelho e
+// devolve TEXTO para este componente. O transcript entra no mesmo `text`
+// controlado já usado pela digitação e exige revisão + clique em Enviar.
+// Nenhum áudio cru, stream, blob ou permissão de microfone atravessa as
+// Server Functions do Mente Livre nesta fatia.
 //
 // Este componente NUNCA:
 // - importa Supabase/`conversation-entry` internals/`runtime-state-storage`/
@@ -190,6 +198,12 @@ export function ConversationPanel() {
     setText(event.target.value);
   }
 
+  function handleVoiceTranscript(transcript: string) {
+    // Ditado nunca dispara ação sozinho: apenas substitui o campo editável.
+    // O usuário vê/revisa o transcript e continua precisando tocar Enviar.
+    setText(transcript.slice(0, 10000));
+  }
+
   const inputDisabled = pending || bootstrapping;
 
   return (
@@ -211,6 +225,7 @@ export function ConversationPanel() {
           onChange={handleTextChange}
           disabled={inputDisabled}
         />
+        <VoiceDictationButton disabled={inputDisabled} onTranscript={handleVoiceTranscript} />
         <Button type="submit" variant="primary" loading={pending} disabled={inputDisabled} className="w-full">
           Enviar
         </Button>
