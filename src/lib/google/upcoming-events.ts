@@ -9,8 +9,8 @@ import { getGoogleCalendarAccessToken } from './calendar';
 // Segurança/privacidade:
 // - token Google nunca sai do servidor;
 // - consulta somente `calendarId=primary`;
-// - pede ao endpoint APENAS título, início/fim e htmlLink — nunca descrição,
-//   participantes, localização ou anexos;
+// - pede ao endpoint APENAS título, início e htmlLink — nunca descrição,
+//   participantes, localização, anexos ou outros metadados do compromisso;
 // - nenhum dado de evento é persistido ou cacheado pelo Mente Livre;
 // - timezone vem do browser apenas para apresentação temporal, nunca para
 //   autenticação/autorização;
@@ -35,7 +35,7 @@ export async function getUpcomingGoogleCalendarEvents(timeZone: string) {
   url.searchParams.set('timeZone', timeZone);
   url.searchParams.set(
     'fields',
-    'items(id,summary,status,htmlLink,start(date,dateTime,timeZone),end(date,dateTime,timeZone))',
+    'items(summary,status,htmlLink,start(date,dateTime,timeZone))',
   );
 
   let response: Response;
@@ -85,7 +85,6 @@ export async function getUpcomingGoogleCalendarEvents(timeZone: string) {
       status?: unknown;
       htmlLink?: unknown;
       start?: unknown;
-      end?: unknown;
     };
 
     if (event.status === 'cancelled') {
@@ -93,7 +92,6 @@ export async function getUpcomingGoogleCalendarEvents(timeZone: string) {
     }
 
     const start = readEventDate(event.start);
-    const end = readEventDate(event.end);
     if (!start) {
       return [];
     }
@@ -109,7 +107,6 @@ export async function getUpcomingGoogleCalendarEvents(timeZone: string) {
             ? event.summary.trim().slice(0, 180)
             : 'Sem título',
         start: start.value,
-        end: end?.value ?? null,
         allDay: start.kind === 'date',
         htmlLink,
       },
