@@ -61,6 +61,20 @@ await check('7. não modifica o texto original recebido', () => {
   assert.equal(original, copy);
 });
 
+await check('8. comando copiado com aspas tipográficas externas é normalizado só na cópia da NLU', () => {
+  const original = '“Mude a reunião teste de hoje às 17h para 18h.”';
+  const result = prepareCalendarRescheduleNluInput(original);
+  assert.equal(result.transformed, true);
+  assert.equal(result.text, 'Mude a reunião teste de hoje para 18h.');
+  assert.equal(original, '“Mude a reunião teste de hoje às 17h para 18h.”');
+});
+
+await check('9. aspas externas não são removidas quando a frase não cumpre os sinais seguros de remarcação', () => {
+  const text = '“Tenho reunião hoje às 17h para falar às 18h.”';
+  const result = prepareCalendarRescheduleNluInput(text);
+  assert.deepEqual(result, { text, transformed: false });
+});
+
 const passed = results.filter(Boolean).length;
 const failed = results.length - passed;
 console.log(`\n${passed} passaram, ${failed} falharam (${results.length} total)`);
