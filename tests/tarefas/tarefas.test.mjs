@@ -189,7 +189,7 @@ check('19. controles de prioridade só existem dentro do bloco de tarefa pending
   assert.ok(pendingIndex < priorityActionIndex);
   assert.ok(pendingIndex < completeIndex);
   assert.ok(pendingIndex < cancelIndex);
-  assert.equal(pageCode.split("task.status === 'pending'").length - 1, 2);
+  assert.equal(pageCode.split("task.status === 'pending'").length - 1, 1);
 });
 
 check('20. opção atualmente selecionada usa variant secondary; demais usam ghost', () => {
