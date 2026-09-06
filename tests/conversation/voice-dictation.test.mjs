@@ -35,10 +35,18 @@ check('ditado é de um turno e sem resultados intermediários', () => {
   assert.match(voiceSource, /recognition\.maxAlternatives = 1/);
 });
 
-check('voz não envia nem grava áudio pelo código do Mente Livre', () => {
-  for (const forbidden of ['MediaRecorder', 'getUserMedia', 'FormData', 'fetch(', 'localStorage', 'sessionStorage']) {
+check('voz não grava nem envia áudio pelo código do Mente Livre', () => {
+  for (const forbidden of ['MediaRecorder', 'FormData', 'fetch(', 'localStorage', 'sessionStorage']) {
     assert.ok(!voiceSource.includes(forbidden), `capacidade proibida nesta fatia: ${forbidden}`);
   }
+});
+
+check('preflight solicita permissão local e encerra o stream imediatamente', () => {
+  assert.match(voiceSource, /navigator\.mediaDevices/);
+  assert.match(voiceSource, /mediaDevices\.getUserMedia\(\{ audio: true \}\)/);
+  assert.match(voiceSource, /stream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
+  assert.match(voiceSource, /NotAllowedError/);
+  assert.match(voiceSource, /SecurityError/);
 });
 
 check('componente de voz não conhece o dispatcher nem ações de calendário', () => {
@@ -60,31 +68,36 @@ check('interface deixa explícita a revisão antes do envio', () => {
   assert.match(voiceSource, /revisar antes de enviar/i);
 });
 
-check('reconhecimento só começa por ação explícita no botão', () => {
+check('microfone e reconhecimento só começam por ação explícita no botão', () => {
   assert.match(voiceSource, /onClick=\{active \? stopListening : startListening\}/);
-  const handlerIndex = voiceSource.indexOf('function startListening()');
-  const startIndex = voiceSource.indexOf('recognition.start()');
+  const handlerIndex = voiceSource.indexOf('async function startListening()');
+  const permissionCallIndex = voiceSource.indexOf('await requestMicrophonePermission()', handlerIndex);
+  const startIndex = voiceSource.indexOf('recognition.start()', handlerIndex);
   assert.ok(handlerIndex >= 0, 'handler startListening precisa existir');
-  assert.ok(startIndex > handlerIndex, 'recognition.start() só pode existir dentro/depois do handler de gesto explícito');
+  assert.ok(permissionCallIndex > handlerIndex, 'permissão só pode ser pedida dentro/depois do handler de gesto explícito');
+  assert.ok(startIndex > permissionCallIndex, 'recognition.start() só pode vir depois do preflight de permissão');
 });
 
-check('mostra feedback imediato enquanto o microfone está abrindo', () => {
+check('mostra feedback imediato durante permissão e abertura do reconhecimento', () => {
   assert.match(voiceSource, /const \[starting, setStarting\] = useState\(false\)/);
   assert.match(voiceSource, /setStarting\(true\)/);
-  assert.match(voiceSource, /Abrindo microfone\.\.\./);
+  assert.match(voiceSource, /Pedindo acesso ao microfone\.\.\./);
+  assert.match(voiceSource, /Abrindo reconhecimento de voz\.\.\./);
   assert.match(voiceSource, /starting \? 'Cancelar'/);
 });
 
-check('impede starts concorrentes antes do onstart', () => {
+check('impede starts concorrentes e invalida tentativa cancelada', () => {
   assert.match(voiceSource, /disabled \|\| listening \|\| starting/);
   assert.match(voiceSource, /const active = starting \|\| listening/);
+  assert.match(voiceSource, /startAttemptRef\.current \+= 1/);
+  assert.match(voiceSource, /startAttemptRef\.current !== attempt/);
 });
 
-check('watchdog libera a UI quando o navegador não devolve callbacks', () => {
+check('watchdog libera a UI quando o reconhecimento não devolve callbacks', () => {
   assert.match(voiceSource, /const START_WATCHDOG_MS = 8000/);
   assert.match(voiceSource, /window\.setTimeout/);
   assert.match(voiceSource, /recognition\.abort\(\)/);
-  assert.match(voiceSource, /O microfone não respondeu neste navegador/);
+  assert.match(voiceSource, /o reconhecimento de voz deste navegador não respondeu/i);
   assert.match(voiceSource, /clearStartWatchdog\(\)/);
 });
 
