@@ -59,7 +59,7 @@ Não fazer merge/ativação da Fase 9B até confirmar todos os itens:
 - [ ] chave exclusiva desse projeto criada e configurada somente como segredo server-side no ambiente do Mente Livre;
 - [ ] migration `20260906213000_create_voice_transcription_usage.sql` revisada e aplicada no Supabase de produção;
 - [ ] decisão final da Fase 9B registrada em `docs/DECISIONS.md`;
-- [x] Quality Gates verdes no head validado `a16c9da70ff3c2f1e67343942b58abd9666539b9` (run #95);
+- [x] Quality Gates verdes no último head revisado antes de ativação; a cada mudança de código/documentação o head novo precisa ficar verde novamente antes de qualquer merge;
 - [ ] `MENTE_LIVRE_STT_ENABLED=true` somente depois dos itens anteriores.
 
 ## Regra de mudança de custo
