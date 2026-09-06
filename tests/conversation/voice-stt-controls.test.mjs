@@ -58,6 +58,12 @@ check('rota autentica e valida áudio antes de chamar o provider', () => {
   assert.match(route, /unsupported_audio/);
 });
 
+check('respostas de transcrição nunca são cacheadas', () => {
+  assert.match(route, /const NO_STORE_HEADERS = \{ 'Cache-Control': 'no-store' \} as const/);
+  assert.match(route, /NextResponse\.json\(\{ error: message, code \}, \{ status, headers: NO_STORE_HEADERS \}\)/);
+  assert.match(route, /NextResponse\.json\(\{ text: result\.text, usage \}, \{ headers: NO_STORE_HEADERS \}\)/);
+});
+
 check('teto é reservado antes de qualquer chamada paga e finalizado depois', () => {
   assert.match(route, /budget_exceeded/);
   assert.match(route, /rate_limited/);
