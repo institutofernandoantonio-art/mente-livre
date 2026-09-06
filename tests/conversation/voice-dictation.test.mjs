@@ -61,12 +61,31 @@ check('interface deixa explícita a revisão antes do envio', () => {
 });
 
 check('reconhecimento só começa por ação explícita no botão', () => {
-  assert.match(voiceSource, /onClick=\{listening \? stopListening : startListening\}/);
-  const effectStart = voiceSource.indexOf('useEffect(() => {');
-  const effectEnd = voiceSource.indexOf('}, []);', effectStart);
-  const recognitionStart = voiceSource.indexOf('recognition.start()');
-  assert.ok(effectStart >= 0 && effectEnd > effectStart);
-  assert.ok(recognitionStart > effectEnd, 'recognition.start() não pode rodar no efeito de montagem');
+  assert.match(voiceSource, /onClick=\{active \? stopListening : startListening\}/);
+  const handlerIndex = voiceSource.indexOf('function startListening()');
+  const startIndex = voiceSource.indexOf('recognition.start()');
+  assert.ok(handlerIndex >= 0, 'handler startListening precisa existir');
+  assert.ok(startIndex > handlerIndex, 'recognition.start() só pode existir dentro/depois do handler de gesto explícito');
+});
+
+check('mostra feedback imediato enquanto o microfone está abrindo', () => {
+  assert.match(voiceSource, /const \[starting, setStarting\] = useState\(false\)/);
+  assert.match(voiceSource, /setStarting\(true\)/);
+  assert.match(voiceSource, /Abrindo microfone\.\.\./);
+  assert.match(voiceSource, /starting \? 'Cancelar'/);
+});
+
+check('impede starts concorrentes antes do onstart', () => {
+  assert.match(voiceSource, /disabled \|\| listening \|\| starting/);
+  assert.match(voiceSource, /const active = starting \|\| listening/);
+});
+
+check('watchdog libera a UI quando o navegador não devolve callbacks', () => {
+  assert.match(voiceSource, /const START_WATCHDOG_MS = 8000/);
+  assert.match(voiceSource, /window\.setTimeout/);
+  assert.match(voiceSource, /recognition\.abort\(\)/);
+  assert.match(voiceSource, /O microfone não respondeu neste navegador/);
+  assert.match(voiceSource, /clearStartWatchdog\(\)/);
 });
 
 const passed = results.filter(Boolean).length;

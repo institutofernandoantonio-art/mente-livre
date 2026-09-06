@@ -47,6 +47,8 @@ type VoiceDictationButtonProps = {
   onTranscript: (transcript: string) => void;
 };
 
+const START_WATCHDOG_MS = 8000;
+
 function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null {
   if (typeof window === 'undefined') return null;
 
@@ -91,6 +93,8 @@ function voiceErrorMessage(error: string): string | null {
 
 export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationButtonProps) {
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const startWatchdogRef = useRef<number | null>(null);
+  const [starting, setStarting] = useState(false);
   const [listening, setListening] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const supported = useSyncExternalStore(
@@ -101,17 +105,36 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
   useEffect(() => {
     return () => {
+      if (startWatchdogRef.current !== null) {
+        window.clearTimeout(startWatchdogRef.current);
+        startWatchdogRef.current = null;
+      }
       recognitionRef.current?.abort();
       recognitionRef.current = null;
     };
   }, []);
 
+  function clearStartWatchdog() {
+    if (startWatchdogRef.current === null) return;
+    window.clearTimeout(startWatchdogRef.current);
+    startWatchdogRef.current = null;
+  }
+
   function stopListening() {
+    clearStartWatchdog();
+    if (starting) {
+      recognitionRef.current?.abort();
+      recognitionRef.current = null;
+      setStarting(false);
+      setListening(false);
+      setMessage('Microfone cancelado. Toque em Falar para tentar novamente.');
+      return;
+    }
     recognitionRef.current?.stop();
   }
 
   function startListening() {
-    if (disabled || listening) return;
+    if (disabled || listening || starting) return;
 
     const Recognition = getSpeechRecognitionConstructor();
     if (Recognition === null) return;
@@ -122,8 +145,12 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     recognition.continuous = false;
     recognition.maxAlternatives = 1;
 
+    setMessage(null);
+    setStarting(true);
+
     recognition.onstart = () => {
-      setMessage(null);
+      clearStartWatchdog();
+      setStarting(false);
       setListening(true);
     };
 
@@ -144,21 +171,37 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     };
 
     recognition.onerror = (event) => {
+      clearStartWatchdog();
+      setStarting(false);
+      setListening(false);
       const nextMessage = voiceErrorMessage(event.error);
       if (nextMessage !== null) setMessage(nextMessage);
     };
 
     recognition.onend = () => {
+      clearStartWatchdog();
+      setStarting(false);
       setListening(false);
       recognitionRef.current = null;
     };
 
     recognitionRef.current = recognition;
+    startWatchdogRef.current = window.setTimeout(() => {
+      if (recognitionRef.current !== recognition) return;
+      recognition.abort();
+      recognitionRef.current = null;
+      startWatchdogRef.current = null;
+      setStarting(false);
+      setListening(false);
+      setMessage('O microfone não respondeu neste navegador. Tente novamente ou use o ditado do teclado.');
+    }, START_WATCHDOG_MS);
 
     try {
       recognition.start();
     } catch {
+      clearStartWatchdog();
       recognitionRef.current = null;
+      setStarting(false);
       setListening(false);
       setMessage('Não consegui iniciar o microfone. Tente novamente.');
     }
@@ -166,23 +209,27 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
   if (!supported) return null;
 
+  const active = starting || listening;
+
   return (
     <div className="flex flex-col gap-2">
       <Button
         type="button"
         variant="secondary"
         disabled={disabled}
-        onClick={listening ? stopListening : startListening}
+        onClick={active ? stopListening : startListening}
         className="w-full"
-        aria-pressed={listening}
+        aria-pressed={active}
       >
         <span aria-hidden="true" className="text-base leading-none">🎙️</span>
-        {listening ? 'Parar de ouvir' : 'Falar'}
+        {starting ? 'Cancelar' : listening ? 'Parar de ouvir' : 'Falar'}
       </Button>
       <p aria-live="polite" className="text-xs text-ink-soft">
-        {listening
-          ? 'Ouvindo... fale naturalmente.'
-          : message ?? 'A fala vira texto para você revisar antes de enviar.'}
+        {starting
+          ? 'Abrindo microfone...'
+          : listening
+            ? 'Ouvindo... fale naturalmente.'
+            : message ?? 'A fala vira texto para você revisar antes de enviar.'}
       </p>
       <p className="text-[11px] leading-relaxed text-ink-soft">
         O reconhecimento de voz usa o recurso disponível no seu navegador ou aparelho. O Mente Livre não envia nem armazena áudio bruto nesta etapa.
