@@ -4,8 +4,9 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 
 export type TaskPriority = 'alta' | 'média' | 'baixa';
+export type TaskPriorityInput = TaskPriority | null;
 export type SetTaskPriorityResult =
-  | { status: 'updated'; priority: TaskPriority }
+  | { status: 'updated'; priority: TaskPriorityInput }
   | { status: 'not_found' }
   | { status: 'invalid_priority' }
   | { status: 'error' };
@@ -14,16 +15,16 @@ function isNonBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function isTaskPriority(value: unknown): value is TaskPriority {
-  return value === 'alta' || value === 'média' || value === 'baixa';
+function isTaskPriorityInput(value: unknown): value is TaskPriorityInput {
+  return value === null || value === 'alta' || value === 'média' || value === 'baixa';
 }
 
 export async function setTaskPriority(
   taskId: string,
-  priority: TaskPriority,
+  priority: TaskPriorityInput,
 ): Promise<SetTaskPriorityResult> {
   if (!isNonBlankString(taskId)) return { status: 'not_found' };
-  if (!isTaskPriority(priority)) return { status: 'invalid_priority' };
+  if (!isTaskPriorityInput(priority)) return { status: 'invalid_priority' };
 
   try {
     const supabase = await createClient();
@@ -52,6 +53,6 @@ export async function setTaskPriority(
   }
 }
 
-export async function setTaskPriorityAction(taskId: string, priority: TaskPriority): Promise<void> {
+export async function setTaskPriorityAction(taskId: string, priority: TaskPriorityInput): Promise<void> {
   await setTaskPriority(taskId, priority);
 }

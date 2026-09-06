@@ -127,6 +127,13 @@ export default async function TarefasPage() {
                               </Button>
                             </form>
                           ))}
+                          {task.priority && (
+                            <form action={setTaskPriorityAction.bind(null, task.id, null)}>
+                              <Button type="submit" variant="ghost">
+                                Sem prioridade
+                              </Button>
+                            </form>
+                          )}
                         </div>
                       </div>
 
