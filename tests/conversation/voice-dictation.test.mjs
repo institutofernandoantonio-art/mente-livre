@@ -51,6 +51,12 @@ check('proteção contra repetição usa request_id UUID por gravação', () => 
   assert.match(voiceSource, /form\.append\('request_id', id\)/);
 });
 
+check('cliente nunca repete automaticamente uma chamada de transcrição', () => {
+  const transcriptionFetches = voiceSource.match(/fetch\('\/api\/voice\/transcribe'/g) ?? [];
+  assert.equal(transcriptionFetches.length, 1);
+  assert.ok(!voiceSource.includes('setInterval('));
+});
+
 check('não persiste áudio ou transcript no navegador', () => {
   for (const forbidden of ['localStorage', 'sessionStorage', 'indexedDB']) {
     assert.ok(!voiceSource.includes(forbidden), `persistência proibida: ${forbidden}`);
