@@ -14,6 +14,7 @@ import type { ProposedAction } from './proposed-action';
 import type { CalendarQueryResult } from './calendar-query';
 import { handleCalendarCancellationRuntime, startCalendarCancellation } from './calendar-cancel-flow';
 import { handleCalendarRescheduleRuntime, startCalendarReschedule } from './calendar-reschedule-flow';
+import { prepareCalendarRescheduleNluInput } from './calendar-reschedule-nlu-input';
 
 // ============================================================================
 // Conversation entry — dispatcher server-side único da conversa.
@@ -39,6 +40,14 @@ import { handleCalendarRescheduleRuntime, startCalendarReschedule } from './cale
 // retornou `not_found` OU `expired` — nunca depois de `found`/`error`, e
 // nunca como segunda tentativa após um handler. `cancel_event` e
 // `reschedule_event` seguem para suas fatias especializadas sem segunda NLU.
+//
+// Frases inequívocas de remarcação que contêm horário de origem + destino
+// passam antes por `prepareCalendarRescheduleNluInput`: a CÓPIA enviada à
+// NLU omite só o horário antigo para que o guard temporal compare o destino
+// correto. O texto ORIGINAL continua sendo passado a startCalendarReschedule
+// e é a fonte usada para localizar o evento. Se a NLU preparada não voltar
+// como reschedule_event, o fluxo falha fechado em `needs_input` e nunca usa
+// o texto transformado para outra ação.
 //
 // --- `now` / timezone -----------------------------------------------------
 //
@@ -161,7 +170,8 @@ function translateProposalResult(result: ProposalTurnResult): ConversationEntryR
 }
 
 async function handleFirstMessage(text: string, now: number, timezone: string): Promise<ConversationEntryResult> {
-  const extraction = await extractStructuredIntent(text, now);
+  const prepared = prepareCalendarRescheduleNluInput(text);
+  const extraction = await extractStructuredIntent(prepared.text, now);
 
   switch (extraction.status) {
     case 'invalid':
@@ -169,6 +179,13 @@ async function handleFirstMessage(text: string, now: number, timezone: string): 
     case 'error':
       return { status: 'error' };
     case 'extracted': {
+      // Texto transformado existe SOMENTE para destravar a interpretação do
+      // destino em uma remarcação com dois horários. Nunca permitimos que
+      // essa cópia gere outra família de ação.
+      if (prepared.transformed && extraction.intent.intentType !== 'reschedule_event') {
+        return { status: 'needs_input' };
+      }
+
       if (extraction.intent.intentType === 'cancel_event') {
         return startCalendarCancellation(extraction.intent, text, now, timezone);
       }
