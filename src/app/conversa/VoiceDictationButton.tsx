@@ -2,357 +2,311 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
-
-type SpeechRecognitionAlternativeLike = {
-  transcript: string;
-};
-
-type SpeechRecognitionResultLike = {
-  isFinal: boolean;
-  length: number;
-  [index: number]: SpeechRecognitionAlternativeLike;
-};
-
-type SpeechRecognitionResultListLike = {
-  length: number;
-  [index: number]: SpeechRecognitionResultLike;
-};
-
-type SpeechRecognitionEventLike = Event & {
-  results: SpeechRecognitionResultListLike;
-};
-
-type SpeechRecognitionErrorEventLike = Event & {
-  error: string;
-};
-
-type BrowserSpeechRecognition = {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  maxAlternatives: number;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-  onstart: (() => void) | null;
-  onend: (() => void) | null;
-  onspeechend: (() => void) | null;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
-};
-
-type SpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+import { VOICE_MAX_AUDIO_BYTES, VOICE_MAX_DURATION_MS } from '@/lib/voice/limits';
 
 type VoiceDictationButtonProps = {
   disabled: boolean;
   onTranscript: (transcript: string) => void;
 };
 
-type MicrophonePermissionResult = 'granted' | 'unavailable' | 'denied' | 'insecure' | 'error';
+type VoiceUsageSummary = {
+  calls: number;
+  minutes: number;
+  estimatedCostUsd: number;
+  reservedBudgetUsd: number;
+  internalLimitUsd: number;
+};
 
-const START_WATCHDOG_MS = 8000;
-const LISTENING_WATCHDOG_MS = 15000;
+type VoiceApiPayload = {
+  text?: unknown;
+  usage?: VoiceUsageSummary | null;
+  error?: unknown;
+  code?: unknown;
+};
 
-function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null {
-  if (typeof window === 'undefined') return null;
+type VoiceState = 'idle' | 'requesting' | 'recording' | 'transcribing';
 
-  const speechWindow = window as typeof window & {
-    SpeechRecognition?: SpeechRecognitionConstructor;
-    webkitSpeechRecognition?: SpeechRecognitionConstructor;
-  };
+// Pequena margem para o callback de stop do navegador não ultrapassar o
+// limite server-side de 20s por atraso do event loop.
+const AUTO_STOP_MS = VOICE_MAX_DURATION_MS - 500;
 
-  return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition ?? null;
+function requestId(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function isIosNonSafariBrowser(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  const userAgent = navigator.userAgent;
-  const isIos = /iPhone|iPad|iPod/i.test(userAgent);
-  const isAlternativeIosBrowser = /CriOS|FxiOS|EdgiOS|OPiOS/i.test(userAgent);
-  return isIos && isAlternativeIosBrowser;
-}
-
-function voiceErrorMessage(error: string): string | null {
-  switch (error) {
-    case 'aborted':
-      return null;
-    case 'not-allowed':
-    case 'service-not-allowed':
-      return 'O navegador bloqueou o reconhecimento de fala. No iPhone, abra o Mente Livre diretamente no Safari; no Mac, confira a permissão do microfone e tente novamente.';
-    case 'no-speech':
-      return 'Não ouvi nenhuma fala. Tente novamente.';
-    case 'audio-capture':
-      return 'Não consegui acessar o microfone deste aparelho.';
-    default:
-      return 'Não consegui reconhecer sua fala agora. Tente novamente.';
+function preferredMimeType(): string | undefined {
+  if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+    return undefined;
   }
-}
 
-function isMicrophonePermissionDenied(error: unknown): boolean {
-  return error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'SecurityError');
-}
-
-async function requestMicrophonePermission(): Promise<MicrophonePermissionResult> {
-  if (typeof window === 'undefined' || typeof navigator === 'undefined') return 'unavailable';
-  if (!window.isSecureContext) return 'insecure';
-
-  const mediaDevices = navigator.mediaDevices;
-  if (!mediaDevices?.getUserMedia) return 'unavailable';
-
-  try {
-    // O acesso acontece somente após o toque explícito do usuário. Este
-    // preflight confirma a permissão real do microfone antes de depender do
-    // SpeechRecognition, que pode estar ausente/limitado no Safari/PWA.
-    // O stream não é lido, persistido ou enviado e é encerrado imediatamente.
-    const stream = await mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((track) => track.stop());
-    return 'granted';
-  } catch (error) {
-    if (isMicrophonePermissionDenied(error)) return 'denied';
-    return 'error';
+  for (const candidate of [
+    'audio/mp4',
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+  ]) {
+    if (MediaRecorder.isTypeSupported(candidate)) return candidate;
   }
+
+  return undefined;
+}
+
+function extensionForMime(type: string): string {
+  const base = type.split(';', 1)[0].toLowerCase();
+  if (base === 'audio/mp4') return 'mp4';
+  if (base === 'audio/ogg') return 'ogg';
+  if (base === 'audio/mpeg') return 'mp3';
+  if (base === 'audio/wav' || base === 'audio/x-wav') return 'wav';
+  if (base === 'audio/m4a' || base === 'audio/x-m4a') return 'm4a';
+  return 'webm';
+}
+
+function formatUsd(value: number): string {
+  return value.toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: value < 0.01 ? 4 : 2,
+    maximumFractionDigits: 4,
+  });
 }
 
 export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationButtonProps) {
-  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
-  const startWatchdogRef = useRef<number | null>(null);
-  const listeningWatchdogRef = useRef<number | null>(null);
-  const permissionCheckedRef = useRef(false);
-  const startAttemptRef = useRef(0);
-  const transcriptSeenRef = useRef(false);
-  const recognitionErrorRef = useRef(false);
-  const [starting, setStarting] = useState(false);
-  const [startingMessage, setStartingMessage] = useState('Abrindo microfone...');
-  const [listening, setListening] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const recordingStartedAtRef = useRef(0);
+  const currentRequestIdRef = useRef<string | null>(null);
+  const autoStopRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
+
+  const [state, setState] = useState<VoiceState>('idle');
+  const [message, setMessage] = useState<string>('A fala vira texto para você revisar antes de enviar.');
+  const [usage, setUsage] = useState<VoiceUsageSummary | null>(null);
 
   useEffect(() => {
+    mountedRef.current = true;
+
+    async function loadUsage() {
+      try {
+        const response = await fetch('/api/voice/usage', { cache: 'no-store' });
+        if (!response.ok) return;
+        const payload: unknown = await response.json();
+        if (
+          typeof payload === 'object' &&
+          payload !== null &&
+          'usage' in payload &&
+          typeof payload.usage === 'object' &&
+          payload.usage !== null
+        ) {
+          setUsage(payload.usage as VoiceUsageSummary);
+        }
+      } catch {
+        // O resumo é informativo; falha nele nunca bloqueia a conversa.
+      }
+    }
+
+    void loadUsage();
+
     return () => {
-      startAttemptRef.current += 1;
-      if (startWatchdogRef.current !== null) {
-        window.clearTimeout(startWatchdogRef.current);
-        startWatchdogRef.current = null;
+      mountedRef.current = false;
+      if (autoStopRef.current !== null) window.clearTimeout(autoStopRef.current);
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        recorderRef.current.stop();
       }
-      if (listeningWatchdogRef.current !== null) {
-        window.clearTimeout(listeningWatchdogRef.current);
-        listeningWatchdogRef.current = null;
-      }
-      recognitionRef.current?.abort();
-      recognitionRef.current = null;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      recorderRef.current = null;
+      streamRef.current = null;
     };
   }, []);
 
-  function clearStartWatchdog() {
-    if (startWatchdogRef.current === null) return;
-    window.clearTimeout(startWatchdogRef.current);
-    startWatchdogRef.current = null;
+  function releaseCapture() {
+    if (autoStopRef.current !== null) {
+      window.clearTimeout(autoStopRef.current);
+      autoStopRef.current = null;
+    }
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    recorderRef.current = null;
   }
 
-  function clearListeningWatchdog() {
-    if (listeningWatchdogRef.current === null) return;
-    window.clearTimeout(listeningWatchdogRef.current);
-    listeningWatchdogRef.current = null;
-  }
+  async function transcribe(blob: Blob, durationMs: number, id: string) {
+    if (!mountedRef.current) return;
+    setState('transcribing');
+    setMessage('Transcrevendo com segurança...');
 
-  function stopListening() {
-    startAttemptRef.current += 1;
-    clearStartWatchdog();
-    clearListeningWatchdog();
-    if (starting) {
-      recognitionRef.current?.abort();
-      recognitionRef.current = null;
-      setStarting(false);
-      setListening(false);
-      setMessage('Microfone cancelado. Toque em Falar para tentar novamente.');
-      return;
-    }
-    recognitionRef.current?.stop();
-  }
-
-  async function startListening() {
-    if (disabled || listening || starting) return;
-
-    const attempt = startAttemptRef.current + 1;
-    startAttemptRef.current = attempt;
-    transcriptSeenRef.current = false;
-    recognitionErrorRef.current = false;
-    setMessage(null);
-    setStarting(true);
-
-    if (!permissionCheckedRef.current) {
-      setStartingMessage('Pedindo acesso ao microfone...');
-      const permissionResult = await requestMicrophonePermission();
-      if (startAttemptRef.current !== attempt) return;
-
-      if (permissionResult === 'denied') {
-        setStarting(false);
-        setMessage('O microfone está bloqueado para este site. Libere a permissão do microfone nas configurações do navegador e tente novamente.');
-        return;
-      }
-
-      if (permissionResult === 'insecure') {
-        setStarting(false);
-        setMessage('O microfone só pode ser usado em uma conexão segura (HTTPS). Abra novamente o Mente Livre pelo endereço oficial.');
-        return;
-      }
-
-      if (permissionResult === 'unavailable') {
-        setStarting(false);
-        setMessage('Este navegador não disponibilizou acesso ao microfone para o Mente Livre. No iPhone e no Mac, abra diretamente no Safari ou no app instalado e tente novamente.');
-        return;
-      }
-
-      if (permissionResult === 'error') {
-        setStarting(false);
-        setMessage('Não consegui solicitar o microfone neste aparelho. Feche outras aplicações que possam estar usando o microfone e tente novamente.');
-        return;
-      }
-
-      permissionCheckedRef.current = true;
-    }
-
-    if (startAttemptRef.current !== attempt) return;
-
-    // Em iOS, navegadores alternativos podem expor webkitSpeechRecognition
-    // sem permitir que o serviço de reconhecimento seja usado. Nessa situação
-    // não iniciamos uma sessão que sabemos poder terminar em service-not-allowed.
-    if (isIosNonSafariBrowser()) {
-      setStarting(false);
-      setMessage('No iPhone, abra este mesmo endereço diretamente no Safari para usar o botão Falar. O Chrome e outros navegadores no iOS podem liberar o microfone, mas bloquear o serviço de reconhecimento de fala.');
-      return;
-    }
-
-    const Recognition = getSpeechRecognitionConstructor();
-    if (Recognition === null) {
-      setStarting(false);
-      setMessage('Microfone liberado, mas este navegador não disponibilizou o reconhecimento de fala. No Safari do iPhone ou Mac, confirme que Siri e Ditado estão ativados e tente novamente.');
-      return;
-    }
-
-    setStartingMessage('Abrindo reconhecimento de voz...');
-
-    const recognition = new Recognition();
-    recognition.lang = 'pt-BR';
-    // Resultados parciais ajudam especialmente quando o navegador demora para
-    // marcar a frase como final. O campo continua sendo apenas texto revisável.
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => {
-      if (startAttemptRef.current !== attempt) {
-        recognition.abort();
-        return;
-      }
-      clearStartWatchdog();
-      setStarting(false);
-      setListening(true);
-      listeningWatchdogRef.current = window.setTimeout(() => {
-        if (recognitionRef.current !== recognition || startAttemptRef.current !== attempt) return;
-        recognition.stop();
-        clearListeningWatchdog();
-        if (!transcriptSeenRef.current) {
-          setMessage('Não recebi transcrição deste navegador. Tente novamente falando logo após aparecer “Ouvindo...”.');
-        }
-      }, LISTENING_WATCHDOG_MS);
-    };
-
-    recognition.onspeechend = () => {
-      if (startAttemptRef.current !== attempt) return;
-      recognition.stop();
-    };
-
-    recognition.onresult = (event) => {
-      const parts: string[] = [];
-      for (let resultIndex = 0; resultIndex < event.results.length; resultIndex += 1) {
-        const result = event.results[resultIndex];
-        if (result.length === 0) continue;
-        const transcript = result[0]?.transcript?.trim();
-        if (transcript) parts.push(transcript);
-      }
-
-      const transcript = parts.join(' ').trim();
-      if (transcript.length > 0) {
-        transcriptSeenRef.current = true;
-        onTranscript(transcript);
-        setMessage('Texto reconhecido. Revise antes de enviar.');
-      }
-    };
-
-    recognition.onerror = (event) => {
-      if (startAttemptRef.current !== attempt) return;
-      recognitionErrorRef.current = true;
-      clearStartWatchdog();
-      clearListeningWatchdog();
-      setStarting(false);
-      setListening(false);
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed' || event.error === 'audio-capture') {
-        permissionCheckedRef.current = false;
-      }
-      const nextMessage = voiceErrorMessage(event.error);
-      if (nextMessage !== null) setMessage(nextMessage);
-    };
-
-    recognition.onend = () => {
-      if (startAttemptRef.current !== attempt) return;
-      clearStartWatchdog();
-      clearListeningWatchdog();
-      setStarting(false);
-      setListening(false);
-      recognitionRef.current = null;
-      if (!transcriptSeenRef.current && !recognitionErrorRef.current) {
-        setMessage('A escuta terminou, mas não recebi texto. Tente novamente e fale logo após aparecer “Ouvindo...”.');
-      }
-    };
-
-    recognitionRef.current = recognition;
-    startWatchdogRef.current = window.setTimeout(() => {
-      if (recognitionRef.current !== recognition || startAttemptRef.current !== attempt) return;
-      recognition.abort();
-      recognitionRef.current = null;
-      startWatchdogRef.current = null;
-      setStarting(false);
-      setListening(false);
-      setMessage('O microfone foi liberado, mas o reconhecimento de voz não respondeu. No Safari do iPhone ou Mac, confirme que Siri e Ditado estão ativados; depois tente novamente.');
-    }, START_WATCHDOG_MS);
+    const type = blob.type || 'audio/webm';
+    const form = new FormData();
+    form.append('request_id', id);
+    form.append('duration_ms', String(durationMs));
+    form.append('audio', blob, `voice.${extensionForMime(type)}`);
 
     try {
-      recognition.start();
+      const response = await fetch('/api/voice/transcribe', {
+        method: 'POST',
+        body: form,
+      });
+      const payload = (await response.json().catch(() => ({}))) as VoiceApiPayload;
+
+      if (!response.ok) {
+        const error = typeof payload.error === 'string'
+          ? payload.error
+          : 'Não consegui transcrever sua fala agora. Tente novamente.';
+        if (mountedRef.current) setMessage(error);
+        return;
+      }
+
+      if (typeof payload.text !== 'string' || payload.text.trim().length === 0) {
+        if (mountedRef.current) setMessage('A transcrição voltou vazia. Tente novamente.');
+        return;
+      }
+
+      if (mountedRef.current) {
+        onTranscript(payload.text.slice(0, 10_000));
+        if (payload.usage) setUsage(payload.usage);
+        setMessage('Texto reconhecido. Revise antes de enviar.');
+      }
     } catch {
-      if (startAttemptRef.current !== attempt) return;
-      clearStartWatchdog();
-      clearListeningWatchdog();
-      recognitionRef.current = null;
-      setStarting(false);
-      setListening(false);
-      setMessage('Não consegui iniciar o reconhecimento de voz. Tente novamente ou confirme Siri e Ditado nas configurações do aparelho.');
+      if (mountedRef.current) {
+        setMessage('Não consegui enviar o áudio para transcrição. Confira sua conexão e tente novamente.');
+      }
+    } finally {
+      if (mountedRef.current) setState('idle');
     }
   }
 
-  const active = starting || listening;
+  async function startRecording() {
+    if (disabled || state !== 'idle') return;
+
+    if (typeof window === 'undefined' || !window.isSecureContext) {
+      setMessage('O microfone só pode ser usado em uma conexão segura (HTTPS).');
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setMessage('Este navegador não oferece a captura de áudio necessária. Atualize o navegador e tente novamente.');
+      return;
+    }
+
+    setState('requesting');
+    setMessage('Pedindo acesso ao microfone...');
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      const mimeType = preferredMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      chunksRef.current = chunks;
+      streamRef.current = stream;
+      recorderRef.current = recorder;
+      currentRequestIdRef.current = requestId();
+      recordingStartedAtRef.current = Date.now();
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+
+      recorder.onerror = () => {
+        releaseCapture();
+        if (mountedRef.current) {
+          setState('idle');
+          setMessage('O navegador interrompeu a gravação. Tente novamente.');
+        }
+      };
+
+      recorder.onstop = () => {
+        const elapsed = Date.now() - recordingStartedAtRef.current;
+        const durationMs = Math.max(250, Math.min(VOICE_MAX_DURATION_MS, elapsed));
+        const id = currentRequestIdRef.current;
+        const type = recorder.mimeType || chunks[0]?.type || mimeType || 'audio/webm';
+        const blob = new Blob(chunks, { type });
+        releaseCapture();
+
+        if (!id || blob.size === 0) {
+          if (mountedRef.current) {
+            setState('idle');
+            setMessage('Não recebi áudio desta gravação. Tente novamente.');
+          }
+          return;
+        }
+
+        if (blob.size > VOICE_MAX_AUDIO_BYTES) {
+          if (mountedRef.current) {
+            setState('idle');
+            setMessage('O áudio excedeu o limite do MVP. Grave uma mensagem mais curta.');
+          }
+          return;
+        }
+
+        void transcribe(blob, durationMs, id);
+      };
+
+      recorder.start();
+      setState('recording');
+      setMessage('Ouvindo... fale naturalmente. Máximo de 20 segundos.');
+      autoStopRef.current = window.setTimeout(() => {
+        if (recorder.state !== 'inactive') recorder.stop();
+      }, AUTO_STOP_MS);
+    } catch (error) {
+      releaseCapture();
+      setState('idle');
+      if (error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'SecurityError')) {
+        setMessage('O microfone está bloqueado para este site. Libere a permissão do microfone e tente novamente.');
+      } else {
+        setMessage('Não consegui abrir o microfone neste aparelho. Tente novamente.');
+      }
+    }
+  }
+
+  function stopRecording() {
+    if (state !== 'recording') return;
+    setMessage('Finalizando áudio...');
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+  }
+
+  const buttonLabel = state === 'requesting'
+    ? 'Abrindo microfone...'
+    : state === 'recording'
+      ? 'Parar e transcrever'
+      : state === 'transcribing'
+        ? 'Transcrevendo...'
+        : 'Falar';
 
   return (
     <div className="flex flex-col gap-2">
       <Button
         type="button"
         variant="secondary"
-        disabled={disabled}
-        onClick={active ? stopListening : startListening}
+        disabled={disabled || state === 'requesting' || state === 'transcribing'}
+        onClick={state === 'recording' ? stopRecording : startRecording}
         className="w-full"
-        aria-pressed={active}
+        aria-pressed={state === 'recording'}
       >
         <span aria-hidden="true" className="text-base leading-none">🎙️</span>
-        {starting ? 'Cancelar' : listening ? 'Parar de ouvir' : 'Falar'}
+        {buttonLabel}
       </Button>
-      <p aria-live="polite" className="text-xs text-ink-soft">
-        {starting
-          ? startingMessage
-          : listening
-            ? 'Ouvindo... fale naturalmente.'
-            : message ?? 'A fala vira texto para você revisar antes de enviar.'}
-      </p>
+
+      <p aria-live="polite" className="text-xs text-ink-soft">{message}</p>
+
+      {usage && (
+        <p className="text-[11px] leading-relaxed text-ink-soft">
+          Voz neste mês: {usage.minutes.toLocaleString('pt-BR')} min · ~{formatUsd(usage.estimatedCostUsd)} · proteção de orçamento {formatUsd(usage.reservedBudgetUsd)} / {formatUsd(usage.internalLimitUsd)}.
+        </p>
+      )}
+
       <p className="text-[11px] leading-relaxed text-ink-soft">
-        O microfone só é ativado após o seu toque. Nesta etapa, o Mente Livre não grava, persiste nem envia áudio bruto; a conversão em texto usa o reconhecimento disponível no navegador/aparelho.
+        Ao tocar em Falar, o Mente Livre captura no máximo 20 segundos e envia o áudio temporariamente por HTTPS para transcrição. O áudio bruto não é salvo no Supabase nem em logs; só o texto volta para você revisar antes de Enviar.
       </p>
     </div>
   );
