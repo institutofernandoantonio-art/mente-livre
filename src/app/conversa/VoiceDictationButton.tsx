@@ -83,6 +83,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
   const chunksRef = useRef<Blob[]>([]);
   const recordingStartedAtRef = useRef(0);
   const currentRequestIdRef = useRef<string | null>(null);
+  const recordingFailedRef = useRef(false);
   const autoStopRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
 
@@ -210,6 +211,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
       streamRef.current = stream;
       recorderRef.current = recorder;
       currentRequestIdRef.current = requestId();
+      recordingFailedRef.current = false;
       recordingStartedAtRef.current = Date.now();
 
       recorder.ondataavailable = (event) => {
@@ -217,6 +219,11 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
       };
 
       recorder.onerror = () => {
+        // Alguns navegadores disparam `stop` depois de `error`. Marcar a
+        // captura como falha e invalidar o request_id impede que esse `stop`
+        // transforme áudio parcial em uma chamada paga ao STT.
+        recordingFailedRef.current = true;
+        currentRequestIdRef.current = null;
         releaseCapture();
         if (mountedRef.current) {
           setState('idle');
@@ -225,12 +232,16 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
       };
 
       recorder.onstop = () => {
+        const failed = recordingFailedRef.current;
+        recordingFailedRef.current = false;
         const elapsed = Date.now() - recordingStartedAtRef.current;
         const durationMs = Math.max(250, Math.min(VOICE_MAX_DURATION_MS, elapsed));
         const id = currentRequestIdRef.current;
         const type = recorder.mimeType || chunks[0]?.type || mimeType || 'audio/webm';
         const blob = new Blob(chunks, { type });
         releaseCapture();
+
+        if (failed) return;
 
         if (!id || blob.size === 0) {
           if (mountedRef.current) {
