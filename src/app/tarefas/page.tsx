@@ -63,6 +63,8 @@ export default async function TarefasPage() {
     loadFailed = true;
   }
 
+  const focusTasks = tasks.filter((task) => taskOrder(task) < 3).slice(0, 3);
+
   return (
     <main className="flex flex-1 flex-col items-center px-6 py-16">
       <div className="w-full max-w-sm">
@@ -74,6 +76,25 @@ export default async function TarefasPage() {
         {loadFailed && <ErrorState message="Não foi possível carregar suas tarefas agora." />}
 
         {!loadFailed && tasks.length === 0 && <EmptyState title="Você ainda não tem tarefas." />}
+
+        {!loadFailed && focusTasks.length > 0 && (
+          <Card className="mb-4 flex flex-col gap-3">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-ink-soft">Foco agora</p>
+              <h2 className="mt-1 font-semibold text-ink">Até 3 prioridades para avançar</h2>
+            </div>
+            <ol className="flex flex-col gap-2">
+              {focusTasks.map((task, index) => (
+                <li key={`focus-${index}`} className="rounded-xl border border-mist-200 p-3">
+                  <p className="text-xs font-medium text-ink-soft">
+                    {index === 0 ? 'Missão principal sugerida' : `Prioridade ${index + 1}`}
+                  </p>
+                  <p className="mt-1 font-medium text-ink">{task.title}</p>
+                </li>
+              ))}
+            </ol>
+          </Card>
+        )}
 
         {!loadFailed && tasks.length > 0 && (
           <Card className="flex flex-col gap-3">
