@@ -22,9 +22,20 @@ const priorityOptions: Array<{ value: TaskPriority; label: string }> = [
   { value: 'baixa', label: 'Baixa' },
 ];
 
+const priorityRank: Record<TaskPriority, number> = {
+  alta: 0,
+  média: 1,
+  baixa: 2,
+};
+
 function priorityLabel(priority: TaskPriority | null) {
   if (!priority) return 'Sem prioridade';
   return priority === 'alta' ? 'Prioridade alta' : priority === 'média' ? 'Prioridade média' : 'Prioridade baixa';
+}
+
+function taskOrder(task: TaskRow) {
+  if (task.status !== 'pending') return 10;
+  return task.priority ? priorityRank[task.priority] : 3;
 }
 
 export default async function TarefasPage() {
@@ -46,7 +57,7 @@ export default async function TarefasPage() {
     if (error || data === null) {
       loadFailed = true;
     } else {
-      tasks = data;
+      tasks = [...data].sort((a, b) => taskOrder(a) - taskOrder(b));
     }
   } else {
     loadFailed = true;
