@@ -71,11 +71,11 @@ check('interface deixa explícita a revisão antes do envio', () => {
 check('microfone e reconhecimento só começam por ação explícita no botão', () => {
   assert.match(voiceSource, /onClick=\{active \? stopListening : startListening\}/);
   const handlerIndex = voiceSource.indexOf('async function startListening()');
-  const permissionIndex = voiceSource.indexOf('requestMicrophonePermission()');
-  const startIndex = voiceSource.indexOf('recognition.start()');
+  const permissionCallIndex = voiceSource.indexOf('await requestMicrophonePermission()', handlerIndex);
+  const startIndex = voiceSource.indexOf('recognition.start()', handlerIndex);
   assert.ok(handlerIndex >= 0, 'handler startListening precisa existir');
-  assert.ok(permissionIndex > handlerIndex, 'permissão só pode ser pedida dentro/depois do handler de gesto explícito');
-  assert.ok(startIndex > permissionIndex, 'recognition.start() só pode vir depois do preflight de permissão');
+  assert.ok(permissionCallIndex > handlerIndex, 'permissão só pode ser pedida dentro/depois do handler de gesto explícito');
+  assert.ok(startIndex > permissionCallIndex, 'recognition.start() só pode vir depois do preflight de permissão');
 });
 
 check('mostra feedback imediato durante permissão e abertura do reconhecimento', () => {
