@@ -17,8 +17,10 @@ O desenho mantém um contrato `SpeechToTextProvider`, portanto o provedor/modelo
 5. **Idempotência:** `(user_id, request_id)` é único; a mesma gravação não abre uma segunda reserva.
 6. **Rate limit:** no máximo 6 novas reservas por minuto por usuário.
 7. **Fail-closed:** `MENTE_LIVRE_STT_ENABLED` deve permanecer diferente de `true` enquanto os gates de produção não estiverem completos.
+8. **Configuração antes do orçamento:** a chave dedicada é validada ao construir o provider, antes da reserva financeira. Ligar a feature sem chave não consome o teto interno.
+9. **Falha de captura não chama STT:** se o `MediaRecorder` emitir erro, o `request_id` da gravação é invalidado e um eventual `stop` posterior não pode iniciar transcrição paga com áudio parcial.
 
-O teto interno é propositalmente conservador: mesmo que uma gravação tenha menos de 20 segundos ou uma chamada falhe, a reserva continua contando para a proteção mensal. Isso favorece previsibilidade de gasto em vez de maximizar o número de chamadas.
+O teto interno é propositalmente conservador: mesmo que uma gravação tenha menos de 20 segundos ou uma chamada falhe depois da reserva, a reserva continua contando para a proteção mensal. Isso favorece previsibilidade de gasto em vez de maximizar o número de chamadas.
 
 ## Separação do Mente Livre
 
@@ -36,7 +38,7 @@ Não são armazenados na tabela:
 - conteúdo da conversa;
 - conteúdo da agenda.
 
-O áudio fica somente em memória durante a requisição ao servidor/provedor e não deve ser escrito em logs.
+O áudio fica somente em memória durante a requisição ao servidor/provedor e não deve ser escrito em logs. As respostas HTTP da transcrição usam `Cache-Control: no-store`, inclusive em sucesso e erro, para que o texto reconhecido não seja tratado como conteúdo cacheável por intermediários ou pelo navegador.
 
 ## Como acompanhar
 
