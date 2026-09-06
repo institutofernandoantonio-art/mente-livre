@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Button } from '@/components/ui/Button';
 
 type SpeechRecognitionAlternativeLike = {
@@ -58,6 +58,21 @@ function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null 
   return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition ?? null;
 }
 
+function subscribeToSpeechSupport(): () => void {
+  // A disponibilidade desta API não muda durante a vida da página.
+  // useSyncExternalStore é usado só para ter um snapshot client/server
+  // consistente sem setState síncrono em useEffect.
+  return () => undefined;
+}
+
+function getSpeechSupportSnapshot(): boolean {
+  return getSpeechRecognitionConstructor() !== null;
+}
+
+function getServerSpeechSupportSnapshot(): boolean {
+  return false;
+}
+
 function voiceErrorMessage(error: string): string | null {
   switch (error) {
     case 'aborted':
@@ -76,13 +91,15 @@ function voiceErrorMessage(error: string): string | null {
 
 export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationButtonProps) {
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
-  const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const supported = useSyncExternalStore(
+    subscribeToSpeechSupport,
+    getSpeechSupportSnapshot,
+    getServerSpeechSupportSnapshot,
+  );
 
   useEffect(() => {
-    setSupported(getSpeechRecognitionConstructor() !== null);
-
     return () => {
       recognitionRef.current?.abort();
       recognitionRef.current = null;
@@ -97,10 +114,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     if (disabled || listening) return;
 
     const Recognition = getSpeechRecognitionConstructor();
-    if (Recognition === null) {
-      setSupported(false);
-      return;
-    }
+    if (Recognition === null) return;
 
     const recognition = new Recognition();
     recognition.lang = 'pt-BR';
