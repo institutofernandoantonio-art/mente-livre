@@ -38,6 +38,14 @@ check('chave OpenAI é dedicada e só existe no servidor', () => {
   assert.ok(!provider.includes('NEXT_PUBLIC_OPENAI'));
 });
 
+check('configuração do provider falha antes da reserva financeira', () => {
+  assert.match(provider, /constructor\(\) \{[\s\S]*?getApiKey\(\);[\s\S]*?\}/);
+  const providerIndex = route.indexOf('provider = getSpeechToTextProvider()');
+  const reserveIndex = route.indexOf('await reserveVoiceUsage');
+  assert.ok(providerIndex >= 0);
+  assert.ok(reserveIndex > providerIndex);
+});
+
 check('feature é fail-closed e provider é desacoplado', () => {
   assert.match(factory, /MENTE_LIVRE_STT_ENABLED === 'true'/);
   assert.match(factory, /MENTE_LIVRE_STT_PROVIDER/);
