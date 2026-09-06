@@ -109,9 +109,21 @@ check("11. consulta items com isolamento explícito e apenas itens confirmados",
   assert.ok(pageCode.includes(".eq('needs_confirmation', false)"));
 });
 
-check('12. leitura inclui priority já existente e mantém created_at DESC', () => {
+check('12. leitura inclui priority e mantém created_at DESC como desempate estável', () => {
   assert.ok(pageCode.includes(".select('id, title, status, deadline_at, priority')"));
   assert.ok(pageCode.includes(".order('created_at', { ascending: false })"));
+});
+
+check('12b. pendências são ordenadas alta -> média -> baixa -> sem prioridade', () => {
+  assert.ok(pageCode.includes("alta: 0"));
+  assert.ok(pageCode.includes("média: 1"));
+  assert.ok(pageCode.includes("baixa: 2"));
+  assert.ok(pageCode.includes("return task.priority ? priorityRank[task.priority] : 3"));
+  assert.ok(pageCode.includes("tasks = [...data].sort((a, b) => taskOrder(a) - taskOrder(b))"));
+});
+
+check('12c. tarefas concluídas/canceladas ficam depois das pendentes', () => {
+  assert.ok(pageCode.includes("if (task.status !== 'pending') return 10"));
 });
 
 check('13. Server Component continua read-only; mutações ficam nas Server Actions', () => {
@@ -126,8 +138,7 @@ check('13. Server Component continua read-only; mutações ficam nas Server Acti
 // ---------------------------------------------------------------------------
 
 check('14. nenhum id interno é renderizado ou exposto como texto', () => {
-  for (const token of ['proposalId', 'proposal_id', 'brainDumpId', 'brain_dump_id', 'userId']) {
-    if (token === 'userId') continue; // userId é variável server-side legítima.
+  for (const token of ['proposalId', 'proposal_id', 'brainDumpId', 'brain_dump_id']) {
     assert.ok(!pageCode.includes(token), `id interno indevido encontrado: ${token}`);
   }
   assert.ok(!/>\s*\{task\.id\}\s*</.test(pageCode), 'task.id nunca pode ser conteúdo visual');
@@ -178,7 +189,7 @@ check('19. controles de prioridade só existem dentro do bloco de tarefa pending
   assert.ok(pendingIndex < priorityActionIndex);
   assert.ok(pendingIndex < completeIndex);
   assert.ok(pendingIndex < cancelIndex);
-  assert.equal(pageCode.split("task.status === 'pending'").length - 1, 1);
+  assert.equal(pageCode.split("task.status === 'pending'").length - 1, 2);
 });
 
 check('20. opção atualmente selecionada usa variant secondary; demais usam ghost', () => {
