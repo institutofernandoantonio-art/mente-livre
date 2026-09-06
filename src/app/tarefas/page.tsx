@@ -5,12 +5,8 @@ import { ErrorState } from '@/components/ui/ErrorState';
 import { Button, buttonVariants } from '@/components/ui/Button';
 import { createClient } from '@/lib/supabase/server';
 import { statusLabel, formatDeadline } from './presentation';
-import {
-  completeTaskAction,
-  cancelTaskAction,
-  setTaskPriorityAction,
-  type TaskPriority,
-} from './actions';
+import { completeTaskAction, cancelTaskAction } from './actions';
+import { setTaskPriorityAction, type TaskPriority } from './priority-actions';
 
 type TaskRow = {
   id: string;
