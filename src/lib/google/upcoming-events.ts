@@ -119,12 +119,6 @@ export async function getUpcomingGoogleCalendarEvents(timeZone: string) {
   return { status: 'ok' as const, events };
 }
 
-async function noop() {
-  // Mantém este módulo compatível com a regra de arquivos `use server`:
-  // somente funções async podem ser exportadas. Helpers permanecem locais.
-}
-void noop;
-
 function readEventDate(value: unknown): { kind: 'date' | 'dateTime'; value: string } | null {
   if (typeof value !== 'object' || value === null) {
     return null;
