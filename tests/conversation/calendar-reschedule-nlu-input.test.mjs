@@ -61,6 +61,19 @@ await check('7. não modifica o texto original recebido', () => {
   assert.equal(original, copy);
 });
 
+await check('8. frase do iPhone remove às 17 e preserva destino 18h00', () => {
+  const result = prepareCalendarRescheduleNluInput('Mude a reunião teste de hoje às 17 para 18h00');
+  assert.deepEqual(result, { text: 'Mude a reunião teste de hoje para 18h00', transformed: true });
+});
+
+await check('9. números sem marcador de horário e horários inválidos ficam intactos', () => {
+  for (const text of [
+    'Mude a reunião 17 de hoje para 18h00',
+    'Mude a reunião de hoje às 25 para 18h00',
+    'Mude a reunião de hoje às 17:99 para 18h00',
+  ]) assert.deepEqual(prepareCalendarRescheduleNluInput(text), { text, transformed: false });
+});
+
 const passed = results.filter(Boolean).length;
 const failed = results.length - passed;
 console.log(`\n${passed} passaram, ${failed} falharam (${results.length} total)`);

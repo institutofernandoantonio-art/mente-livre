@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { runInNewContext } from 'node:vm';
+import ts from 'typescript';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -86,6 +88,22 @@ check('10. versão inicial limita origem a hoje/amanhã antes de "para"', () => 
   assert.ok(source.includes('buildSourceWindowBeforePara'));
   assert.ok(source.includes("day: 'today' | 'tomorrow'"));
   assert.ok(source.includes('const lastPara = paraMatches.at(-1)'));
+});
+
+check('horário de origem falado seleciona 17h, mantendo o destino fora da busca', () => {
+  const compiled = ts.transpileModule(source + '\nexport { buildSourceWindowBeforePara };', {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const exports = {};
+  runInNewContext(compiled, { exports, require: () => ({}) });
+  for (const clock of ['às 17', 'as 17', 'às 17h', 'às 17:00']) {
+    const window = exports.buildSourceWindowBeforePara(`Mude a reunião teste de hoje ${clock} para 18h00`);
+    assert.equal(window.resolved.day, 'today');
+    assert.equal(window.resolved.time.hour, 17);
+    assert.equal(window.resolved.time.minute, 0);
+  }
+  const window = exports.buildSourceWindowBeforePara('Mude a reunião 17 de hoje para 18h00');
+  assert.equal(window.resolved.time, null);
 });
 
 const passed = results.filter(Boolean).length;

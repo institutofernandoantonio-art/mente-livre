@@ -20,7 +20,7 @@ export type PreparedRescheduleNluInput = {
 };
 
 const RESCHEDULE_VERB_RE = /\b(mude|mudar|passe|passar|remarque|remarcar|altere|alterar)\b/i;
-const CLOCK_RE = /(?:\b(?:às|as)\s*)?\b([01]?\d|2[0-3])(?:h([0-5]\d)?|:([0-5]\d))\b/gi;
+const CLOCK_RE = /(?:(?:às|\bas)\s+([01]?\d|2[0-3])(?:h[0-5]\d|:[0-5]\d|h)?\b(?![:\d])|\b([01]?\d|2[0-3])(?:h([0-5]\d)?|:([0-5]\d))\b)/gi;
 
 export function prepareCalendarRescheduleNluInput(text: string): PreparedRescheduleNluInput {
   if (typeof text !== 'string' || text.trim().length === 0 || !RESCHEDULE_VERB_RE.test(text)) {
