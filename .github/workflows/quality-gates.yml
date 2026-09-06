@@ -39,7 +39,9 @@ jobs:
       - name: Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Supabase 2.112.x exige Node >=22 e vários testes deste projeto
+          # usam --experimental-strip-types, indisponível no Node 20.
+          node-version: 22
           cache: npm
 
       - name: Instalar dependências exatamente do lockfile
