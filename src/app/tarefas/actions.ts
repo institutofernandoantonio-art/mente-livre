@@ -55,10 +55,6 @@ function isNonBlankString(value: unknown): value is string {
 
 export async function completeTask(taskId: string): Promise<CompleteTaskResult> {
   if (!isNonBlankString(taskId)) {
-    // Input inválido — zero I/O, mesma disciplina de boundary do resto
-    // do projeto. `not_found` mantém o contrato simples: um id que não
-    // corresponde a nada real (inclusive um id malformado) nunca é
-    // distinguido de qualquer outro caso de zero-match.
     return { status: 'not_found' };
   }
 
@@ -81,58 +77,19 @@ export async function completeTask(taskId: string): Promise<CompleteTaskResult> 
       .select('id')
       .maybeSingle();
 
-    if (error) {
-      // Nenhum detalhe do erro do Supabase (mensagem/SQL/stack) cruza
-      // esta fronteira — só o status técnico.
-      return { status: 'error' };
-    }
+    if (error) return { status: 'error' };
+    if (data === null) return { status: 'not_found' };
 
-    if (data === null) {
-      // Zero linhas casadas — id errado, não é sua, já não está mais
-      // `pending`, ou `needs_confirmation=true`: todos colapsam aqui,
-      // nunca uma segunda consulta para explicar qual foi o motivo.
-      return { status: 'not_found' };
-    }
-
-    // Sucesso real — revalida a listagem para o usuário ver "Concluída"
-    // imediatamente. Nunca revalidado nos ramos not_found/error.
     revalidatePath('/tarefas');
     return { status: 'completed' };
   } catch {
-    // createClient()/getClaims()/update() lançando fora do contrato
-    // normal `{data, error}` — mesma convenção já usada em
-    // local-task-execution.ts/actions.ts: nunca logado cru, sempre
-    // mapeado para o mesmo status técnico genérico.
     return { status: 'error' };
   }
 }
 
-// Wrapper que só existe para satisfazer o contrato de `<form action={...}>`
-// (React exige `void | Promise<void>`, nunca um valor — ver
-// `page.tsx`) — precisa viver AQUI, não em `page.tsx`: só uma função
-// exportada de um módulo `'use server'` (ou com `'use server'` inline no
-// próprio corpo) pode ser passada como `action` de um form; uma função
-// comum declarada dentro de um Server Component, mesmo sem `'use
-// client'`, é rejeitada pelo React nesse ponto específico ("Functions
-// cannot be passed directly... unless explicitly exposed with 'use
-// server'"). Nenhuma lógica nova: só chama `completeTask` e descarta o
-// resultado, mesmo comportamento já previsto para esta V1 (sem camada
-// visual de erro ainda).
 export async function completeTaskAction(taskId: string): Promise<void> {
   await completeTask(taskId);
 }
-
-// --- Cancelamento -----------------------------------------------------
-//
-// Espelha `completeTask` byte a byte na estrutura: mesma validação de
-// input, mesma auth, os MESMOS 4 filtros no WHERE (só o valor final de
-// `status` muda) e a MESMA disciplina anti-TOCTOU/anti-admin/anti-RPC do
-// cabeçalho do arquivo. Nunca reaproveita `completeTask` por composição
-// (ex.: "cancelar é só concluir com outro status") — são duas transições
-// de domínio independentes que só coincidem em forma, não em significado;
-// duplicar a estrutura aqui é mais simples e mais seguro do que inventar
-// uma abstração genérica de "transição de status" sem um terceiro caso
-// real que a justifique.
 
 export type CancelTaskResult = { status: 'cancelled' } | { status: 'not_found' } | { status: 'error' };
 
@@ -160,13 +117,8 @@ export async function cancelTask(taskId: string): Promise<CancelTaskResult> {
       .select('id')
       .maybeSingle();
 
-    if (error) {
-      return { status: 'error' };
-    }
-
-    if (data === null) {
-      return { status: 'not_found' };
-    }
+    if (error) return { status: 'error' };
+    if (data === null) return { status: 'not_found' };
 
     revalidatePath('/tarefas');
     return { status: 'cancelled' };
@@ -175,8 +127,6 @@ export async function cancelTask(taskId: string): Promise<CancelTaskResult> {
   }
 }
 
-// Mesmo racional do wrapper de `completeTaskAction` (ver comentário acima
-// dele) — precisa viver aqui, não em `page.tsx`, pelo mesmo motivo exato.
 export async function cancelTaskAction(taskId: string): Promise<void> {
   await cancelTask(taskId);
 }
