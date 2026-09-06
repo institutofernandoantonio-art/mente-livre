@@ -29,10 +29,11 @@ check('usa reconhecimento de fala progressivo do navegador em pt-BR', () => {
   assert.match(voiceSource, /recognition\.lang = 'pt-BR'/);
 });
 
-check('ditado é de um turno e sem resultados intermediários', () => {
-  assert.match(voiceSource, /recognition\.interimResults = false/);
+check('ditado é de um turno e aproveita resultados parciais', () => {
+  assert.match(voiceSource, /recognition\.interimResults = true/);
   assert.match(voiceSource, /recognition\.continuous = false/);
   assert.match(voiceSource, /recognition\.maxAlternatives = 1/);
+  assert.ok(!voiceSource.includes('if (!result.isFinal'));
 });
 
 check('voz não grava nem envia áudio pelo código do Mente Livre', () => {
@@ -81,6 +82,17 @@ check('permissão é solicitada antes de depender de SpeechRecognition', () => {
   assert.ok(startIndex > recognitionLookupIndex, 'recognition.start() só pode vir depois da detecção pós-permissão');
 });
 
+check('iPhone em navegador alternativo não entra em sessão sabidamente incompatível', () => {
+  assert.match(voiceSource, /function isIosNonSafariBrowser\(\)/);
+  assert.match(voiceSource, /CriOS\|FxiOS\|EdgiOS\|OPiOS/);
+  const handlerIndex = voiceSource.indexOf('async function startListening()');
+  const iosGuardIndex = voiceSource.indexOf('if (isIosNonSafariBrowser())', handlerIndex);
+  const recognitionLookupIndex = voiceSource.indexOf('getSpeechRecognitionConstructor()', handlerIndex);
+  assert.ok(iosGuardIndex > handlerIndex);
+  assert.ok(recognitionLookupIndex > iosGuardIndex);
+  assert.match(voiceSource, /abra este mesmo endereço diretamente no Safari/i);
+});
+
 check('botão nunca some só porque SpeechRecognition não está disponível', () => {
   assert.ok(!voiceSource.includes('if (!supported) return null'));
   assert.match(voiceSource, /listening \? 'Parar de ouvir' : 'Falar'/);
@@ -109,12 +121,20 @@ check('impede starts concorrentes e invalida tentativa cancelada', () => {
   assert.match(voiceSource, /startAttemptRef\.current !== attempt/);
 });
 
-check('watchdog libera a UI quando o reconhecimento não devolve callbacks', () => {
+check('watchdog de abertura libera a UI quando não há callback inicial', () => {
   assert.match(voiceSource, /const START_WATCHDOG_MS = 8000/);
-  assert.match(voiceSource, /window\.setTimeout/);
   assert.match(voiceSource, /recognition\.abort\(\)/);
   assert.match(voiceSource, /o reconhecimento de voz não respondeu/i);
   assert.match(voiceSource, /clearStartWatchdog\(\)/);
+});
+
+check('escuta não pode ficar presa indefinidamente', () => {
+  assert.match(voiceSource, /const LISTENING_WATCHDOG_MS = 15000/);
+  assert.match(voiceSource, /listeningWatchdogRef/);
+  assert.match(voiceSource, /recognition\.onspeechend = \(\) =>/);
+  assert.match(voiceSource, /recognition\.stop\(\)/);
+  assert.match(voiceSource, /clearListeningWatchdog\(\)/);
+  assert.match(voiceSource, /A escuta terminou, mas não recebi texto/i);
 });
 
 const passed = results.filter(Boolean).length;
