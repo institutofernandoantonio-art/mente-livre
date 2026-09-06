@@ -42,10 +42,6 @@ const pageCode = readCodeOnly('../../src/app/tarefas/page.tsx');
 const proxyCode = readCodeOnly('../../src/proxy.ts');
 const conversaPageCode = readCodeOnly('../../src/app/conversa/page.tsx');
 
-// ---------------------------------------------------------------------------
-// Helpers puros
-// ---------------------------------------------------------------------------
-
 check("1. statusLabel('pending') -> 'Pendente'", () => {
   assert.equal(statusLabel('pending'), 'Pendente');
 });
@@ -77,10 +73,6 @@ check('6. formatDeadline formata ISO válido sem devolver o valor bruto', () => 
 check('7. formatDeadline inválido usa fallback sem esconder o dado', () => {
   assert.equal(formatDeadline('não-é-uma-data'), 'não-é-uma-data');
 });
-
-// ---------------------------------------------------------------------------
-// Auth, isolamento e leitura
-// ---------------------------------------------------------------------------
 
 check('8. página usa createClient normal + getClaims server-side', () => {
   assert.ok(pageCode.includes("from '@/lib/supabase/server'"));
@@ -133,10 +125,6 @@ check('13. Server Component continua read-only; mutações ficam nas Server Acti
   }
 });
 
-// ---------------------------------------------------------------------------
-// IDs internos e composição das ações
-// ---------------------------------------------------------------------------
-
 check('14. nenhum id interno é renderizado ou exposto como texto', () => {
   for (const token of ['proposalId', 'proposal_id', 'brainDumpId', 'brain_dump_id']) {
     assert.ok(!pageCode.includes(token), `id interno indevido encontrado: ${token}`);
@@ -144,11 +132,12 @@ check('14. nenhum id interno é renderizado ou exposto como texto', () => {
   assert.ok(!/>\s*\{task\.id\}\s*</.test(pageCode), 'task.id nunca pode ser conteúdo visual');
 });
 
-check('15. task.id só é usado como key e argumento das três ações permitidas', () => {
+check('15. task.id só é usado como key e argumento das ações permitidas', () => {
   const occurrences = pageCode.split('task.id').length - 1;
-  assert.equal(occurrences, 4, 'esperado: key + prioridade + concluir + cancelar');
+  assert.equal(occurrences, 5, 'esperado: key + definir prioridade + limpar prioridade + concluir + cancelar');
   assert.ok(pageCode.includes('key={task.id}'));
   assert.ok(pageCode.includes('setTaskPriorityAction.bind(null, task.id, option.value)'));
+  assert.ok(pageCode.includes('setTaskPriorityAction.bind(null, task.id, null)'));
   assert.ok(pageCode.includes('completeTaskAction.bind(null, task.id)'));
   assert.ok(pageCode.includes('cancelTaskAction.bind(null, task.id)'));
 });
@@ -162,11 +151,7 @@ check('16. mutações são importadas de módulos use-server, nunca definidas na
   }
 });
 
-// ---------------------------------------------------------------------------
-// UI mínima de prioridade
-// ---------------------------------------------------------------------------
-
-check('17. opções permitidas são exatamente alta, média e baixa', () => {
+check('17. níveis de prioridade continuam exatamente alta, média e baixa', () => {
   assert.ok(pageCode.includes("{ value: 'alta', label: 'Alta' }"));
   assert.ok(pageCode.includes("{ value: 'média', label: 'Média' }"));
   assert.ok(pageCode.includes("{ value: 'baixa', label: 'Baixa' }"));
@@ -174,19 +159,22 @@ check('17. opções permitidas são exatamente alta, média e baixa', () => {
   assert.equal(optionEntries.length, 3);
 });
 
-check('18. prioridade atual é mostrada sem criar lógica de Eisenhower nesta subfase', () => {
+check('18. prioridade atual e opção de limpar são mostradas sem Eisenhower nesta subfase', () => {
   assert.ok(pageCode.includes('priorityLabel(task.priority)'));
   assert.ok(pageCode.includes('Sem prioridade'));
+  assert.ok(pageCode.includes('setTaskPriorityAction.bind(null, task.id, null)'));
   assert.ok(!/eisenhower/i.test(pageCode));
 });
 
 check('19. controles de prioridade só existem dentro do bloco de tarefa pending', () => {
   const pendingIndex = pageCode.indexOf("task.status === 'pending'");
   const priorityActionIndex = pageCode.indexOf('setTaskPriorityAction.bind(null, task.id, option.value)');
+  const clearPriorityIndex = pageCode.indexOf('setTaskPriorityAction.bind(null, task.id, null)');
   const completeIndex = pageCode.indexOf('completeTaskAction.bind(null, task.id)');
   const cancelIndex = pageCode.indexOf('cancelTaskAction.bind(null, task.id)');
   assert.ok(pendingIndex !== -1);
   assert.ok(pendingIndex < priorityActionIndex);
+  assert.ok(pendingIndex < clearPriorityIndex);
   assert.ok(pendingIndex < completeIndex);
   assert.ok(pendingIndex < cancelIndex);
   assert.equal(pageCode.split("task.status === 'pending'").length - 1, 1);
@@ -207,10 +195,6 @@ check('22. estado vazio e erro continuam usando componentes compartilhados', () 
   assert.ok(pageCode.includes("from '@/components/ui/ErrorState'"));
   assert.ok(pageCode.includes('<ErrorState'));
 });
-
-// ---------------------------------------------------------------------------
-// Proteção de rota e navegação
-// ---------------------------------------------------------------------------
 
 check("23. '/tarefas' continua protegida por AAL2", () => {
   const match = proxyCode.match(/AAL2_REQUIRED_PATHS\s*=\s*new Set\(\[([^\]]*)\]\)/);
