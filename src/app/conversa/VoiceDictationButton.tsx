@@ -47,6 +47,8 @@ type VoiceDictationButtonProps = {
   onTranscript: (transcript: string) => void;
 };
 
+type MicrophonePermissionResult = 'granted' | 'unavailable' | 'denied' | 'error';
+
 const START_WATCHDOG_MS = 8000;
 
 function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null {
@@ -81,7 +83,7 @@ function voiceErrorMessage(error: string): string | null {
       return null;
     case 'not-allowed':
     case 'service-not-allowed':
-      return 'Permita o uso do microfone para falar com o Mente Livre.';
+      return 'O navegador bloqueou o microfone. Permita o acesso para este site e tente novamente.';
     case 'no-speech':
       return 'Não ouvi nenhuma fala. Tente novamente.';
     case 'audio-capture':
@@ -91,10 +93,36 @@ function voiceErrorMessage(error: string): string | null {
   }
 }
 
+function isMicrophonePermissionDenied(error: unknown): boolean {
+  return error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'SecurityError');
+}
+
+async function requestMicrophonePermission(): Promise<MicrophonePermissionResult> {
+  if (typeof navigator === 'undefined') return 'unavailable';
+
+  const mediaDevices = navigator.mediaDevices;
+  if (!mediaDevices?.getUserMedia) return 'unavailable';
+
+  try {
+    // Pré-voo de permissão para iOS/Safari: solicita o microfone somente por
+    // gesto explícito. O stream não é lido, gravado ou enviado; todas as
+    // tracks são encerradas imediatamente antes do SpeechRecognition.
+    const stream = await mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((track) => track.stop());
+    return 'granted';
+  } catch (error) {
+    if (isMicrophonePermissionDenied(error)) return 'denied';
+    return 'error';
+  }
+}
+
 export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationButtonProps) {
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const startWatchdogRef = useRef<number | null>(null);
+  const permissionCheckedRef = useRef(false);
+  const startAttemptRef = useRef(0);
   const [starting, setStarting] = useState(false);
+  const [startingMessage, setStartingMessage] = useState('Abrindo microfone...');
   const [listening, setListening] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const supported = useSyncExternalStore(
@@ -105,6 +133,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
   useEffect(() => {
     return () => {
+      startAttemptRef.current += 1;
       if (startWatchdogRef.current !== null) {
         window.clearTimeout(startWatchdogRef.current);
         startWatchdogRef.current = null;
@@ -121,6 +150,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
   }
 
   function stopListening() {
+    startAttemptRef.current += 1;
     clearStartWatchdog();
     if (starting) {
       recognitionRef.current?.abort();
@@ -133,11 +163,41 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     recognitionRef.current?.stop();
   }
 
-  function startListening() {
+  async function startListening() {
     if (disabled || listening || starting) return;
 
     const Recognition = getSpeechRecognitionConstructor();
     if (Recognition === null) return;
+
+    const attempt = startAttemptRef.current + 1;
+    startAttemptRef.current = attempt;
+    setMessage(null);
+    setStarting(true);
+
+    if (!permissionCheckedRef.current) {
+      setStartingMessage('Pedindo acesso ao microfone...');
+      const permissionResult = await requestMicrophonePermission();
+      if (startAttemptRef.current !== attempt) return;
+
+      if (permissionResult === 'denied') {
+        setStarting(false);
+        setMessage('O microfone está bloqueado para este site. Libere a permissão no navegador e tente novamente.');
+        return;
+      }
+
+      if (permissionResult === 'error') {
+        setStarting(false);
+        setMessage('Não consegui solicitar o microfone neste aparelho. Tente novamente.');
+        return;
+      }
+
+      if (permissionResult === 'granted') {
+        permissionCheckedRef.current = true;
+      }
+    }
+
+    if (startAttemptRef.current !== attempt) return;
+    setStartingMessage('Abrindo reconhecimento de voz...');
 
     const recognition = new Recognition();
     recognition.lang = 'pt-BR';
@@ -145,10 +205,11 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     recognition.continuous = false;
     recognition.maxAlternatives = 1;
 
-    setMessage(null);
-    setStarting(true);
-
     recognition.onstart = () => {
+      if (startAttemptRef.current !== attempt) {
+        recognition.abort();
+        return;
+      }
       clearStartWatchdog();
       setStarting(false);
       setListening(true);
@@ -171,6 +232,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     };
 
     recognition.onerror = (event) => {
+      if (startAttemptRef.current !== attempt) return;
       clearStartWatchdog();
       setStarting(false);
       setListening(false);
@@ -179,6 +241,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     };
 
     recognition.onend = () => {
+      if (startAttemptRef.current !== attempt) return;
       clearStartWatchdog();
       setStarting(false);
       setListening(false);
@@ -187,23 +250,24 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
     recognitionRef.current = recognition;
     startWatchdogRef.current = window.setTimeout(() => {
-      if (recognitionRef.current !== recognition) return;
+      if (recognitionRef.current !== recognition || startAttemptRef.current !== attempt) return;
       recognition.abort();
       recognitionRef.current = null;
       startWatchdogRef.current = null;
       setStarting(false);
       setListening(false);
-      setMessage('O microfone não respondeu neste navegador. Tente novamente ou use o ditado do teclado.');
+      setMessage('O microfone foi liberado, mas o reconhecimento de voz deste navegador não respondeu.');
     }, START_WATCHDOG_MS);
 
     try {
       recognition.start();
     } catch {
+      if (startAttemptRef.current !== attempt) return;
       clearStartWatchdog();
       recognitionRef.current = null;
       setStarting(false);
       setListening(false);
-      setMessage('Não consegui iniciar o microfone. Tente novamente.');
+      setMessage('Não consegui iniciar o reconhecimento de voz. Tente novamente.');
     }
   }
 
@@ -226,13 +290,13 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
       </Button>
       <p aria-live="polite" className="text-xs text-ink-soft">
         {starting
-          ? 'Abrindo microfone...'
+          ? startingMessage
           : listening
             ? 'Ouvindo... fale naturalmente.'
             : message ?? 'A fala vira texto para você revisar antes de enviar.'}
       </p>
       <p className="text-[11px] leading-relaxed text-ink-soft">
-        O reconhecimento de voz usa o recurso disponível no seu navegador ou aparelho. O Mente Livre não envia nem armazena áudio bruto nesta etapa.
+        A autorização e o reconhecimento de voz ficam sob controle do navegador. O Mente Livre não grava nem envia áudio bruto nesta etapa.
       </p>
     </div>
   );
