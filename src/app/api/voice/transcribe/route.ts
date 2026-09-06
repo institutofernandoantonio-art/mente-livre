@@ -3,7 +3,6 @@ import { createClient } from '@/lib/supabase/server';
 import {
   VOICE_MAX_AUDIO_BYTES,
   VOICE_MAX_DURATION_MS,
-  VOICE_MAX_RESERVED_COST_MICROUSD,
   estimateVoiceCostMicrousd,
 } from '@/lib/voice/limits';
 import { getSpeechToTextProvider, isServerVoiceSttEnabled } from '@/lib/voice/stt';
@@ -85,12 +84,10 @@ export async function POST(request: Request) {
     return errorResponse('A transcrição por voz ainda não está configurada.', 503, 'provider_unavailable');
   }
 
-  const reservation = await reserveVoiceUsage({
-    requestId,
-    provider: provider.provider,
-    model: provider.model,
-    reservedCostMicrousd: VOICE_MAX_RESERVED_COST_MICROUSD,
-  });
+  // A reserva financeira aceita somente request_id. Provider, modelo, preço
+  // e valor reservado ficam fixos na função privilegiada do banco, portanto
+  // não podem ser escolhidos pelo browser nem por esta rota.
+  const reservation = await reserveVoiceUsage({ requestId });
 
   if (reservation.status !== 'reserved') {
     switch (reservation.status) {
