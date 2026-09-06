@@ -32,6 +32,7 @@
     "test:calendar-event-deletion": "node tests/conversation/calendar-event-deletion.test.mjs",
     "test:calendar-cancel-flow": "node tests/conversation/calendar-cancel-flow.test.mjs",
     "test:calendar-event-reschedule": "node tests/conversation/calendar-event-reschedule.test.mjs",
+    "test:calendar-reschedule-flow": "node tests/conversation/calendar-reschedule-flow.test.mjs",
     "test:google-calendar": "node tests/google/calendar.test.mjs",
     "test:upcoming-calendar-events": "node tests/google/upcoming-events.test.mjs",
     "test:calendar-event-targets": "node tests/google/calendar-event-targets.test.mjs",
