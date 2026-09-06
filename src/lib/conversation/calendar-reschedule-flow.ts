@@ -396,7 +396,8 @@ function extractClockTime(normalizedText: string): { hour: number; minute: numbe
   const hourMinute = [...normalizedText.matchAll(/\b([01]?\d|2[0-3])h([0-5]\d)\b/g)].at(-1);
   const colon = [...normalizedText.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g)].at(-1);
   const bareHour = [...normalizedText.matchAll(/\b([01]?\d|2[0-3])h(?!\d)/g)].at(-1);
-  const match = hourMinute ?? colon ?? bareHour;
+  const spokenHour = [...normalizedText.matchAll(/\bas\s+([01]?\d|2[0-3])\b(?![:\d])/g)].at(-1);
+  const match = hourMinute ?? colon ?? bareHour ?? spokenHour;
   if (!match) return null;
   return {
     hour: Number(match[1]),
