@@ -11,6 +11,7 @@ import { finalizeVoiceUsage, getVoiceUsageSummary, reserveVoiceUsage } from '@/l
 export const runtime = 'nodejs';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const NO_STORE_HEADERS = { 'Cache-Control': 'no-store' } as const;
 
 function audioExtension(type: string): string | null {
   switch (type.split(';', 1)[0].toLowerCase()) {
@@ -34,7 +35,7 @@ function audioExtension(type: string): string | null {
 }
 
 function errorResponse(message: string, status: number, code: string) {
-  return NextResponse.json({ error: message, code }, { status });
+  return NextResponse.json({ error: message, code }, { status, headers: NO_STORE_HEADERS });
 }
 
 export async function POST(request: Request) {
@@ -121,7 +122,7 @@ export async function POST(request: Request) {
     });
 
     const usage = await getVoiceUsageSummary();
-    return NextResponse.json({ text: result.text, usage });
+    return NextResponse.json({ text: result.text, usage }, { headers: NO_STORE_HEADERS });
   } catch {
     // Reserva permanece contabilizada de forma conservadora no teto mensal,
     // mesmo quando o provedor falha. Isso evita retries ilimitados que
