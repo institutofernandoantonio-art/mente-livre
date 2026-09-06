@@ -37,6 +37,12 @@ check('gravação tem limite curto e libera o microfone', () => {
   assert.match(voiceSource, /Parar e transcrever/);
 });
 
+check('erro do MediaRecorder nunca vira transcrição paga de áudio parcial', () => {
+  assert.match(voiceSource, /const recordingFailedRef = useRef\(false\)/);
+  assert.match(voiceSource, /recorder\.onerror = \(\) => \{[\s\S]*?recordingFailedRef\.current = true;[\s\S]*?currentRequestIdRef\.current = null;/);
+  assert.match(voiceSource, /recorder\.onstop = \(\) => \{[\s\S]*?const failed = recordingFailedRef\.current;[\s\S]*?if \(failed\) return;[\s\S]*?void transcribe\(blob, durationMs, id\);/);
+});
+
 check('cliente envia áudio somente ao endpoint do próprio Mente Livre', () => {
   assert.match(voiceSource, /fetch\('\/api\/voice\/transcribe'/);
   assert.match(voiceSource, /new FormData\(\)/);
