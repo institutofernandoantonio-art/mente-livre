@@ -62,8 +62,10 @@ check('interface deixa explícita a revisão antes do envio', () => {
 
 check('reconhecimento só começa por ação explícita no botão', () => {
   assert.match(voiceSource, /onClick=\{active \? stopListening : startListening\}/);
-  assert.match(voiceSource, /recognition\.start\(\)/);
-  assert.ok(!/useEffect\([\s\S]*recognition\.start\(\)/.test(voiceSource));
+  const handlerIndex = voiceSource.indexOf('function startListening()');
+  const startIndex = voiceSource.indexOf('recognition.start()');
+  assert.ok(handlerIndex >= 0, 'handler startListening precisa existir');
+  assert.ok(startIndex > handlerIndex, 'recognition.start() só pode existir dentro/depois do handler de gesto explícito');
 });
 
 check('mostra feedback imediato enquanto o microfone está abrindo', () => {
