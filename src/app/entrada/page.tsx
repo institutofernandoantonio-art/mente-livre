@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { logout } from "@/lib/supabase/actions";
 import { connectGoogleCalendar } from "@/lib/google/calendar";
 import { BrainDumpForm } from "./BrainDumpForm";
+import { UpcomingCalendarEvents } from "./UpcomingCalendarEvents";
 
 /**
  * Tela 2 (despejo mental) — Fase 3: captura de texto livre. Também é o
@@ -49,6 +50,8 @@ export default async function EntradaPage({
         <Card>
           <BrainDumpForm />
         </Card>
+
+        {email && <UpcomingCalendarEvents />}
 
         <div className="mt-6 flex flex-col items-center gap-3">
           <Link href="/conversa" className={buttonVariants("secondary")}>
