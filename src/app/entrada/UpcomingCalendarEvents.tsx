@@ -7,7 +7,6 @@ import { getUpcomingGoogleCalendarEvents } from '@/lib/google/upcoming-events';
 type CalendarEvent = {
   title: string;
   start: string;
-  end: string | null;
   allDay: boolean;
   htmlLink: string | null;
 };
@@ -100,7 +99,12 @@ export function UpcomingCalendarEvents() {
               return (
                 <li key={`${event.start}-${event.title}-${index}`}>
                   {event.htmlLink ? (
-                    <a href={event.htmlLink} target="_blank" rel="noreferrer" aria-label={`Abrir ${event.title} no Google Calendar`}>
+                    <a
+                      href={event.htmlLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`Abrir ${event.title} no Google Calendar`}
+                    >
                       {content}
                     </a>
                   ) : (
