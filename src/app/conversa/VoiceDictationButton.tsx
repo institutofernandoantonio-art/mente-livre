@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 
 type SpeechRecognitionAlternativeLike = {
@@ -47,7 +47,7 @@ type VoiceDictationButtonProps = {
   onTranscript: (transcript: string) => void;
 };
 
-type MicrophonePermissionResult = 'granted' | 'unavailable' | 'denied' | 'error';
+type MicrophonePermissionResult = 'granted' | 'unavailable' | 'denied' | 'insecure' | 'error';
 
 const START_WATCHDOG_MS = 8000;
 
@@ -62,28 +62,13 @@ function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null 
   return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition ?? null;
 }
 
-function subscribeToSpeechSupport(): () => void {
-  // A disponibilidade desta API não muda durante a vida da página.
-  // useSyncExternalStore é usado só para ter um snapshot client/server
-  // consistente sem setState síncrono em useEffect.
-  return () => undefined;
-}
-
-function getSpeechSupportSnapshot(): boolean {
-  return getSpeechRecognitionConstructor() !== null;
-}
-
-function getServerSpeechSupportSnapshot(): boolean {
-  return false;
-}
-
 function voiceErrorMessage(error: string): string | null {
   switch (error) {
     case 'aborted':
       return null;
     case 'not-allowed':
     case 'service-not-allowed':
-      return 'O navegador bloqueou o microfone. Permita o acesso para este site e tente novamente.';
+      return 'O navegador bloqueou o microfone ou o reconhecimento de fala. Libere o microfone para este site e, no Safari, confirme que Siri e Ditado estão ativados.';
     case 'no-speech':
       return 'Não ouvi nenhuma fala. Tente novamente.';
     case 'audio-capture':
@@ -98,15 +83,17 @@ function isMicrophonePermissionDenied(error: unknown): boolean {
 }
 
 async function requestMicrophonePermission(): Promise<MicrophonePermissionResult> {
-  if (typeof navigator === 'undefined') return 'unavailable';
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return 'unavailable';
+  if (!window.isSecureContext) return 'insecure';
 
   const mediaDevices = navigator.mediaDevices;
   if (!mediaDevices?.getUserMedia) return 'unavailable';
 
   try {
-    // Pré-voo de permissão para iOS/Safari: solicita o microfone somente por
-    // gesto explícito. O stream não é lido, gravado ou enviado; todas as
-    // tracks são encerradas imediatamente antes do SpeechRecognition.
+    // O acesso acontece somente após o toque explícito do usuário. Este
+    // preflight confirma a permissão real do microfone antes de depender do
+    // SpeechRecognition, que pode estar ausente/limitado no Safari/PWA.
+    // O stream não é lido, persistido ou enviado e é encerrado imediatamente.
     const stream = await mediaDevices.getUserMedia({ audio: true });
     stream.getTracks().forEach((track) => track.stop());
     return 'granted';
@@ -125,11 +112,6 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
   const [startingMessage, setStartingMessage] = useState('Abrindo microfone...');
   const [listening, setListening] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const supported = useSyncExternalStore(
-    subscribeToSpeechSupport,
-    getSpeechSupportSnapshot,
-    getServerSpeechSupportSnapshot,
-  );
 
   useEffect(() => {
     return () => {
@@ -166,9 +148,6 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
   async function startListening() {
     if (disabled || listening || starting) return;
 
-    const Recognition = getSpeechRecognitionConstructor();
-    if (Recognition === null) return;
-
     const attempt = startAttemptRef.current + 1;
     startAttemptRef.current = attempt;
     setMessage(null);
@@ -181,22 +160,43 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
       if (permissionResult === 'denied') {
         setStarting(false);
-        setMessage('O microfone está bloqueado para este site. Libere a permissão no navegador e tente novamente.');
+        setMessage('O microfone está bloqueado para este site. Libere a permissão do microfone nas configurações do navegador e tente novamente.');
+        return;
+      }
+
+      if (permissionResult === 'insecure') {
+        setStarting(false);
+        setMessage('O microfone só pode ser usado em uma conexão segura (HTTPS). Abra novamente o Mente Livre pelo endereço oficial.');
+        return;
+      }
+
+      if (permissionResult === 'unavailable') {
+        setStarting(false);
+        setMessage('Este navegador não disponibilizou acesso ao microfone para o Mente Livre. No iPhone e no Mac, abra diretamente no Safari ou no app instalado e tente novamente.');
         return;
       }
 
       if (permissionResult === 'error') {
         setStarting(false);
-        setMessage('Não consegui solicitar o microfone neste aparelho. Tente novamente.');
+        setMessage('Não consegui solicitar o microfone neste aparelho. Feche outras aplicações que possam estar usando o microfone e tente novamente.');
         return;
       }
 
-      if (permissionResult === 'granted') {
-        permissionCheckedRef.current = true;
-      }
+      permissionCheckedRef.current = true;
     }
 
     if (startAttemptRef.current !== attempt) return;
+
+    // A permissão do microfone precisa ser tratada antes desta detecção.
+    // Caso contrário Safari/PWA pode não expor SpeechRecognition e o toque
+    // vira um no-op sem sequer solicitar o microfone.
+    const Recognition = getSpeechRecognitionConstructor();
+    if (Recognition === null) {
+      setStarting(false);
+      setMessage('Microfone liberado, mas este navegador não disponibilizou o reconhecimento de fala. No Safari do iPhone ou Mac, confirme que Siri e Ditado estão ativados e tente novamente.');
+      return;
+    }
+
     setStartingMessage('Abrindo reconhecimento de voz...');
 
     const recognition = new Recognition();
@@ -236,6 +236,9 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
       clearStartWatchdog();
       setStarting(false);
       setListening(false);
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed' || event.error === 'audio-capture') {
+        permissionCheckedRef.current = false;
+      }
       const nextMessage = voiceErrorMessage(event.error);
       if (nextMessage !== null) setMessage(nextMessage);
     };
@@ -256,7 +259,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
       startWatchdogRef.current = null;
       setStarting(false);
       setListening(false);
-      setMessage('O microfone foi liberado, mas o reconhecimento de voz deste navegador não respondeu.');
+      setMessage('O microfone foi liberado, mas o reconhecimento de voz não respondeu. No Safari do iPhone ou Mac, confirme que Siri e Ditado estão ativados; depois tente novamente.');
     }, START_WATCHDOG_MS);
 
     try {
@@ -267,11 +270,9 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
       recognitionRef.current = null;
       setStarting(false);
       setListening(false);
-      setMessage('Não consegui iniciar o reconhecimento de voz. Tente novamente.');
+      setMessage('Não consegui iniciar o reconhecimento de voz. Tente novamente ou confirme Siri e Ditado nas configurações do aparelho.');
     }
   }
-
-  if (!supported) return null;
 
   const active = starting || listening;
 
@@ -296,7 +297,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
             : message ?? 'A fala vira texto para você revisar antes de enviar.'}
       </p>
       <p className="text-[11px] leading-relaxed text-ink-soft">
-        A autorização e o reconhecimento de voz ficam sob controle do navegador. O Mente Livre não grava nem envia áudio bruto nesta etapa.
+        O microfone só é ativado após o seu toque. Nesta etapa, o Mente Livre não grava, persiste nem envia áudio bruto; a conversão em texto usa o reconhecimento disponível no navegador/aparelho.
       </p>
     </div>
   );
