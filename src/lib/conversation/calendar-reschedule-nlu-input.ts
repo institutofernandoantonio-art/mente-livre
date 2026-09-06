@@ -11,6 +11,12 @@
 // abaixo são inequívocos. O texto original continua intacto e é usado pelo
 // fluxo de remarcação para localizar o evento real.
 //
+// Quando a frase inteira veio envolvida por um único par de aspas (caso
+// comum ao copiar um exemplo da própria interface/conversa), removemos essas
+// aspas SOMENTE da cópia já reconhecida como remarcação inequívoca. O texto
+// original continua intacto, e nenhuma mutação acontece sem a confirmação
+// explícita posterior do usuário.
+//
 // Nunca transforma frases sem verbo claro de remarcação, sem "para", sem
 // dia original hoje/amanhã, ou sem dois horários válidos. Não interpreta
 // qual evento é, não produz StructuredIntent e não executa I/O.
@@ -59,12 +65,30 @@ export function prepareCalendarRescheduleNluInput(text: string): PreparedResched
 
   const removeStart = sourceTime.index;
   const removeEnd = removeStart + sourceTime[0].length;
-  const preparedSource = `${sourcePart.slice(0, removeStart).trimEnd()} ${sourcePart.slice(removeEnd).trimStart()}`;
-  const prepared = `${preparedSource}${text.slice(lastPara.index)}`.replace(/\s{2,}/g, ' ').trim();
+  const beforeSourceTime = sourcePart.slice(0, removeStart).trimEnd();
+  const cleanedBeforeSourceTime = beforeSourceTime.replace(/(?:^|\s)(?:às|as)\s*$/iu, '').trimEnd();
+  const preparedSource = `${cleanedBeforeSourceTime} ${sourcePart.slice(removeEnd).trimStart()}`;
+  const prepared = stripSingleEnclosingQuotePair(
+    `${preparedSource}${text.slice(lastPara.index)}`.replace(/\s{2,}/g, ' ').trim(),
+  );
 
   return prepared === text
     ? { text, transformed: false }
     : { text: prepared, transformed: true };
+}
+
+function stripSingleEnclosingQuotePair(value: string): string {
+  const pairs = new Map([
+    ['"', '"'],
+    ["'", "'"],
+    ['“', '”'],
+    ['‘', '’'],
+  ]);
+
+  if (value.length < 2) return value;
+  const expectedClose = pairs.get(value[0]);
+  if (!expectedClose || value.at(-1) !== expectedClose) return value;
+  return value.slice(1, -1).trim();
 }
 
 function stripDiacritics(value: string): string {
