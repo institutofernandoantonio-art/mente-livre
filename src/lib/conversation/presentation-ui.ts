@@ -15,7 +15,9 @@ const CANCELLED_TEXT = 'Proposta cancelada.';
 const NEEDS_INPUT_TEXT = 'Não entendi. Pode responder de outro jeito?';
 const UNSUPPORTED_TEXT = 'Por enquanto, consigo criar tarefas simples a partir do que você escreve.';
 const CONFLICT_TEXT = 'O estado da conversa mudou. Revise o que está na tela e envie novamente.';
-const CALENDAR_DAY_AVAILABLE_TEXT = 'Não encontrei compromissos nesse dia.';
+const CALENDAR_DAY_BUSY_TEXT = 'Você tem compromissos nesse dia.';
+const CALENDAR_HOUR_BUSY_TEXT = 'Esse horário está ocupado na sua agenda.';
+const CALENDAR_DAY_AVAILABLE_TEXT = 'Não encontrei horários ocupados nesse dia.';
 const CALENDAR_HOUR_AVAILABLE_TEXT = 'Não encontrei compromisso nesse horário.';
 const CALENDAR_UNSUPPORTED_TEXT = 'Por enquanto, só consigo checar sua agenda para hoje ou amanhã.';
 const CALENDAR_ERROR_TEXT = 'Não consegui consultar seu Google Calendar agora.';
@@ -39,7 +41,11 @@ function assistantProposal(action: ProposedAction): UiMessageContent {
   return { role: 'assistant', kind: 'proposal', action };
 }
 
-function calendarInformationText(result: CalendarQueryResult): string {
+type CalendarInformationResult =
+  | CalendarQueryResult
+  | { status: 'busy'; scope: 'day' | 'hour'; busyBlockCount: number };
+
+function calendarInformationText(result: CalendarInformationResult): string {
   switch (result.status) {
     case 'events': {
       const formatter = new Intl.DateTimeFormat('pt-BR', {
@@ -57,6 +63,8 @@ function calendarInformationText(result: CalendarQueryResult): string {
       const header = result.scope === 'day' ? 'Seus compromissos:' : 'Nesse horário encontrei:';
       return `${header}\n${lines.join('\n')}`;
     }
+    case 'busy':
+      return result.scope === 'day' ? CALENDAR_DAY_BUSY_TEXT : CALENDAR_HOUR_BUSY_TEXT;
     case 'available':
       return result.scope === 'day' ? CALENDAR_DAY_AVAILABLE_TEXT : CALENDAR_HOUR_AVAILABLE_TEXT;
     case 'unsupported_window':
