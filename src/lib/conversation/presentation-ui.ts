@@ -3,41 +3,11 @@ import type { ConversationPresentationState } from './presentation';
 import type { ConversationEntryResult } from './conversation-entry';
 import type { CalendarQueryResult } from './calendar-query';
 
-// ============================================================================
-// Presentation UI mapping — helper puro (zero I/O, zero `'use client'`/
-// `'use server'`, zero dependência de React/Next/Supabase) que traduz os
-// DTOs já aprovados de apresentação (`ConversationPresentationState`,
-// `ConversationEntryResult`) para dados mínimos de UI: que mensagem
-// adicionar ao transcript local, e se o input deve ser limpo.
-//
-// Todos os imports acima são `import type` — apagados em tempo de
-// compilação, nunca uma dependência de runtime. Isso torna este módulo
-// seguro para ser importado tanto por Server Components/Functions quanto
-// por um Client Component (`ConversationPanel.tsx`) sem puxar
-// `conversation-entry.ts`/`presentation.ts` (ambos `server-only`) para o
-// bundle do browser.
-//
-// Este módulo NUNCA:
-// - gera `id` — o `id` visual de cada mensagem (só para `key` do React) é
-//   responsabilidade exclusiva do Client Component, nunca daqui, para
-//   manter estas funções 100% determinísticas e testáveis com
-//   `node:assert` (mesma entrada, mesma saída, sempre);
-// - decide roteamento/status — só traduz um DTO já decidido por
-//   `conversation-entry.ts`/`presentation.ts` para texto/estrutura de UI;
-// - formata `deadline.at`/`duration.minutes` para lógica — as duas
-//   funções de formatação abaixo são estritamente visuais; o valor
-//   original nunca é alterado, nunca é usado para decidir nada.
-// ============================================================================
-
-// `id` deliberadamente ausente aqui — atribuído pelo Client Component ao
-// inserir no histórico local, nunca por este módulo puro.
 export type UiMessageContent =
   | { role: 'user'; kind: 'text'; text: string }
   | { role: 'assistant'; kind: 'text'; text: string }
   | { role: 'assistant'; kind: 'proposal'; action: ProposedAction };
 
-// Textos fixos e genéricos — mesmo espírito de todo o resto do projeto
-// (nunca expõe detalhe técnico/stack/erro cru ao usuário).
 const EXPIRED_TEXT = 'O contexto anterior expirou. Envie sua mensagem novamente para começar de novo.';
 const GENERIC_ERROR_TEXT = 'Algo deu errado. Tente novamente.';
 const CONFIRMED_TEXT = 'Tarefa criada.';
@@ -45,52 +15,21 @@ const CANCELLED_TEXT = 'Proposta cancelada.';
 const NEEDS_INPUT_TEXT = 'Não entendi. Pode responder de outro jeito?';
 const UNSUPPORTED_TEXT = 'Por enquanto, consigo criar tarefas simples a partir do que você escreve.';
 const CONFLICT_TEXT = 'O estado da conversa mudou. Revise o que está na tela e envie novamente.';
-// Textos de `calendar_information` — ver calendarInformationText() abaixo.
-// Frases factuais sobre compromissos/ocupações, nunca "você está livre o
-// dia inteiro" (poderia sugerir algo além do que o Calendar consultado
-// realmente garante — ver mapeamento desta subfase).
 const CALENDAR_DAY_BUSY_TEXT = 'Você tem compromissos nesse dia.';
-const CALENDAR_DAY_AVAILABLE_TEXT = 'Não encontrei horários ocupados nesse dia.';
 const CALENDAR_HOUR_BUSY_TEXT = 'Esse horário está ocupado na sua agenda.';
+const CALENDAR_DAY_AVAILABLE_TEXT = 'Não encontrei horários ocupados nesse dia.';
 const CALENDAR_HOUR_AVAILABLE_TEXT = 'Não encontrei compromisso nesse horário.';
 const CALENDAR_UNSUPPORTED_TEXT = 'Por enquanto, só consigo checar sua agenda para hoje ou amanhã.';
 const CALENDAR_ERROR_TEXT = 'Não consegui consultar seu Google Calendar agora.';
-// Subfase 2 da criação de compromissos no Google Calendar — mensagens
-// mínimas, só para o switch exaustivo compilar; a UI completa da proposta
-// de create_calendar_event (preview visual) fica para subfase própria.
 const SCHEDULE_CONFLICT_TEXT = 'Você já tem um compromisso nesse horário.';
 const CALENDAR_UNAVAILABLE_TEXT = 'Não consegui confirmar sua disponibilidade agora. Tente novamente.';
-// Subfase 5 da criação de compromissos no Google Calendar — nunca afirma
-// que o evento já foi criado (a execução pode estar apenas CLAIMED, ainda
-// não confirmada pelo Google): "começou a ser processado" é verdadeiro em
-// ambos os casos (claimed ou já completed), sem prometer mais do que o
-// sistema sabe neste momento.
 const CALENDAR_PROCESSING_TEXT =
   'Esse compromisso já começou a ser processado e não pode mais ser cancelado por aqui.';
-// Subfase 9 da criação de compromissos no Google Calendar — mensagens do
-// lifecycle claim -> Google -> finalize. Nenhuma menciona token/scope/
-// OAuth/HTTP status; nenhuma afirma criação/falha quando o resultado real
-// é incerto (ver calendar-event-confirmation.ts para a semântica exata de
-// cada status).
-//
-// Sucesso: nunca "vou te avisar" — quem emite o lembrete é o próprio
-// Google Calendar, não o Mente Livre.
 const CALENDAR_EVENT_CONFIRMED_TEXT = 'Compromisso adicionado ao Google Agenda, com aviso de 30 minutos antes.';
-// Autorização ausente: orienta reconexão sem nunca mencionar termos
-// técnicos (token/scope/OAuth/401/refresh token) e sem tentar reconectar
-// automaticamente — a proposta continua pendente (claim/runtime
-// preservados), por isso "confirme novamente" faz sentido depois de
-// reconectar.
 const CALENDAR_AUTHORIZATION_REQUIRED_TEXT =
   'Para criar esse compromisso, reconecte seu Google Agenda permitindo o agendamento. Depois, confirme novamente.';
-// Execução incerta: nunca afirma que o evento foi criado NEM que não foi
-// — genuinamente não sabemos. "reutilizará a mesma identificação" é a
-// forma tecnicamente honesta de dizer que reenviar é seguro (nunca cria
-// duplicata), mais precisa que uma promessa genérica de "sem risco".
 const CALENDAR_EXECUTION_UNCERTAIN_TEXT =
   'Não consegui confirmar a conclusão no Google Agenda. Você pode tentar confirmar novamente; o Mente Livre reutilizará a mesma identificação do compromisso para evitar duplicidade.';
-// Finalização pendente: o Google JÁ confirmou existência — nunca dizer
-// "não foi criado"/"falhou ao agendar"/"cancelado".
 const CALENDAR_FINALIZATION_PENDING_TEXT =
   'O compromisso foi processado no Google Agenda, mas não consegui concluir o registro aqui. Tente confirmar novamente.';
 
@@ -102,14 +41,28 @@ function assistantProposal(action: ProposedAction): UiMessageContent {
   return { role: 'assistant', kind: 'proposal', action };
 }
 
-// --- calendar_information → texto curto e determinístico --------------------
-//
-// Zero segunda chamada a LLM: a frase é escolhida por `status`/`scope`,
-// nunca gerada a partir de conteúdo variável. Nunca menciona
-// `busyBlockCount` (não melhora a UX pedida nesta fatia) nem inventa nome
-// de compromisso (freebusy nunca devolve isso — ver calendar-query.ts).
-function calendarInformationText(result: CalendarQueryResult): string {
+type CalendarInformationResult =
+  | CalendarQueryResult
+  | { status: 'busy'; scope: 'day' | 'hour'; busyBlockCount: number };
+
+function calendarInformationText(result: CalendarInformationResult): string {
   switch (result.status) {
+    case 'events': {
+      const formatter = new Intl.DateTimeFormat('pt-BR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        timeZone: result.timeZone,
+      });
+      const lines = result.events.map((event) => {
+        if (event.allDay) return `• Dia inteiro — ${event.title}`;
+        const start = new Date(event.start);
+        const time = Number.isNaN(start.getTime()) ? 'Horário não disponível' : formatter.format(start);
+        return `• ${time} — ${event.title}`;
+      });
+      const header = result.scope === 'day' ? 'Seus compromissos:' : 'Nesse horário encontrei:';
+      return `${header}\n${lines.join('\n')}`;
+    }
     case 'busy':
       return result.scope === 'day' ? CALENDAR_DAY_BUSY_TEXT : CALENDAR_HOUR_BUSY_TEXT;
     case 'available':
@@ -117,17 +70,9 @@ function calendarInformationText(result: CalendarQueryResult): string {
     case 'unsupported_window':
       return CALENDAR_UNSUPPORTED_TEXT;
     case 'error':
-      // Calendar não conectado e falha técnica continuam indistinguíveis
-      // aqui, de propósito — mesma decisão de calendar-query.ts. Nunca
-      // afirma "não está conectado" sem evidência.
       return CALENDAR_ERROR_TEXT;
   }
 }
-
-// --- Bootstrap (montagem) → mensagem inicial opcional -----------------------
-//
-// `empty` nunca produz mensagem — não há nada a mostrar; o transcript local
-// simplesmente começa vazio.
 
 export function mapPresentationBootstrap(state: ConversationPresentationState): UiMessageContent | null {
   switch (state.status) {
@@ -143,17 +88,6 @@ export function mapPresentationBootstrap(state: ConversationPresentationState): 
       return assistantText(GENERIC_ERROR_TEXT);
   }
 }
-
-// --- Envio → mensagem de resposta + se o input deve ser limpo --------------
-//
-// `clearInput`: `needs_input`/`conflict`/`error` preservam o texto (o
-// usuário pode querer editar/reenviar); `calendar_unavailable` também
-// preserva — é deliberadamente TRANSITÓRIO na clarificação (Subfase 2 da
-// criação de compromissos no Google Calendar: a clarification row
-// original nunca é consumida/avançada, exatamente para permitir reenviar
-// a MESMA resposta quando o Calendar voltar) — manter o texto já digitado
-// pronto para reenvio é a extensão natural dessa mesma decisão. Todos os
-// outros limpam.
 
 export type EntryResultUiEffect = {
   message: UiMessageContent;
@@ -171,38 +105,18 @@ export function mapEntryResultToUiEffect(result: ConversationEntryResult): Entry
     case 'schedule_conflict':
       return { message: assistantText(SCHEDULE_CONFLICT_TEXT), clearInput: true };
     case 'calendar_unavailable':
-      // clearInput: false — deliberado (ver comentário acima): a mesma
-      // resposta digitada pode ser reenviada assim que o Calendar voltar.
       return { message: assistantText(CALENDAR_UNAVAILABLE_TEXT), clearInput: false };
     case 'confirmed':
-      // `result.itemId` deliberadamente nunca lido aqui — a UI não expõe
-      // nem depende dele (ver cabeçalho do Client Component).
       return { message: assistantText(CONFIRMED_TEXT), clearInput: true };
     case 'cancelled':
       return { message: assistantText(CANCELLED_TEXT), clearInput: true };
     case 'calendar_processing':
-      // clearInput: true — deliberado, diferente de `calendar_unavailable`
-      // (que preserva o texto porque reenviar a MESMA resposta pode
-      // funcionar assim que o Calendar voltar). Aqui reenviar "não"
-      // verbatim produziria sempre o mesmo resultado (a execução já
-      // começou, permanentemente) — não há nada de produtivo a repetir com
-      // o texto já digitado, mesmo racional de `cancelled`/
-      // `schedule_conflict` (resultado determinístico e terminal para esta
-      // proposta).
       return { message: assistantText(CALENDAR_PROCESSING_TEXT), clearInput: true };
     case 'calendar_event_confirmed':
-      // Sucesso terminal — mesmo racional de clearInput:true de
-      // `confirmed`/`cancelled` (nada produtivo a repetir).
       return { message: assistantText(CALENDAR_EVENT_CONFIRMED_TEXT), clearInput: true };
     case 'calendar_authorization_required':
     case 'calendar_execution_uncertain':
     case 'calendar_finalization_pending':
-      // clearInput: false nos três — a proposta continua pendente (claim/
-      // runtime preservados pelo orquestrador nesses três casos) e a ação
-      // recomendada é literalmente "confirme/tente novamente", isto é,
-      // reenviar a MESMA resposta ("sim") — preservar o texto já digitado
-      // ajuda exatamente esse reenvio, mesmo racional de
-      // `calendar_unavailable`.
       return {
         message: assistantText(
           result.status === 'calendar_authorization_required'
@@ -226,60 +140,18 @@ export function mapEntryResultToUiEffect(result: ConversationEntryResult): Entry
   }
 }
 
-// --- Preview de proposta: formatação estritamente visual --------------------
-//
-// Nunca altera o valor original, nunca é reutilizado para lógica — só
-// texto para o preview de `create_local_task`.
-
 export function formatDeadlinePreview(deadline: { at: string } | null): string | null {
-  if (deadline === null) {
-    return null;
-  }
+  if (deadline === null) return null;
   const parsed = new Date(deadline.at);
-  if (Number.isNaN(parsed.getTime())) {
-    // Fallback seguro: nunca esconde o dado por não conseguir formatá-lo.
-    return deadline.at;
-  }
+  if (Number.isNaN(parsed.getTime())) return deadline.at;
   return parsed.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 }
 
 export function formatDurationPreview(duration: { minutes: number } | null): string | null {
-  if (duration === null) {
-    return null;
-  }
+  if (duration === null) return null;
   return `${duration.minutes} min`;
 }
 
-// --- Preview de proposta de evento (Subfase 8) -----------------------------
-//
-// `event` é exatamente `ProposedAction.create_calendar_event.event` — já
-// um instante absoluto validado (`start`/`end`, ISO 8601, `end > start`)
-// e um timezone IANA validado (ver `runtime-state-validation.ts`,
-// `calendar-event-proposal.ts`). Esta função NUNCA recalcula/reinterpreta
-// esses valores — só FORMATA, sempre usando o `event.timezone` recebido
-// (nunca o timezone do servidor nem do browser, nunca `new
-// Date().toLocaleString()` sem `timeZone` explícito). Zero rede, zero
-// `Date.now()`, zero dependência de Next/React — mesma pureza de
-// `formatDeadlinePreview`/`formatDurationPreview` acima.
-//
-// Deliberadamente NÃO exportado com "Calendar" no nome (nem o tipo, nem a
-// função): `ConversationPanel.tsx` importa este símbolo diretamente, e um
-// teste de auditoria daquele arquivo (navigation.test.mjs) bane a palavra
-// "Calendar" no client — proteção legítima contra reintroduzir lógica de
-// OAuth/token ali. O NOME não precisa carregar essa palavra para o preview
-// ser claro (o rótulo visual real, "Compromisso", já vem do próprio
-// Client Component) — evitar a colisão pelo nome é mais simples e mais
-// seguro do que enfraquecer aquele teste.
-//
-// `dateSpan`: discriminador entre os dois layouts possíveis — `same_day`
-// (caso comum: um único rótulo de data + intervalo de horário conciso) e
-// `crosses_midnight` (start/end caem em dias civis DIFERENTES no timezone
-// do evento — nunca escondido: cada extremidade mostra sua própria
-// data+hora por extenso, para nunca criar ambiguidade sobre qual dia é
-// qual). A comparação de "mesmo dia" é feita nas STRINGS já formatadas no
-// timezone do evento (nunca em epoch/UTC) — é isso que torna a decisão
-// correta mesmo quando o evento cruza meia-noite em fusos com offset
-// negativo/positivo.
 type ProposedCalendarEvent = Extract<ProposedAction, { actionType: 'create_calendar_event' }>['event'];
 
 export type EventProposalPreview = {
@@ -312,13 +184,7 @@ export function buildEventProposalPreview(event: ProposedCalendarEvent): EventPr
   const endDateText = dateFormatter.format(end);
   const startTimeText = timeFormatter.format(start);
   const endTimeText = timeFormatter.format(end);
-
-  // "Não for vazia" (ver enunciado da subfase): uma descrição só de
-  // espaços é tratada como ausente para efeitos de exibição — decisão
-  // puramente visual, nunca altera/normaliza o valor original em
-  // `event.description` (nada aqui é reatribuído/persistido).
   const description = event.description !== null && event.description.trim().length > 0 ? event.description : null;
-
   const base = { title: event.title, description, reminderMinutes: event.reminderMinutesBeforeStart };
 
   if (startDateText === endDateText) {
