@@ -23,39 +23,38 @@ function check(name, fn) {
   }
 }
 
-check('usa reconhecimento de fala progressivo do navegador em pt-BR', () => {
-  assert.match(voiceSource, /SpeechRecognition/);
-  assert.match(voiceSource, /webkitSpeechRecognition/);
-  assert.match(voiceSource, /recognition\.lang = 'pt-BR'/);
-});
-
-check('ditado é de um turno e aproveita resultados parciais', () => {
-  assert.match(voiceSource, /recognition\.interimResults = true/);
-  assert.match(voiceSource, /recognition\.continuous = false/);
-  assert.match(voiceSource, /recognition\.maxAlternatives = 1/);
-  assert.ok(!voiceSource.includes('if (!result.isFinal'));
-});
-
-check('voz não grava nem envia áudio pelo código do Mente Livre', () => {
-  for (const forbidden of ['MediaRecorder', 'FormData', 'fetch(', 'localStorage', 'sessionStorage']) {
-    assert.ok(!voiceSource.includes(forbidden), `capacidade proibida nesta fatia: ${forbidden}`);
-  }
-});
-
-check('preflight solicita permissão local e encerra o stream imediatamente', () => {
-  assert.match(voiceSource, /navigator\.mediaDevices/);
-  assert.match(voiceSource, /mediaDevices\.getUserMedia\(\{ audio: true \}\)/);
-  assert.match(voiceSource, /stream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
-  assert.match(voiceSource, /NotAllowedError/);
-  assert.match(voiceSource, /SecurityError/);
+check('captura áudio com MediaRecorder somente após gesto e permissão explícita', () => {
+  assert.match(voiceSource, /navigator\.mediaDevices\.getUserMedia\(\{ audio: true \}\)/);
+  assert.match(voiceSource, /new MediaRecorder\(/);
   assert.match(voiceSource, /window\.isSecureContext/);
+  assert.match(voiceSource, /onClick=\{state === 'recording' \? stopRecording : startRecording\}/);
 });
 
-check('componente de voz não conhece o dispatcher nem ações de calendário', () => {
-  assert.ok(!voiceSource.includes('sendConversationMessage'));
-  assert.ok(!voiceSource.includes('sendConversation'));
-  assert.ok(!voiceSource.includes('Google'));
-  assert.ok(!voiceSource.includes('Supabase'));
+check('gravação tem limite curto e libera o microfone', () => {
+  assert.match(voiceSource, /VOICE_MAX_DURATION_MS/);
+  assert.match(voiceSource, /AUTO_STOP_MS/);
+  assert.match(voiceSource, /track\.stop\(\)/);
+  assert.match(voiceSource, /Parar e transcrever/);
+});
+
+check('cliente envia áudio somente ao endpoint do próprio Mente Livre', () => {
+  assert.match(voiceSource, /fetch\('\/api\/voice\/transcribe'/);
+  assert.match(voiceSource, /new FormData\(\)/);
+  assert.match(voiceSource, /form\.append\('audio'/);
+  assert.ok(!voiceSource.includes('api.openai.com'));
+  assert.ok(!voiceSource.includes('MENTE_LIVRE_OPENAI_STT_API_KEY'));
+});
+
+check('proteção contra repetição usa request_id UUID por gravação', () => {
+  assert.match(voiceSource, /currentRequestIdRef/);
+  assert.match(voiceSource, /crypto\.randomUUID/);
+  assert.match(voiceSource, /form\.append\('request_id', id\)/);
+});
+
+check('não persiste áudio ou transcript no navegador', () => {
+  for (const forbidden of ['localStorage', 'sessionStorage', 'indexedDB']) {
+    assert.ok(!voiceSource.includes(forbidden), `persistência proibida: ${forbidden}`);
+  }
 });
 
 check('transcript entra no textarea e não é enviado automaticamente', () => {
@@ -65,76 +64,30 @@ check('transcript entra no textarea e não é enviado automaticamente', () => {
   assert.ok(!voiceSource.includes('type="submit"'));
 });
 
-check('interface deixa explícita a revisão antes do envio', () => {
-  assert.match(voiceSource, /Revise antes de enviar/i);
-  assert.match(voiceSource, /revisar antes de enviar/i);
-});
-
-check('permissão é solicitada antes de depender de SpeechRecognition', () => {
-  assert.match(voiceSource, /onClick=\{active \? stopListening : startListening\}/);
-  const handlerIndex = voiceSource.indexOf('async function startListening()');
-  const permissionCallIndex = voiceSource.indexOf('await requestMicrophonePermission()', handlerIndex);
-  const recognitionLookupIndex = voiceSource.indexOf('getSpeechRecognitionConstructor()', handlerIndex);
-  const startIndex = voiceSource.indexOf('recognition.start()', handlerIndex);
-  assert.ok(handlerIndex >= 0, 'handler startListening precisa existir');
-  assert.ok(permissionCallIndex > handlerIndex, 'permissão só pode ser pedida após gesto explícito');
-  assert.ok(recognitionLookupIndex > permissionCallIndex, 'SpeechRecognition só pode ser consultado depois da permissão');
-  assert.ok(startIndex > recognitionLookupIndex, 'recognition.start() só pode vir depois da detecção pós-permissão');
-});
-
-check('iPhone em navegador alternativo não entra em sessão sabidamente incompatível', () => {
-  assert.match(voiceSource, /function isIosNonSafariBrowser\(\)/);
-  assert.match(voiceSource, /CriOS\|FxiOS\|EdgiOS\|OPiOS/);
-  const handlerIndex = voiceSource.indexOf('async function startListening()');
-  const iosGuardIndex = voiceSource.indexOf('if (isIosNonSafariBrowser())', handlerIndex);
-  const recognitionLookupIndex = voiceSource.indexOf('getSpeechRecognitionConstructor()', handlerIndex);
-  assert.ok(iosGuardIndex > handlerIndex);
-  assert.ok(recognitionLookupIndex > iosGuardIndex);
-  assert.match(voiceSource, /abra este mesmo endereço diretamente no Safari/i);
-});
-
-check('botão nunca some só porque SpeechRecognition não está disponível', () => {
-  assert.ok(!voiceSource.includes('if (!supported) return null'));
-  assert.match(voiceSource, /listening \? 'Parar de ouvir' : 'Falar'/);
-  assert.match(voiceSource, /Microfone liberado, mas este navegador não disponibilizou o reconhecimento de fala/);
-  assert.match(voiceSource, /Siri e Ditado/);
-});
-
-check('permissão negada ou microfone indisponível gera orientação clara', () => {
+check('permissão negada e navegador incompatível geram orientação clara', () => {
   assert.match(voiceSource, /O microfone está bloqueado para este site/);
-  assert.match(voiceSource, /Este navegador não disponibilizou acesso ao microfone/);
+  assert.match(voiceSource, /Este navegador não oferece a captura de áudio necessária/);
   assert.match(voiceSource, /conexão segura \(HTTPS\)/);
 });
 
-check('mostra feedback imediato durante permissão e abertura do reconhecimento', () => {
-  assert.match(voiceSource, /const \[starting, setStarting\] = useState\(false\)/);
-  assert.match(voiceSource, /setStarting\(true\)/);
-  assert.match(voiceSource, /Pedindo acesso ao microfone\.\.\./);
-  assert.match(voiceSource, /Abrindo reconhecimento de voz\.\.\./);
-  assert.match(voiceSource, /starting \? 'Cancelar'/);
+check('interface informa limite, transcrição e privacidade', () => {
+  assert.match(voiceSource, /Máximo de 20 segundos/);
+  assert.match(voiceSource, /Transcrevendo com segurança/);
+  assert.match(voiceSource, /não é salvo no Supabase nem em logs/);
+  assert.match(voiceSource, /revisar antes de Enviar/);
 });
 
-check('impede starts concorrentes e invalida tentativa cancelada', () => {
-  assert.match(voiceSource, /disabled \|\| listening \|\| starting/);
-  assert.match(voiceSource, /const active = starting \|\| listening/);
-  assert.match(voiceSource, /startAttemptRef\.current \+= 1/);
-  assert.match(voiceSource, /startAttemptRef\.current !== attempt/);
+check('mostra consumo mensal e teto interno quando disponível', () => {
+  assert.match(voiceSource, /\/api\/voice\/usage/);
+  assert.match(voiceSource, /Voz neste mês/);
+  assert.match(voiceSource, /proteção de orçamento/);
+  assert.match(voiceSource, /internalLimitUsd/);
 });
 
-check('watchdog de abertura libera a UI quando não há callback inicial', () => {
-  assert.match(voiceSource, /const START_WATCHDOG_MS = 8000/);
-  assert.match(voiceSource, /recognition\.abort\(\)/);
-  assert.match(voiceSource, /o reconhecimento de voz não respondeu/i);
-  assert.match(voiceSource, /clearStartWatchdog\(\)/);
-});
-
-check('escuta não pode ficar presa indefinidamente', () => {
-  assert.match(voiceSource, /const LISTENING_WATCHDOG_MS = 15000/);
-  assert.match(voiceSource, /listeningWatchdogRef/);
-  assert.match(voiceSource, /recognition\.onspeechend = \(\) =>/);
-  assert.match(voiceSource, /recognition\.stop\(\)/);
-  assert.match(voiceSource, /clearListeningWatchdog\(\)/);
-  assert.match(voiceSource, /A escuta terminou, mas não recebi texto/i);
+check('componente de voz continua separado das ações de agenda', () => {
+  assert.ok(!voiceSource.includes('sendConversationMessage'));
+  assert.ok(!voiceSource.includes('Google'));
+  assert.ok(!voiceSource.includes('calendar'));
 });
 
 const passed = results.filter(Boolean).length;
