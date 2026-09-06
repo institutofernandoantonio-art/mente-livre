@@ -84,12 +84,15 @@ grant usage on schema private to authenticated;
 -- externo de US$ 5,00/mês antes da feature ser ativada em produção. O delta
 -- de US$ 1,00 é margem adicional porque a aplicação para antes do provedor.
 -- Aumentar qualquer um desses limites exige autorização explícita do dono.
+--
+-- A reserva também é FIXA no banco para o único modelo autorizado no MVP:
+-- OpenAI gpt-transcribe, máximo 20s, US$ 0,0045/min => US$ 0,0015 por
+-- chamada máxima = 1500 microUSD. O cliente/RPC público NÃO pode escolher
+-- provider, modelo nem preço; isso evita que uma chamada direta ao RPC
+-- envenene o orçamento com valores arbitrários.
 
 create or replace function private.reserve_voice_transcription_usage(
-  p_request_id uuid,
-  p_provider text,
-  p_model text,
-  p_reserved_cost_microusd bigint
+  p_request_id uuid
 )
 returns table (status text, usage_id uuid, month_reserved_cost_microusd bigint)
 language plpgsql
@@ -103,6 +106,9 @@ declare
   v_month_reserved bigint;
   v_new_id uuid;
   v_recent_count integer;
+  v_provider constant text := 'openai';
+  v_model constant text := 'gpt-transcribe';
+  v_reserved_cost constant bigint := 1500; -- 20s máximos a US$ 0,0045/min
   v_internal_monthly_cap constant bigint := 4000000; -- US$ 4.00 em microUSD
 begin
   if v_user_id is null then
@@ -110,12 +116,7 @@ begin
     return;
   end if;
 
-  if p_request_id is null
-     or p_provider is null or char_length(p_provider) not between 1 and 32
-     or p_model is null or char_length(p_model) not between 1 and 96
-     or p_reserved_cost_microusd is null
-     or p_reserved_cost_microusd < 1
-     or p_reserved_cost_microusd > 1000000 then
+  if p_request_id is null then
     return query select 'invalid'::text, null::uuid, 0::bigint;
     return;
   end if;
@@ -166,7 +167,7 @@ begin
    where v.created_at >= v_month_start
      and v.created_at < v_month_start + interval '1 month';
 
-  if v_month_reserved + p_reserved_cost_microusd > v_internal_monthly_cap then
+  if v_month_reserved + v_reserved_cost > v_internal_monthly_cap then
     return query select 'budget_exceeded'::text, null::uuid, v_month_reserved;
     return;
   end if;
@@ -181,26 +182,23 @@ begin
   ) values (
     v_user_id,
     p_request_id,
-    p_provider,
-    p_model,
+    v_provider,
+    v_model,
     'reserved',
-    p_reserved_cost_microusd
+    v_reserved_cost
   )
   returning id into v_new_id;
 
   return query
-    select 'reserved'::text, v_new_id, v_month_reserved + p_reserved_cost_microusd;
+    select 'reserved'::text, v_new_id, v_month_reserved + v_reserved_cost;
 end;
 $$;
 
-revoke all on function private.reserve_voice_transcription_usage(uuid, text, text, bigint) from public;
-grant execute on function private.reserve_voice_transcription_usage(uuid, text, text, bigint) to authenticated;
+revoke all on function private.reserve_voice_transcription_usage(uuid) from public;
+grant execute on function private.reserve_voice_transcription_usage(uuid) to authenticated;
 
 create or replace function public.reserve_voice_transcription_usage(
-  p_request_id uuid,
-  p_provider text,
-  p_model text,
-  p_reserved_cost_microusd bigint
+  p_request_id uuid
 )
 returns table (status text, usage_id uuid, month_reserved_cost_microusd bigint)
 language plpgsql
@@ -210,17 +208,12 @@ as $$
 begin
   return query
     select *
-      from private.reserve_voice_transcription_usage(
-        p_request_id,
-        p_provider,
-        p_model,
-        p_reserved_cost_microusd
-      );
+      from private.reserve_voice_transcription_usage(p_request_id);
 end;
 $$;
 
-revoke all on function public.reserve_voice_transcription_usage(uuid, text, text, bigint) from public, anon;
-grant execute on function public.reserve_voice_transcription_usage(uuid, text, text, bigint) to authenticated;
+revoke all on function public.reserve_voice_transcription_usage(uuid) from public, anon;
+grant execute on function public.reserve_voice_transcription_usage(uuid) to authenticated;
 
 create or replace function private.finalize_voice_transcription_usage(
   p_request_id uuid,
@@ -245,7 +238,7 @@ begin
      or p_status not in ('completed', 'failed')
      or p_duration_ms is null or p_duration_ms not between 0 and 20000
      or p_estimated_cost_microusd is null
-     or p_estimated_cost_microusd not between 0 and 1000000 then
+     or p_estimated_cost_microusd not between 0 and 1500 then
     return false;
   end if;
 
