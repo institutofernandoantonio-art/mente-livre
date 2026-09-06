@@ -66,12 +66,26 @@ check('teto é reservado antes de qualquer chamada paga e finalizado depois', ()
   assert.match(route, /await finalizeVoiceUsage/);
 });
 
-check('migration aplica hard cap interno de US$ 4 de forma atômica', () => {
+check('migration aplica hard cap GLOBAL interno de US$ 4 de forma atômica', () => {
   assert.match(migration, /v_internal_monthly_cap constant bigint := 4000000/);
   assert.match(migration, /pg_advisory_xact_lock/);
+  assert.match(migration, /mente-livre-voice:/);
   assert.match(migration, /v_month_reserved \+ p_reserved_cost_microusd > v_internal_monthly_cap/);
   assert.match(migration, /v_recent_count >= 6/);
   assert.match(migration, /unique \(user_id, request_id\)/i);
+
+  const globalSum = /select coalesce\(sum\(v\.reserved_cost_microusd\), 0\)[\s\S]*?where v\.created_at >= v_month_start[\s\S]*?and v\.created_at < v_month_start \+ interval '1 month'/i;
+  assert.match(migration, globalSum);
+});
+
+check('RPCs privilegiadas ficam em private e wrappers públicos são invoker', () => {
+  assert.match(migration, /create schema if not exists private/);
+  assert.match(migration, /create or replace function private\.reserve_voice_transcription_usage/);
+  assert.match(migration, /create or replace function private\.finalize_voice_transcription_usage/);
+  assert.match(migration, /create or replace function public\.reserve_voice_transcription_usage[\s\S]*?security invoker/);
+  assert.match(migration, /create or replace function public\.finalize_voice_transcription_usage[\s\S]*?security invoker/);
+  assert.match(migration, /security definer/);
+  assert.match(migration, /set search_path = ''/);
 });
 
 check('tabela não armazena áudio nem transcript e tem RLS explícita', () => {
