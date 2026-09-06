@@ -95,7 +95,7 @@ export type EventReference = {
   resolvedId: string | null;
 };
 
-// Uma intenção pode se referir a algo novo ou algo que já existe — nunca
+// Uma intenção pode se referir a algo novo ou a algo já existente — nunca
 // os dois ao mesmo tempo. Union discriminada por "kind", não um par de
 // campos opcionais independentes.
 export type IntentSubject = TaskRef | EventReference;
@@ -184,10 +184,6 @@ export type StructuredIntent =
   | (BaseIntent & {
       intentType: 'cancel_event';
       eventReference: EventReference;
-      // Cancelar algo real exige delimitar onde procurar. A NLU preserva
-      // dia/hora em forma civil e a camada server-side resolve o instante
-      // usando o timezone real do navegador antes de tocar o Calendar.
-      temporalWindow: TemporalWindow;
       calendarAction: 'cancel';
     })
   | (BaseIntent & {
