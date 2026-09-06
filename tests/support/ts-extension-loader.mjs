@@ -12,6 +12,7 @@ const REDIRECTS = new Map([
   ['./calendar-event-execution', new URL('./fake-calendar-event-execution.mjs', import.meta.url).href],
   ['./calendar-event-finalize', new URL('./fake-calendar-event-finalize.mjs', import.meta.url).href],
   ['./calendar-cancel-flow', new URL('./fake-calendar-cancel-flow.mjs', import.meta.url).href],
+  ['./calendar-reschedule-flow', new URL('./fake-calendar-reschedule-flow.mjs', import.meta.url).href],
   ['./conversation-turn', new URL('./fake-conversation-turn.mjs', import.meta.url).href],
   ['./proposal-turn', new URL('./fake-proposal-turn.mjs', import.meta.url).href],
   ['./intent-extraction', new URL('./fake-intent-extraction.mjs', import.meta.url).href],
