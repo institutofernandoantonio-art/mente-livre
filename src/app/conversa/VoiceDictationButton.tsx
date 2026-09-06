@@ -36,6 +36,7 @@ type BrowserSpeechRecognition = {
   abort: () => void;
   onstart: (() => void) | null;
   onend: (() => void) | null;
+  onspeechend: (() => void) | null;
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
   onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
 };
@@ -50,6 +51,7 @@ type VoiceDictationButtonProps = {
 type MicrophonePermissionResult = 'granted' | 'unavailable' | 'denied' | 'insecure' | 'error';
 
 const START_WATCHDOG_MS = 8000;
+const LISTENING_WATCHDOG_MS = 15000;
 
 function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null {
   if (typeof window === 'undefined') return null;
@@ -62,13 +64,21 @@ function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null 
   return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition ?? null;
 }
 
+function isIosNonSafariBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const userAgent = navigator.userAgent;
+  const isIos = /iPhone|iPad|iPod/i.test(userAgent);
+  const isAlternativeIosBrowser = /CriOS|FxiOS|EdgiOS|OPiOS/i.test(userAgent);
+  return isIos && isAlternativeIosBrowser;
+}
+
 function voiceErrorMessage(error: string): string | null {
   switch (error) {
     case 'aborted':
       return null;
     case 'not-allowed':
     case 'service-not-allowed':
-      return 'O navegador bloqueou o microfone ou o reconhecimento de fala. Libere o microfone para este site e, no Safari, confirme que Siri e Ditado estão ativados.';
+      return 'O navegador bloqueou o reconhecimento de fala. No iPhone, abra o Mente Livre diretamente no Safari; no Mac, confira a permissão do microfone e tente novamente.';
     case 'no-speech':
       return 'Não ouvi nenhuma fala. Tente novamente.';
     case 'audio-capture':
@@ -106,8 +116,11 @@ async function requestMicrophonePermission(): Promise<MicrophonePermissionResult
 export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationButtonProps) {
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const startWatchdogRef = useRef<number | null>(null);
+  const listeningWatchdogRef = useRef<number | null>(null);
   const permissionCheckedRef = useRef(false);
   const startAttemptRef = useRef(0);
+  const transcriptSeenRef = useRef(false);
+  const recognitionErrorRef = useRef(false);
   const [starting, setStarting] = useState(false);
   const [startingMessage, setStartingMessage] = useState('Abrindo microfone...');
   const [listening, setListening] = useState(false);
@@ -120,6 +133,10 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
         window.clearTimeout(startWatchdogRef.current);
         startWatchdogRef.current = null;
       }
+      if (listeningWatchdogRef.current !== null) {
+        window.clearTimeout(listeningWatchdogRef.current);
+        listeningWatchdogRef.current = null;
+      }
       recognitionRef.current?.abort();
       recognitionRef.current = null;
     };
@@ -131,9 +148,16 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     startWatchdogRef.current = null;
   }
 
+  function clearListeningWatchdog() {
+    if (listeningWatchdogRef.current === null) return;
+    window.clearTimeout(listeningWatchdogRef.current);
+    listeningWatchdogRef.current = null;
+  }
+
   function stopListening() {
     startAttemptRef.current += 1;
     clearStartWatchdog();
+    clearListeningWatchdog();
     if (starting) {
       recognitionRef.current?.abort();
       recognitionRef.current = null;
@@ -150,6 +174,8 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
     const attempt = startAttemptRef.current + 1;
     startAttemptRef.current = attempt;
+    transcriptSeenRef.current = false;
+    recognitionErrorRef.current = false;
     setMessage(null);
     setStarting(true);
 
@@ -187,9 +213,15 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
     if (startAttemptRef.current !== attempt) return;
 
-    // A permissão do microfone precisa ser tratada antes desta detecção.
-    // Caso contrário Safari/PWA pode não expor SpeechRecognition e o toque
-    // vira um no-op sem sequer solicitar o microfone.
+    // Em iOS, navegadores alternativos podem expor webkitSpeechRecognition
+    // sem permitir que o serviço de reconhecimento seja usado. Nessa situação
+    // não iniciamos uma sessão que sabemos poder terminar em service-not-allowed.
+    if (isIosNonSafariBrowser()) {
+      setStarting(false);
+      setMessage('No iPhone, abra este mesmo endereço diretamente no Safari para usar o botão Falar. O Chrome e outros navegadores no iOS podem liberar o microfone, mas bloquear o serviço de reconhecimento de fala.');
+      return;
+    }
+
     const Recognition = getSpeechRecognitionConstructor();
     if (Recognition === null) {
       setStarting(false);
@@ -201,7 +233,9 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
     const recognition = new Recognition();
     recognition.lang = 'pt-BR';
-    recognition.interimResults = false;
+    // Resultados parciais ajudam especialmente quando o navegador demora para
+    // marcar a frase como final. O campo continua sendo apenas texto revisável.
+    recognition.interimResults = true;
     recognition.continuous = false;
     recognition.maxAlternatives = 1;
 
@@ -213,19 +247,33 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
       clearStartWatchdog();
       setStarting(false);
       setListening(true);
+      listeningWatchdogRef.current = window.setTimeout(() => {
+        if (recognitionRef.current !== recognition || startAttemptRef.current !== attempt) return;
+        recognition.stop();
+        clearListeningWatchdog();
+        if (!transcriptSeenRef.current) {
+          setMessage('Não recebi transcrição deste navegador. Tente novamente falando logo após aparecer “Ouvindo...”.');
+        }
+      }, LISTENING_WATCHDOG_MS);
+    };
+
+    recognition.onspeechend = () => {
+      if (startAttemptRef.current !== attempt) return;
+      recognition.stop();
     };
 
     recognition.onresult = (event) => {
       const parts: string[] = [];
       for (let resultIndex = 0; resultIndex < event.results.length; resultIndex += 1) {
         const result = event.results[resultIndex];
-        if (!result.isFinal || result.length === 0) continue;
+        if (result.length === 0) continue;
         const transcript = result[0]?.transcript?.trim();
         if (transcript) parts.push(transcript);
       }
 
       const transcript = parts.join(' ').trim();
       if (transcript.length > 0) {
+        transcriptSeenRef.current = true;
         onTranscript(transcript);
         setMessage('Texto reconhecido. Revise antes de enviar.');
       }
@@ -233,7 +281,9 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
     recognition.onerror = (event) => {
       if (startAttemptRef.current !== attempt) return;
+      recognitionErrorRef.current = true;
       clearStartWatchdog();
+      clearListeningWatchdog();
       setStarting(false);
       setListening(false);
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed' || event.error === 'audio-capture') {
@@ -246,9 +296,13 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     recognition.onend = () => {
       if (startAttemptRef.current !== attempt) return;
       clearStartWatchdog();
+      clearListeningWatchdog();
       setStarting(false);
       setListening(false);
       recognitionRef.current = null;
+      if (!transcriptSeenRef.current && !recognitionErrorRef.current) {
+        setMessage('A escuta terminou, mas não recebi texto. Tente novamente e fale logo após aparecer “Ouvindo...”.');
+      }
     };
 
     recognitionRef.current = recognition;
@@ -267,6 +321,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     } catch {
       if (startAttemptRef.current !== attempt) return;
       clearStartWatchdog();
+      clearListeningWatchdog();
       recognitionRef.current = null;
       setStarting(false);
       setListening(false);
