@@ -28,6 +28,8 @@ A integração usa a variável server-side `MENTE_LIVRE_OPENAI_STT_API_KEY`. Ela
 
 O código não lê uma `OPENAI_API_KEY` genérica para STT e a chave nunca deve receber prefixo `NEXT_PUBLIC_`.
 
+**Verificação de 06/09/2026:** na conta OpenAI conectada foi encontrado apenas o projeto inicial `Default project`; ainda não existe um projeto dedicado ao Mente Livre. Por isso nenhuma chave foi criada/configurada nesta etapa e a feature continua desligada. O projeto dedicado e seu limite externo precisam existir antes da criação/uso da chave de produção.
+
 ## Dados armazenados
 
 A tabela `voice_transcription_usage` armazena somente metadados mínimos de consumo: usuário, `request_id`, provedor/modelo, status, duração informada, custo estimado, orçamento reservado e timestamps.
