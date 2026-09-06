@@ -33,7 +33,7 @@ check('ação proposta é explicitamente cancel_calendar_event', () => {
 
 check('alvo real é resolvido antes da proposta', () => {
   const resolve = source.indexOf('await resolveGoogleCalendarEventTarget');
-  const proposed = source.indexOf("status: 'proposed'");
+  const proposed = source.indexOf("status: 'proposed',", resolve);
   assert.ok(resolve >= 0 && proposed > resolve);
 });
 
