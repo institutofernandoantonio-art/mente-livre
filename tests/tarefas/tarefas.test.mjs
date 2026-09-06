@@ -126,7 +126,7 @@ check('13. Server Component continua read-only; mutações ficam nas Server Acti
 // ---------------------------------------------------------------------------
 
 check('14. nenhum id interno é renderizado ou exposto como texto', () => {
-  for (const token of ['proposalId', 'proposal_id', 'brainDumpId', 'brain_dump_id', 'userId}]) {
+  for (const token of ['proposalId', 'proposal_id', 'brainDumpId', 'brain_dump_id', 'userId']) {
     if (token === 'userId') continue; // userId é variável server-side legítima.
     assert.ok(!pageCode.includes(token), `id interno indevido encontrado: ${token}`);
   }
