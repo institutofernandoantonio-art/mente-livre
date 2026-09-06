@@ -47,6 +47,7 @@ check('preflight solicita permissão local e encerra o stream imediatamente', ()
   assert.match(voiceSource, /stream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
   assert.match(voiceSource, /NotAllowedError/);
   assert.match(voiceSource, /SecurityError/);
+  assert.match(voiceSource, /window\.isSecureContext/);
 });
 
 check('componente de voz não conhece o dispatcher nem ações de calendário', () => {
@@ -68,14 +69,29 @@ check('interface deixa explícita a revisão antes do envio', () => {
   assert.match(voiceSource, /revisar antes de enviar/i);
 });
 
-check('microfone e reconhecimento só começam por ação explícita no botão', () => {
+check('permissão é solicitada antes de depender de SpeechRecognition', () => {
   assert.match(voiceSource, /onClick=\{active \? stopListening : startListening\}/);
   const handlerIndex = voiceSource.indexOf('async function startListening()');
   const permissionCallIndex = voiceSource.indexOf('await requestMicrophonePermission()', handlerIndex);
+  const recognitionLookupIndex = voiceSource.indexOf('getSpeechRecognitionConstructor()', handlerIndex);
   const startIndex = voiceSource.indexOf('recognition.start()', handlerIndex);
   assert.ok(handlerIndex >= 0, 'handler startListening precisa existir');
-  assert.ok(permissionCallIndex > handlerIndex, 'permissão só pode ser pedida dentro/depois do handler de gesto explícito');
-  assert.ok(startIndex > permissionCallIndex, 'recognition.start() só pode vir depois do preflight de permissão');
+  assert.ok(permissionCallIndex > handlerIndex, 'permissão só pode ser pedida após gesto explícito');
+  assert.ok(recognitionLookupIndex > permissionCallIndex, 'SpeechRecognition só pode ser consultado depois da permissão');
+  assert.ok(startIndex > recognitionLookupIndex, 'recognition.start() só pode vir depois da detecção pós-permissão');
+});
+
+check('botão nunca some só porque SpeechRecognition não está disponível', () => {
+  assert.ok(!voiceSource.includes('if (!supported) return null'));
+  assert.match(voiceSource, />Falar</);
+  assert.match(voiceSource, /Microfone liberado, mas este navegador não disponibilizou o reconhecimento de fala/);
+  assert.match(voiceSource, /Siri e Ditado/);
+});
+
+check('permissão negada ou microfone indisponível gera orientação clara', () => {
+  assert.match(voiceSource, /O microfone está bloqueado para este site/);
+  assert.match(voiceSource, /Este navegador não disponibilizou acesso ao microfone/);
+  assert.match(voiceSource, /conexão segura \(HTTPS\)/);
 });
 
 check('mostra feedback imediato durante permissão e abertura do reconhecimento', () => {
@@ -97,7 +113,7 @@ check('watchdog libera a UI quando o reconhecimento não devolve callbacks', () 
   assert.match(voiceSource, /const START_WATCHDOG_MS = 8000/);
   assert.match(voiceSource, /window\.setTimeout/);
   assert.match(voiceSource, /recognition\.abort\(\)/);
-  assert.match(voiceSource, /o reconhecimento de voz deste navegador não respondeu/i);
+  assert.match(voiceSource, /o reconhecimento de voz não respondeu/i);
   assert.match(voiceSource, /clearStartWatchdog\(\)/);
 });
 
