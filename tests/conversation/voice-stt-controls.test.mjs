@@ -59,18 +59,27 @@ check('rota autentica e valida áudio antes de chamar o provider', () => {
 });
 
 check('teto é reservado antes de qualquer chamada paga e finalizado depois', () => {
-  assert.match(route, /VOICE_MAX_RESERVED_COST_MICROUSD/);
   assert.match(route, /budget_exceeded/);
   assert.match(route, /rate_limited/);
   assert.match(route, /duplicate/);
   assert.match(route, /await finalizeVoiceUsage/);
 });
 
+check('fronteira de reserva não aceita provider, modelo ou preço do chamador', () => {
+  assert.match(usage, /reserveVoiceUsage\(input: \{\s*requestId: string;\s*\}\)/);
+  assert.match(usage, /supabase\.rpc\('reserve_voice_transcription_usage', \{\s*p_request_id: input\.requestId,?\s*\}\)/);
+  assert.ok(!/p_provider\s*:/.test(usage));
+  assert.ok(!/p_model\s*:/.test(usage));
+  assert.ok(!/p_reserved_cost_microusd\s*:/.test(usage));
+  assert.match(route, /reserveVoiceUsage\(\{ requestId \}\)/);
+});
+
 check('migration aplica hard cap GLOBAL interno de US$ 4 de forma atômica', () => {
   assert.match(migration, /v_internal_monthly_cap constant bigint := 4000000/);
+  assert.match(migration, /v_reserved_cost constant bigint := 1500/);
   assert.match(migration, /pg_advisory_xact_lock/);
   assert.match(migration, /mente-livre-voice:/);
-  assert.match(migration, /v_month_reserved \+ p_reserved_cost_microusd > v_internal_monthly_cap/);
+  assert.match(migration, /v_month_reserved \+ v_reserved_cost > v_internal_monthly_cap/);
   assert.match(migration, /v_recent_count >= 6/);
   assert.match(migration, /unique \(user_id, request_id\)/i);
 
