@@ -13,51 +13,54 @@ import { getClarificationExpiresAt, getProposalExpiresAt } from './conversation-
 import type { ProposedAction } from './proposed-action';
 import type { CalendarQueryResult } from './calendar-query';
 import { handleCalendarCancellationRuntime, startCalendarCancellation } from './calendar-cancel-flow';
+import { handleCalendarRescheduleRuntime, startCalendarReschedule } from './calendar-reschedule-flow';
+import { prepareCalendarRescheduleNluInput } from './calendar-reschedule-nlu-input';
 
 // ============================================================================
 // Conversation entry — dispatcher server-side único da conversa.
 //
 // O fluxo padrão continua dividido em clarification-turn, proposal-turn e
-// NLU+first-turn. Cancelamento de um compromisso REAL do Google Calendar é
-// interceptado aqui como uma quarta fatia especializada porque exige uma
-// propriedade diferente das demais ações: o alvo precisa ser resolvido e
-// mostrado sem expor googleEventId, e no "sim" precisa ser revalidado de
-// novo imediatamente antes do DELETE. Essa fatia vive em
-// calendar-cancel-flow.ts; este arquivo só a roteia, sem reimplementar
-// matching, confirmação destrutiva, CAS ou Google write.
+// NLU+first-turn. Ações mutáveis sobre compromissos REAIS do Google Calendar
+// (cancelar/remarcar) são interceptadas aqui por fatias especializadas:
+// ambas resolvem o alvo sem expor googleEventId e revalidam o evento antes
+// da mutação. Este arquivo só roteia; matching, confirmação, CAS e Google
+// write vivem nos módulos específicos.
 //
 // --- Regra central: zero fallback entre handlers -------------------------
 //
-// A leitura classificadora deste módulo (`getRuntimeState(now)`) decide
-// qual família será chamada. Para uma clarification encontrada, a única
-// exceção de roteamento é um state interno de cancelamento de Calendar:
-// `handleCalendarCancellationRuntime` reconhece apenas o marcador criado
-// por `startCalendarCancellation`; qualquer outra clarification devolve
-// `not_applicable` e segue imediatamente para o handler padrão. Nunca há
+// A leitura classificadora deste módulo (`getRuntimeState(now)`) decide qual
+// família será chamada. Para uma clarification encontrada, os handlers de
+// Calendar reconhecem SOMENTE os próprios marcadores internos; qualquer
+// outro state devolve `not_applicable` e segue para o fluxo padrão. Nunca há
 // NLU/fallback depois de um runtime found.
 //
 // --- Regra formal de autorização de NLU -----------------------------------
 //
-// `extractStructuredIntent` (IA) só é chamada quando a leitura
-// classificadora inicial retornou `not_found` OU `expired` — nunca depois
-// de `found` (qualquer kind), nunca depois de `error`, e nunca como
-// segunda tentativa após um handler já ter sido escolhido. Quando a NLU
-// produz `cancel_event`, o intent é entregue à fatia especializada antes
-// do first-turn genérico; nenhuma segunda NLU é executada.
+// `extractStructuredIntent` (IA) só é chamada quando a leitura inicial
+// retornou `not_found` OU `expired` — nunca depois de `found`/`error`, e
+// nunca como segunda tentativa após um handler. `cancel_event` e
+// `reschedule_event` seguem para suas fatias especializadas sem segunda NLU.
+//
+// Frases inequívocas de remarcação que contêm horário de origem + destino
+// passam antes por `prepareCalendarRescheduleNluInput`: a CÓPIA enviada à
+// NLU omite só o horário antigo para que o guard temporal compare o destino
+// correto. O texto ORIGINAL continua sendo passado a startCalendarReschedule
+// e é a fonte usada para localizar o evento. Se a NLU preparada não voltar
+// como reschedule_event, o fluxo falha fechado em `needs_input` e nunca usa
+// o texto transformado para outra ação.
 //
 // --- `now` / timezone -----------------------------------------------------
 //
 // `now` é recebido explicitamente desta camada interna e o browser nunca o
 // fornece. `timezone` vem do browser como contexto civil e nunca como dado
 // de identidade/autorização. A validação continua nas camadas que realmente
-// usam o valor (Calendar query / cancel flow).
+// usam o valor.
 //
 // --- Segurança -------------------------------------------------------------
 //
 // Recebe SÓ `text`/`now`/`timezone` — nunca `userId`/`stateId`/`proposalId`/
 // client Supabase/admin. `ConversationEntryResult` nunca expõe ids internos
-// nem googleEventId. O cancel flow retorna apenas texto de confirmação e
-// estados já existentes deste DTO.
+// nem googleEventId.
 // ============================================================================
 
 export type ConversationEntryResult =
@@ -167,7 +170,8 @@ function translateProposalResult(result: ProposalTurnResult): ConversationEntryR
 }
 
 async function handleFirstMessage(text: string, now: number, timezone: string): Promise<ConversationEntryResult> {
-  const extraction = await extractStructuredIntent(text, now);
+  const prepared = prepareCalendarRescheduleNluInput(text);
+  const extraction = await extractStructuredIntent(prepared.text, now);
 
   switch (extraction.status) {
     case 'invalid':
@@ -175,8 +179,18 @@ async function handleFirstMessage(text: string, now: number, timezone: string): 
     case 'error':
       return { status: 'error' };
     case 'extracted': {
+      // Texto transformado existe SOMENTE para destravar a interpretação do
+      // destino em uma remarcação com dois horários. Nunca permitimos que
+      // essa cópia gere outra família de ação.
+      if (prepared.transformed && extraction.intent.intentType !== 'reschedule_event') {
+        return { status: 'needs_input' };
+      }
+
       if (extraction.intent.intentType === 'cancel_event') {
         return startCalendarCancellation(extraction.intent, text, now, timezone);
+      }
+      if (extraction.intent.intentType === 'reschedule_event') {
+        return startCalendarReschedule(extraction.intent, text, now, timezone);
       }
 
       const expirations = {
@@ -212,6 +226,11 @@ export async function handleConversationMessage(
         const calendarCancellation = await handleCalendarCancellationRuntime(current.value, text, now);
         if (calendarCancellation.status === 'handled') {
           return calendarCancellation.result;
+        }
+
+        const calendarReschedule = await handleCalendarRescheduleRuntime(current.value, text, now);
+        if (calendarReschedule.status === 'handled') {
+          return calendarReschedule.result;
         }
 
         const expirations = {
