@@ -62,8 +62,11 @@ check('interface deixa explícita a revisão antes do envio', () => {
 
 check('reconhecimento só começa por ação explícita no botão', () => {
   assert.match(voiceSource, /onClick=\{listening \? stopListening : startListening\}/);
-  assert.match(voiceSource, /recognition\.start\(\)/);
-  assert.ok(!/useEffect\([\s\S]*recognition\.start\(\)/.test(voiceSource));
+  const effectStart = voiceSource.indexOf('useEffect(() => {');
+  const effectEnd = voiceSource.indexOf('}, []);', effectStart);
+  const recognitionStart = voiceSource.indexOf('recognition.start()');
+  assert.ok(effectStart >= 0 && effectEnd > effectStart);
+  assert.ok(recognitionStart > effectEnd, 'recognition.start() não pode rodar no efeito de montagem');
 });
 
 const passed = results.filter(Boolean).length;
