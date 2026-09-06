@@ -19,8 +19,10 @@ function check(name, fn) {
   }
 }
 
-check('aceita somente alta, média e baixa', () => {
+check('aceita alta, média, baixa e null para remover prioridade', () => {
   for (const value of ["'alta'", "'média'", "'baixa'"]) assert.ok(action.includes(value));
+  assert.ok(action.includes('TaskPriority | null'));
+  assert.ok(action.includes('value === null'));
   assert.ok(action.includes("status: 'invalid_priority'"));
 });
 
@@ -44,12 +46,13 @@ check('não cria, apaga ou usa RPC', () => {
   }
 });
 
-check('UI lê priority e oferece os três controles', () => {
+check('UI lê priority, oferece os três níveis e permite limpar', () => {
   assert.ok(page.includes("select('id, title, status, deadline_at, priority')"));
   assert.ok(page.includes("value: 'alta'"));
   assert.ok(page.includes("value: 'média'"));
   assert.ok(page.includes("value: 'baixa'"));
-  assert.ok(page.includes('setTaskPriorityAction.bind'));
+  assert.ok(page.includes('setTaskPriorityAction.bind(null, task.id, null)'));
+  assert.ok(page.includes('Sem prioridade'));
 });
 
 const passed = results.filter(Boolean).length;
