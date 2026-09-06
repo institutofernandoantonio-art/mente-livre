@@ -27,7 +27,7 @@
     "test:top-priorities": "node tests/tarefas/top-priorities.test.mjs",
     "test:navigation": "node tests/navigation/navigation.test.mjs",
     "test:calendar-query": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/calendar-query.test.mjs",
-    "test:calendar-event-target-resolution": "node tests/conversation/calendar-event-target-resolution.test.mjs",
+    "test:calendar-event-target-resolution": "node --experimental-strip-types tests/conversation/calendar-event-target-resolution.test.mjs",
     "test:calendar-event-cancel-proposal": "node tests/conversation/calendar-event-cancel-proposal.test.mjs",
     "test:calendar-event-deletion": "node tests/conversation/calendar-event-deletion.test.mjs",
     "test:calendar-cancel-flow": "node tests/conversation/calendar-cancel-flow.test.mjs",

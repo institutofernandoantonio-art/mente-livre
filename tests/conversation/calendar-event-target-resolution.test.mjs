@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import {
+  buildCalendarEventReferenceMatchingCandidates,
+  normalizeCalendarEventTitleForMatching,
+} from '../../src/lib/conversation/calendar-event-reference-normalization.ts';
 
 const source = readFileSync(
   fileURLToPath(new URL('../../src/lib/conversation/calendar-event-target-resolution.ts', import.meta.url)),
@@ -49,19 +53,35 @@ check('dia sem hora usa os limites civis do timezone real', () => {
 check('referência já resolvida ou vazia nunca é aceita como autoridade', () => {
   assert.ok(codeOnly.includes('reference.resolvedId !== null'));
   assert.ok(codeOnly.includes("status: 'unsupported_reference'"));
-  assert.ok(codeOnly.includes("normalizeForComparison(reference.raw) === ''"));
+  assert.ok(codeOnly.includes('buildCalendarEventReferenceMatchingCandidates(reference.raw).length === 0'));
 });
 
-check('matching é conservador: exato primeiro, contains contíguo depois, nunca fuzzy', () => {
+check('matching é conservador: igualdade antes de contains contíguo, nunca fuzzy', () => {
   const exactIndex = codeOnly.indexOf('const exact = candidates.filter');
   const containsIndex = codeOnly.indexOf('.includes(normalizedReference)');
   assert.ok(exactIndex >= 0 && containsIndex > exactIndex);
-  for (const forbidden of ['levenshtein', 'similarity', 'fuzzy', 'localeCompare']) {
+  for (const forbidden of ['levenshtein', 'similarity', 'localeCompare']) {
     assert.ok(
       !codeOnly.toLowerCase().includes(forbidden.toLowerCase()),
       `heurística proibida encontrada no código executável: ${forbidden}`,
     );
   }
+});
+
+check('caso real: referência com dia/hora também produz o título limpo como fallback', () => {
+  const refs = buildCalendarEventReferenceMatchingCandidates('a reunião teste de hoje às 18h');
+  assert.deepEqual(refs, ['a reuniao teste de hoje as 18h', 'reuniao teste']);
+  assert.equal(normalizeCalendarEventTitleForMatching('Reunião teste'), 'reuniao teste');
+});
+
+check('forma literal permanece primeiro para não degradar um título que realmente inclui possessivo', () => {
+  const refs = buildCalendarEventReferenceMatchingCandidates('Minha reunião teste');
+  assert.deepEqual(refs, ['minha reuniao teste', 'reuniao teste']);
+});
+
+check('sufixo de assunto não temporal é preservado', () => {
+  const refs = buildCalendarEventReferenceMatchingCandidates('Reunião de marketing');
+  assert.deepEqual(refs, ['reuniao de marketing']);
 });
 
 check('zero e múltiplos candidatos nunca viram escolha automática', () => {

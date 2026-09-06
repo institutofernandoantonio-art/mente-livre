@@ -3,6 +3,10 @@ import 'server-only';
 import type { EventReference, TemporalWindow } from './types';
 import { addCivilDays, getCivilDateInTimeZone, isValidTimeZone, resolveCivilDateTimeInTimeZone } from './timezone';
 import {
+  buildCalendarEventReferenceMatchingCandidates,
+  normalizeCalendarEventTitleForMatching,
+} from './calendar-event-reference-normalization';
+import {
   getGoogleCalendarEventTargetsInWindow,
   type GoogleCalendarEventTarget,
 } from '../google/calendar-event-targets';
@@ -31,7 +35,7 @@ export async function resolveGoogleCalendarEventTarget(
   if (reference.resolvedId !== null) {
     return { status: 'unsupported_reference' };
   }
-  if (normalizeForComparison(reference.raw) === '') {
+  if (buildCalendarEventReferenceMatchingCandidates(reference.raw).length === 0) {
     return { status: 'unsupported_reference' };
   }
   if (!Number.isSafeInteger(now) || !isValidTimeZone(timeZone)) {
@@ -107,26 +111,26 @@ function resolveSafeRelativeDayWindow(
 }
 
 function matchTarget(referenceRaw: string, candidates: readonly GoogleCalendarEventTarget[]): GoogleCalendarEventTarget[] {
-  const normalizedReference = normalizeForComparison(referenceRaw);
+  const references = buildCalendarEventReferenceMatchingCandidates(referenceRaw);
 
-  const exact = candidates.filter(
-    (candidate) => normalizeForComparison(candidate.title) === normalizedReference,
-  );
-  if (exact.length > 0) return exact;
+  // Primeiro, igualdade exata em TODAS as formas permitidas da referência.
+  // A forma literal vem antes da fallback limpa, então um título realmente
+  // chamado "Minha reunião" continua vencendo antes de tentarmos "reunião".
+  for (const normalizedReference of references) {
+    const exact = candidates.filter(
+      (candidate) => normalizeCalendarEventTitleForMatching(candidate.title) === normalizedReference,
+    );
+    if (exact.length > 0) return exact;
+  }
 
-  // Fallback conservador já usado no matcher local do projeto: a referência
-  // precisa aparecer inteira e de forma contígua no título. Nunca fuzzy,
-  // stemming, distância de edição ou escolha por maior "similaridade".
-  return candidates.filter((candidate) =>
-    normalizeForComparison(candidate.title).includes(normalizedReference),
-  );
-}
+  // Só depois, contains contíguo. Continua sem fuzzy/similarity e qualquer
+  // retorno com mais de um candidato vira `ambiguous` na camada acima.
+  for (const normalizedReference of references) {
+    const contiguous = candidates.filter((candidate) =>
+      normalizeCalendarEventTitleForMatching(candidate.title).includes(normalizedReference),
+    );
+    if (contiguous.length > 0) return contiguous;
+  }
 
-function normalizeForComparison(text: string): string {
-  return text
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
+  return [];
 }
