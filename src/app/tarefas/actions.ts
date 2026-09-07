@@ -81,6 +81,7 @@ export async function completeTask(taskId: string): Promise<CompleteTaskResult> 
     if (data === null) return { status: 'not_found' };
 
     revalidatePath('/tarefas');
+    revalidatePath('/hoje');
     return { status: 'completed' };
   } catch {
     return { status: 'error' };
