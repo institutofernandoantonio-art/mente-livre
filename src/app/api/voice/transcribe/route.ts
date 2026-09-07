@@ -5,6 +5,7 @@ import {
   VOICE_MAX_DURATION_MS,
   estimateVoiceCostMicrousd,
 } from '@/lib/voice/limits';
+import { VoiceSttProviderError } from '@/lib/voice/openai-stt-provider';
 import { getSpeechToTextProvider, isServerVoiceSttEnabled } from '@/lib/voice/stt';
 import { finalizeVoiceUsage, getVoiceUsageSummary, reserveVoiceUsage } from '@/lib/voice/usage';
 
@@ -36,6 +37,47 @@ function audioExtension(type: string): string | null {
 
 function errorResponse(message: string, status: number, code: string) {
   return NextResponse.json({ error: message, code }, { status, headers: NO_STORE_HEADERS });
+}
+
+function providerErrorResponse(error: unknown) {
+  if (!(error instanceof VoiceSttProviderError)) {
+    return errorResponse('Não consegui transcrever sua fala agora. Tente novamente.', 502, 'provider_error');
+  }
+
+  switch (error.category) {
+    case 'unauthorized':
+      return errorResponse(
+        'A chave de transcrição foi recusada pela OpenAI. Verifique a credencial configurada.',
+        502,
+        'provider_unauthorized',
+      );
+    case 'forbidden':
+      return errorResponse(
+        'A chave de transcrição não tem permissão para esta chamada na OpenAI.',
+        502,
+        'provider_forbidden',
+      );
+    case 'rate_limited':
+      return errorResponse(
+        'A OpenAI bloqueou a chamada por limite de uso ou cota do projeto.',
+        502,
+        'provider_rate_limited',
+      );
+    case 'bad_request':
+      return errorResponse(
+        'A OpenAI recusou o formato ou os parâmetros do áudio enviado.',
+        502,
+        'provider_bad_request',
+      );
+    case 'unavailable':
+      return errorResponse(
+        'O serviço de transcrição da OpenAI está temporariamente indisponível.',
+        502,
+        'provider_unavailable',
+      );
+    default:
+      return errorResponse('Não consegui transcrever sua fala agora. Tente novamente.', 502, 'provider_error');
+  }
 }
 
 export async function POST(request: Request) {
@@ -123,7 +165,7 @@ export async function POST(request: Request) {
 
     const usage = await getVoiceUsageSummary();
     return NextResponse.json({ text: result.text, usage }, { headers: NO_STORE_HEADERS });
-  } catch {
+  } catch (error) {
     // Reserva permanece contabilizada de forma conservadora no teto mensal,
     // mesmo quando o provedor falha. Isso evita retries ilimitados que
     // eventualmente possam gerar cobrança sem registro confiável.
@@ -133,6 +175,6 @@ export async function POST(request: Request) {
       durationMs,
       estimatedCostMicrousd: 0,
     });
-    return errorResponse('Não consegui transcrever sua fala agora. Tente novamente.', 502, 'provider_error');
+    return providerErrorResponse(error);
   }
 }
