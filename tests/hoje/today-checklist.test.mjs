@@ -52,7 +52,7 @@ assert.ok(!conversaPage.includes('resolveScheduleTask'));
 
 assert.ok(conversaPanel.includes("new URLSearchParams(window.location.search).get('agendarTask')"));
 assert.ok(conversaPanel.includes('resolveScheduleTask(taskId)'));
-assert.ok(conversaPanel.includes("setScheduleTaskTitle(result.status === 'ok' ? result.title : null)"));
+assert.ok(conversaPanel.includes("setScheduleTaskTitle(task.status === 'ok' ? task.title : '')"));
 assert.ok(conversaPanel.includes("scheduleTaskTitle ? 'Que horário?'"));
 assert.ok(conversaPanel.includes('Diga apenas o horário de hoje'));
 assert.ok(conversaPanel.includes('`Agende ${scheduleTaskTitle} hoje às ${trimmed}`'));
@@ -61,6 +61,8 @@ assert.ok(conversaPanel.includes('scheduleTaskTitle && !alreadyExplicit && !isCo
 assert.ok(conversaPanel.includes('sendConversationMessage(backendText, timezone)'));
 assert.ok(conversaPanel.includes('sendConversationMessage(text, timezone)'));
 assert.ok(conversaPanel.includes('setText(transcript.slice(0, 10000))'));
+assert.ok(!conversaPanel.includes('useState<string | null>'));
+assert.equal((conversaPanel.match(/let active = true;/g) ?? []).length, 1);
 assert.ok(!conversaPanel.includes('access_token'));
 assert.ok(!conversaPanel.includes('refresh_token'));
 assert.ok(!conversaPanel.includes('service_role'));
@@ -74,6 +76,6 @@ console.log('[PASS] checklist do dia usa apenas tarefas pendentes e confirmadas 
 console.log('[PASS] recorte de hoje respeita timezone civil do aparelho');
 console.log('[PASS] Eisenhower é apresentado em linguagem simples e resolvido em um toque');
 console.log('[PASS] agendar horário envia só id opaco e resolve título no servidor por usuário');
-console.log('[PASS] conversa normal e transcrição por voz preservam os contratos existentes');
+console.log('[PASS] bootstrap único e transcrição por voz preservam os contratos existentes');
 console.log('[PASS] usuário pode dizer apenas o horário e sim/não continuam sendo confirmação');
 console.log('[PASS] checklist permite concluir sem criar evento automaticamente no Google Calendar');
