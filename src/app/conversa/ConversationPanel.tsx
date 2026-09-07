@@ -42,17 +42,13 @@ export function ConversationPanel() {
     async function bootstrap() {
       try {
         const state = await getConversationPresentationState();
-        if (!active) {
-          return;
-        }
+        if (!active) return;
         const content = mapPresentationBootstrap(state);
         if (content !== null) {
           setMessages((prev) => [...prev, { ...content, id: nextId() }]);
         }
       } catch {
-        if (!active) {
-          return;
-        }
+        if (!active) return;
         setMessages((prev) => [
           ...prev,
           { id: nextId(), role: 'assistant', kind: 'text', text: 'Algo deu errado. Tente novamente.' },
@@ -65,16 +61,13 @@ export function ConversationPanel() {
     }
 
     void bootstrap();
-
     return () => {
       active = false;
     };
   }, []);
 
   useEffect(() => {
-    if (latestAssistantId === null || latestAssistantElement === null) {
-      return;
-    }
+    if (latestAssistantId === null || latestAssistantElement === null) return;
 
     const frame = window.requestAnimationFrame(() => {
       if (logElement) {
@@ -86,17 +79,11 @@ export function ConversationPanel() {
     return () => window.cancelAnimationFrame(frame);
   }, [latestAssistantId, latestAssistantElement, logElement]);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (pending || bootstrapping) {
-      return;
-    }
+  async function submitText(text: string) {
+    if (pending || bootstrapping) return;
 
     const trimmed = text.trim();
-    if (trimmed.length === 0) {
-      return;
-    }
+    if (trimmed.length === 0) return;
 
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', kind: 'text', text }]);
     setPending(true);
@@ -106,7 +93,7 @@ export function ConversationPanel() {
       const result = await sendConversationMessage(text, timezone);
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
-      if (clearInput) {
+      if (clearInput || text === 'sim' || text === 'não') {
         setText('');
       }
     } catch {
@@ -119,12 +106,23 @@ export function ConversationPanel() {
     }
   }
 
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submitText(text);
+  }
+
   function handleTextChange(event: ChangeEvent<HTMLTextAreaElement>) {
     setText(event.target.value);
   }
 
   function handleVoiceTranscript(transcript: string) {
     setText(transcript.slice(0, 10000));
+  }
+
+  function offersYesNoQuickReply(message: UiMessage): boolean {
+    if (message.role !== 'assistant') return false;
+    if (message.kind === 'proposal') return true;
+    return /responda\s+[“"]sim[”"]\s+ou\s+[“"]n[aã]o[”"]/i.test(message.text);
   }
 
   const inputDisabled = pending || bootstrapping;
@@ -148,6 +146,9 @@ export function ConversationPanel() {
               message={message}
               isLatestAssistant={isLatestAssistant}
               anchorRef={isLatestAssistant ? setLatestAssistantElement : undefined}
+              showQuickConfirmation={isLatestAssistant && offersYesNoQuickReply(message)}
+              quickReplyDisabled={inputDisabled}
+              onQuickReply={(answer) => void submitText(answer)}
             />
           );
         })}
@@ -174,10 +175,16 @@ function MessageBubble({
   message,
   isLatestAssistant = false,
   anchorRef,
+  showQuickConfirmation = false,
+  quickReplyDisabled = false,
+  onQuickReply,
 }: {
   message: UiMessage;
   isLatestAssistant?: boolean;
   anchorRef?: (node: HTMLDivElement | null) => void;
+  showQuickConfirmation?: boolean;
+  quickReplyDisabled?: boolean;
+  onQuickReply?: (answer: 'sim' | 'não') => void;
 }) {
   const isUser = message.role === 'user';
 
@@ -193,6 +200,16 @@ function MessageBubble({
       {isLatestAssistant && <p className="mb-1 text-xs font-semibold text-brand-600">Mente Livre</p>}
       {message.kind === 'text' && <p>{message.text}</p>}
       {message.kind === 'proposal' && <ProposalPreview action={message.action} />}
+      {showQuickConfirmation && onQuickReply && (
+        <div className="mt-3 grid grid-cols-2 gap-2" aria-label="Resposta rápida">
+          <Button type="button" variant="primary" disabled={quickReplyDisabled} onClick={() => onQuickReply('sim')}>
+            Sim
+          </Button>
+          <Button type="button" variant="secondary" disabled={quickReplyDisabled} onClick={() => onQuickReply('não')}>
+            Não
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -222,9 +239,7 @@ function ProposalPreview({ action }: { action: ProposedAction }) {
     );
   }
 
-  if (action.actionType !== 'create_local_task') {
-    return null;
-  }
+  if (action.actionType !== 'create_local_task') return null;
 
   const deadlineText = formatDeadlinePreview(action.task.deadline);
   const durationText = formatDurationPreview(action.task.duration);

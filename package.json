@@ -14,6 +14,7 @@
     "test:clarification": "node --experimental-strip-types tests/conversation/clarification.test.mjs",
     "test:create-event-defaults": "node --experimental-strip-types tests/conversation/create-event-defaults.test.mjs",
     "test:conversation-latest-response": "node tests/conversation/conversation-latest-response.test.mjs",
+    "test:conversation-quick-confirmation": "node tests/conversation/conversation-quick-confirmation.test.mjs",
     "test:runtime-state-validation": "node --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/runtime-state-validation.test.mjs",
     "test:proposal-turn": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/proposal-turn.test.mjs",
     "test:local-task-execution": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/local-task-execution.test.mjs",
