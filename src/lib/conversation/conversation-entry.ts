@@ -17,6 +17,7 @@ import { handleCalendarRescheduleRuntime, startCalendarReschedule } from './cale
 import { prepareCalendarRescheduleNluInput } from './calendar-reschedule-nlu-input';
 import { applyCreateEventDefaults } from './create-event-defaults';
 import { normalizeCreateTaskRelativeDay } from './create-task-temporal-normalization';
+import { normalizeConversationInput } from './conversation-input-normalization';
 
 export type ConversationEntryResult =
   | { status: 'clarification_required'; question: string }
@@ -199,6 +200,12 @@ export async function handleConversationMessage(
   if (!isNonBlankString(text)) {
     return { status: 'needs_input' };
   }
+
+  const normalizedText = normalizeConversationInput(text);
+  if (!isNonBlankString(normalizedText)) {
+    return { status: 'needs_input' };
+  }
+
   if (!isValidNow(now)) {
     return { status: 'needs_input' };
   }
@@ -214,22 +221,30 @@ export async function handleConversationMessage(
       // anterior por CAS e reentra no fluxo normal de NLU. Isso evita que um
       // novo pedido de agenda ou tarefa seja tratado como resposta ao contexto
       // antigo. Se houver corrida entre dispositivos, falha fechado.
-      if (isExplicitNewCommand(text)) {
+      if (isExplicitNewCommand(normalizedText)) {
         return interruptPendingStateAndHandleNewCommand(
           current.value.stateId,
-          text,
+          normalizedText,
           now,
           timezone,
         );
       }
 
       if (current.value.kind === 'clarification') {
-        const calendarCancellation = await handleCalendarCancellationRuntime(current.value, text, now);
+        const calendarCancellation = await handleCalendarCancellationRuntime(
+          current.value,
+          normalizedText,
+          now,
+        );
         if (calendarCancellation.status === 'handled') {
           return calendarCancellation.result;
         }
 
-        const calendarReschedule = await handleCalendarRescheduleRuntime(current.value, text, now);
+        const calendarReschedule = await handleCalendarRescheduleRuntime(
+          current.value,
+          normalizedText,
+          now,
+        );
         if (calendarReschedule.status === 'handled') {
           return calendarReschedule.result;
         }
@@ -238,14 +253,19 @@ export async function handleConversationMessage(
           clarificationExpiresAt: getClarificationExpiresAt(now),
           proposalExpiresAt: getProposalExpiresAt(now),
         };
-        const result = await resolveClarificationConversationalTurn(text, now, expirations, timezone);
+        const result = await resolveClarificationConversationalTurn(
+          normalizedText,
+          now,
+          expirations,
+          timezone,
+        );
         return translateClarificationResult(result);
       }
 
-      return translateProposalResult(await resolveProposalConversationalTurn(text, now));
+      return translateProposalResult(await resolveProposalConversationalTurn(normalizedText, now));
 
     case 'not_found':
     case 'expired':
-      return handleFirstMessage(text, now, timezone);
+      return handleFirstMessage(normalizedText, now, timezone);
   }
 }
