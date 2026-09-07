@@ -18,6 +18,7 @@ import { prepareCalendarRescheduleNluInput } from './calendar-reschedule-nlu-inp
 import { applyCreateEventDefaults } from './create-event-defaults';
 import { normalizeCreateTaskRelativeDay } from './create-task-temporal-normalization';
 import { normalizeConversationInput } from './conversation-input-normalization';
+import { parseExplicitCreateTaskInput } from './explicit-create-task-input';
 
 export type ConversationEntryResult =
   | { status: 'clarification_required'; question: string }
@@ -46,12 +47,6 @@ function isValidNow(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value);
 }
 
-/**
- * Detecta novos comandos inequívocos que devem interromper um contexto
- * pendente. A exigência de conteúdo depois do verbo evita tratar respostas
- * curtas como "cancele" ou "criar tarefa" como uma nova intenção completa.
- * Esse guard impede que uma pergunta/confirmação antiga capture um pedido novo.
- */
 function isExplicitNewCommand(text: string): boolean {
   const normalized = text.trim().toLocaleLowerCase('pt-BR');
   const calendarCommand = /^(agende|marque|mude|remarque|cancele)\s+\S.{2,}$/u;
@@ -61,108 +56,80 @@ function isExplicitNewCommand(text: string): boolean {
 
 function translateFirstTurnResult(result: FirstTurnResult): ConversationEntryResult {
   switch (result.status) {
-    case 'clarification_saved':
-      return { status: 'clarification_required', question: result.question };
-    case 'proposal_saved':
-      return { status: 'proposal_ready', action: result.action };
-    case 'calendar_information':
-      return { status: 'calendar_information', result: result.result };
-    case 'schedule_conflict':
-      return { status: 'schedule_conflict' };
-    case 'calendar_unavailable':
-      return { status: 'calendar_unavailable' };
-    case 'already_active':
-      return { status: 'conflict' };
+    case 'clarification_saved': return { status: 'clarification_required', question: result.question };
+    case 'proposal_saved': return { status: 'proposal_ready', action: result.action };
+    case 'calendar_information': return { status: 'calendar_information', result: result.result };
+    case 'schedule_conflict': return { status: 'schedule_conflict' };
+    case 'calendar_unavailable': return { status: 'calendar_unavailable' };
+    case 'already_active': return { status: 'conflict' };
     case 'unsupported':
-    case 'not_materializable':
-      return { status: 'unsupported' };
-    case 'error':
-      return { status: 'error' };
+    case 'not_materializable': return { status: 'unsupported' };
+    case 'error': return { status: 'error' };
   }
 }
 
 function translateClarificationResult(result: ClarificationTurnPersistenceResult): ConversationEntryResult {
   switch (result.status) {
-    case 'clarification_saved':
-      return { status: 'clarification_required', question: result.question };
-    case 'proposal_saved':
-      return { status: 'proposal_ready', action: result.action };
-    case 'calendar_information':
-      return { status: 'calendar_information', result: result.result };
-    case 'schedule_conflict':
-      return { status: 'schedule_conflict' };
-    case 'calendar_unavailable':
-      return { status: 'calendar_unavailable' };
+    case 'clarification_saved': return { status: 'clarification_required', question: result.question };
+    case 'proposal_saved': return { status: 'proposal_ready', action: result.action };
+    case 'calendar_information': return { status: 'calendar_information', result: result.result };
+    case 'schedule_conflict': return { status: 'schedule_conflict' };
+    case 'calendar_unavailable': return { status: 'calendar_unavailable' };
     case 'ambiguous':
     case 'unrecognized':
-    case 'reference_not_found':
-      return { status: 'needs_input' };
+    case 'reference_not_found': return { status: 'needs_input' };
     case 'unsupported':
-    case 'not_materializable':
-      return { status: 'unsupported' };
-    case 'runtime_expired':
-      return { status: 'expired' };
+    case 'not_materializable': return { status: 'unsupported' };
+    case 'runtime_expired': return { status: 'expired' };
     case 'proposal_pending':
     case 'no_active_runtime_state':
-    case 'conflict':
-      return { status: 'conflict' };
-    case 'error':
-      return { status: 'error' };
+    case 'conflict': return { status: 'conflict' };
+    case 'error': return { status: 'error' };
   }
 }
 
 function translateProposalResult(result: ProposalTurnResult): ConversationEntryResult {
   switch (result.status) {
-    case 'confirmed':
-      return { status: 'confirmed', itemId: result.itemId };
-    case 'cancelled':
-      return { status: 'cancelled' };
-    case 'execution_started':
-      return { status: 'calendar_processing' };
+    case 'confirmed': return { status: 'confirmed', itemId: result.itemId };
+    case 'cancelled': return { status: 'cancelled' };
+    case 'execution_started': return { status: 'calendar_processing' };
     case 'calendar_event_confirmed':
     case 'calendar_authorization_required':
     case 'calendar_execution_uncertain':
-    case 'calendar_finalization_pending':
-      return { status: result.status };
+    case 'calendar_finalization_pending': return { status: result.status };
     case 'confirmation_ambiguous':
-    case 'confirmation_unrecognized':
-      return { status: 'needs_input' };
-    case 'runtime_expired':
-      return { status: 'expired' };
+    case 'confirmation_unrecognized': return { status: 'needs_input' };
+    case 'runtime_expired': return { status: 'expired' };
     case 'clarification_pending':
     case 'no_active_runtime_state':
-    case 'conflict':
-      return { status: 'conflict' };
-    case 'error':
-      return { status: 'error' };
+    case 'conflict': return { status: 'conflict' };
+    case 'error': return { status: 'error' };
   }
 }
 
-async function handleFirstMessage(
-  text: string,
-  now: number,
-  timezone: string,
-): Promise<ConversationEntryResult> {
+async function handleFirstMessage(text: string, now: number, timezone: string): Promise<ConversationEntryResult> {
+  const explicitTask = parseExplicitCreateTaskInput(text);
+  if (explicitTask !== null) {
+    const withEventDefaults = applyCreateEventDefaults(explicitTask);
+    const intent = normalizeCreateTaskRelativeDay(withEventDefaults, now, timezone);
+    const expirations = {
+      clarificationExpiresAt: getClarificationExpiresAt(now),
+      proposalExpiresAt: getProposalExpiresAt(now),
+    };
+    const result = await resolveFirstConversationalTurn(intent, now, expirations, timezone);
+    return translateFirstTurnResult(result);
+  }
+
   const prepared = prepareCalendarRescheduleNluInput(text);
   const extraction = await extractStructuredIntent(prepared.text, now);
 
   switch (extraction.status) {
-    case 'invalid':
-      return { status: 'needs_input' };
-    case 'error':
-      return { status: 'error' };
+    case 'invalid': return { status: 'needs_input' };
+    case 'error': return { status: 'error' };
     case 'extracted': {
-      if (prepared.transformed && extraction.intent.intentType !== 'reschedule_event') {
-        return { status: 'needs_input' };
-      }
-
-      if (extraction.intent.intentType === 'cancel_event') {
-        return startCalendarCancellation(extraction.intent, text, now, timezone);
-      }
-      if (extraction.intent.intentType === 'reschedule_event') {
-        return startCalendarReschedule(extraction.intent, text, now, timezone);
-      }
-
+      if (prepared.transformed && extraction.intent.intentType !== 'reschedule_event') return { status: 'needs_input' };
+      if (extraction.intent.intentType === 'cancel_event') return startCalendarCancellation(extraction.intent, text, now, timezone);
+      if (extraction.intent.intentType === 'reschedule_event') return startCalendarReschedule(extraction.intent, text, now, timezone);
       const withEventDefaults = applyCreateEventDefaults(extraction.intent);
       const intent = normalizeCreateTaskRelativeDay(withEventDefaults, now, timezone);
       const expirations = {
@@ -175,97 +142,42 @@ async function handleFirstMessage(
   }
 }
 
-async function interruptPendingStateAndHandleNewCommand(
-  stateId: string,
-  text: string,
-  now: number,
-  timezone: string,
-): Promise<ConversationEntryResult> {
+async function interruptPendingStateAndHandleNewCommand(stateId: string, text: string, now: number, timezone: string): Promise<ConversationEntryResult> {
   const consumed = await consumeRuntimeState(stateId, now);
   switch (consumed.status) {
-    case 'consumed':
-      return handleFirstMessage(text, now, timezone);
-    case 'conflict':
-      return { status: 'conflict' };
-    case 'error':
-      return { status: 'error' };
+    case 'consumed': return handleFirstMessage(text, now, timezone);
+    case 'conflict': return { status: 'conflict' };
+    case 'error': return { status: 'error' };
   }
 }
 
-export async function handleConversationMessage(
-  text: string,
-  now: number,
-  timezone: string,
-): Promise<ConversationEntryResult> {
-  if (!isNonBlankString(text)) {
-    return { status: 'needs_input' };
-  }
-
+export async function handleConversationMessage(text: string, now: number, timezone: string): Promise<ConversationEntryResult> {
+  if (!isNonBlankString(text)) return { status: 'needs_input' };
   const normalizedText = normalizeConversationInput(text);
-  if (!isNonBlankString(normalizedText)) {
-    return { status: 'needs_input' };
-  }
-
-  if (!isValidNow(now)) {
-    return { status: 'needs_input' };
-  }
+  if (!isNonBlankString(normalizedText)) return { status: 'needs_input' };
+  if (!isValidNow(now)) return { status: 'needs_input' };
 
   const current = await getRuntimeState(now);
-
   switch (current.status) {
-    case 'error':
-      return { status: 'error' };
-
+    case 'error': return { status: 'error' };
     case 'found':
-      // Um novo comando completo e inequívoco invalida a pergunta/proposta
-      // anterior por CAS e reentra no fluxo normal de NLU. Isso evita que um
-      // novo pedido de agenda ou tarefa seja tratado como resposta ao contexto
-      // antigo. Se houver corrida entre dispositivos, falha fechado.
       if (isExplicitNewCommand(normalizedText)) {
-        return interruptPendingStateAndHandleNewCommand(
-          current.value.stateId,
-          normalizedText,
-          now,
-          timezone,
-        );
+        return interruptPendingStateAndHandleNewCommand(current.value.stateId, normalizedText, now, timezone);
       }
-
       if (current.value.kind === 'clarification') {
-        const calendarCancellation = await handleCalendarCancellationRuntime(
-          current.value,
-          normalizedText,
-          now,
-        );
-        if (calendarCancellation.status === 'handled') {
-          return calendarCancellation.result;
-        }
-
-        const calendarReschedule = await handleCalendarRescheduleRuntime(
-          current.value,
-          normalizedText,
-          now,
-        );
-        if (calendarReschedule.status === 'handled') {
-          return calendarReschedule.result;
-        }
-
+        const calendarCancellation = await handleCalendarCancellationRuntime(current.value, normalizedText, now);
+        if (calendarCancellation.status === 'handled') return calendarCancellation.result;
+        const calendarReschedule = await handleCalendarRescheduleRuntime(current.value, normalizedText, now);
+        if (calendarReschedule.status === 'handled') return calendarReschedule.result;
         const expirations = {
           clarificationExpiresAt: getClarificationExpiresAt(now),
           proposalExpiresAt: getProposalExpiresAt(now),
         };
-        const result = await resolveClarificationConversationalTurn(
-          normalizedText,
-          now,
-          expirations,
-          timezone,
-        );
+        const result = await resolveClarificationConversationalTurn(normalizedText, now, expirations, timezone);
         return translateClarificationResult(result);
       }
-
       return translateProposalResult(await resolveProposalConversationalTurn(normalizedText, now));
-
     case 'not_found':
-    case 'expired':
-      return handleFirstMessage(normalizedText, now, timezone);
+    case 'expired': return handleFirstMessage(normalizedText, now, timezone);
   }
 }
