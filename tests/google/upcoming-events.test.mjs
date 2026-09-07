@@ -8,9 +8,17 @@ const serverPath = fileURLToPath(
 const uiPath = fileURLToPath(
   new URL('../../src/app/entrada/UpcomingCalendarEvents.tsx', import.meta.url),
 );
+const conversationPagePath = fileURLToPath(
+  new URL('../../src/app/conversa/page.tsx', import.meta.url),
+);
+const voicePath = fileURLToPath(
+  new URL('../../src/app/conversa/VoiceDictationButton.tsx', import.meta.url),
+);
 
 const server = readFileSync(serverPath, 'utf8');
 const ui = readFileSync(uiPath, 'utf8');
+const conversationPage = readFileSync(conversationPagePath, 'utf8');
+const voice = readFileSync(voicePath, 'utf8');
 
 const results = [];
 function check(name, fn) {
@@ -92,6 +100,24 @@ check('leitura conversacional usa janela explícita e limite controlado', () => 
   assert.ok(server.includes("url.searchParams.set('timeMin', input.timeMin)"));
   assert.ok(server.includes("url.searchParams.set('timeMax', input.timeMax)"));
   assert.ok(server.includes('Math.min(Math.max(value, 1), 10)'));
+});
+
+check('conversa mostra próximos compromissos e atalho destacado para a agenda', () => {
+  assert.ok(conversationPage.includes('<UpcomingCalendarEvents />'));
+  assert.ok(conversationPage.includes('Abrir Google Agenda'));
+  assert.ok(conversationPage.includes('https://calendar.google.com/calendar/u/0/r'));
+});
+
+check('aviso de proximidade aparece apenas para compromissos até 60 minutos', () => {
+  assert.ok(ui.includes('minutes > 60'));
+  assert.ok(ui.includes('Próximo compromisso em ${minutes} minutos'));
+  assert.ok(ui.includes('Começando agora'));
+});
+
+check('consumo e privacidade da voz ficam recolhidos por padrão', () => {
+  assert.ok(voice.includes('<details className="text-[11px] text-ink-soft">'));
+  assert.ok(voice.includes('<summary className="cursor-pointer select-none">Uso e privacidade da voz</summary>'));
+  assert.ok(voice.includes('Voz neste mês:'));
 });
 
 const passed = results.filter(Boolean).length;
