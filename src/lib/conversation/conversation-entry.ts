@@ -18,6 +18,7 @@ import { prepareCalendarRescheduleNluInput } from './calendar-reschedule-nlu-inp
 import { applyCreateEventDefaults } from './create-event-defaults';
 import { normalizeCreateTaskRelativeDay } from './create-task-temporal-normalization';
 import { normalizeConversationInput } from './conversation-input-normalization';
+import { parseExplicitCreateTaskInput } from './explicit-create-task-input';
 
 export type ConversationEntryResult =
   | { status: 'clarification_required'; question: string }
@@ -138,11 +139,33 @@ function translateProposalResult(result: ProposalTurnResult): ConversationEntryR
   }
 }
 
+async function resolveIntentAsFirstTurn(
+  intent: Parameters<typeof resolveFirstConversationalTurn>[0],
+  now: number,
+  timezone: string,
+): Promise<ConversationEntryResult> {
+  const withEventDefaults = applyCreateEventDefaults(intent);
+  const normalizedIntent = normalizeCreateTaskRelativeDay(withEventDefaults, now, timezone);
+  const expirations = {
+    clarificationExpiresAt: getClarificationExpiresAt(now),
+    proposalExpiresAt: getProposalExpiresAt(now),
+  };
+  const result = await resolveFirstConversationalTurn(normalizedIntent, now, expirations, timezone);
+  return translateFirstTurnResult(result);
+}
+
 async function handleFirstMessage(
   text: string,
   now: number,
   timezone: string,
 ): Promise<ConversationEntryResult> {
+  // Comandos explícitos de criação de tarefa não precisam de classificação por IA.
+  // Isso deixa o caso simples previsível e ainda preserva proposta + confirmação.
+  const explicitTask = parseExplicitCreateTaskInput(text);
+  if (explicitTask !== null) {
+    return resolveIntentAsFirstTurn(explicitTask, now, timezone);
+  }
+
   const prepared = prepareCalendarRescheduleNluInput(text);
   const extraction = await extractStructuredIntent(prepared.text, now);
 
@@ -163,14 +186,7 @@ async function handleFirstMessage(
         return startCalendarReschedule(extraction.intent, text, now, timezone);
       }
 
-      const withEventDefaults = applyCreateEventDefaults(extraction.intent);
-      const intent = normalizeCreateTaskRelativeDay(withEventDefaults, now, timezone);
-      const expirations = {
-        clarificationExpiresAt: getClarificationExpiresAt(now),
-        proposalExpiresAt: getProposalExpiresAt(now),
-      };
-      const result = await resolveFirstConversationalTurn(intent, now, expirations, timezone);
-      return translateFirstTurnResult(result);
+      return resolveIntentAsFirstTurn(extraction.intent, now, timezone);
     }
   }
 }
@@ -218,9 +234,8 @@ export async function handleConversationMessage(
 
     case 'found':
       // Um novo comando completo e inequívoco invalida a pergunta/proposta
-      // anterior por CAS e reentra no fluxo normal de NLU. Isso evita que um
-      // novo pedido de agenda ou tarefa seja tratado como resposta ao contexto
-      // antigo. Se houver corrida entre dispositivos, falha fechado.
+      // anterior por CAS e reentra no fluxo normal. Isso evita que um novo
+      // pedido de agenda ou tarefa seja tratado como resposta ao contexto antigo.
       if (isExplicitNewCommand(normalizedText)) {
         return interruptPendingStateAndHandleNewCommand(
           current.value.stateId,
