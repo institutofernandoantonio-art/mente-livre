@@ -138,6 +138,19 @@ check('aviso de proximidade aparece apenas para compromissos até 60 minutos', (
   assert.ok(ui.includes('Começando agora'));
 });
 
+check('orientação de foco usa somente prioridade recebida e horários já lidos da agenda', () => {
+  assert.ok(ui.includes('focusTitle?: string | null'));
+  assert.ok(ui.includes('getFocusGuidance(state.events, now, focusTitle)'));
+  assert.ok(ui.includes("label: 'Bloco recomendado agora'"));
+  assert.ok(ui.includes("label: 'Janela curta agora'"));
+  assert.ok(ui.includes("label: 'Prepare-se para o próximo compromisso'"));
+  assert.ok(ui.includes("label: 'Compromisso em andamento'"));
+  assert.ok(ui.includes('event.end ? Date.parse(event.end)'));
+  assert.ok(ui.includes('A sugestão usa apenas sua prioridade atual e o próximo compromisso conhecido.'));
+  assert.ok(!ui.includes('anthropic'));
+  assert.ok(!ui.includes('openai'));
+});
+
 check('consumo e privacidade da voz ficam recolhidos por padrão', () => {
   assert.ok(voice.includes('<details className="text-[11px] text-ink-soft">'));
   assert.ok(voice.includes('<summary className="cursor-pointer select-none">Uso e privacidade da voz</summary>'));
