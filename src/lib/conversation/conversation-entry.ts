@@ -45,14 +45,16 @@ function isValidNow(value: unknown): value is number {
 }
 
 /**
- * Detecta apenas novos comandos inequívocos de agenda. A exigência de
- * conteúdo depois do verbo evita tratar respostas curtas como "cancele" ou
- * "mude" como uma nova intenção. Esse guard existe para impedir que uma
- * pergunta/confirmacao antiga capture um pedido novo completo do usuário.
+ * Detecta novos comandos inequívocos que devem interromper um contexto
+ * pendente. A exigência de conteúdo depois do verbo evita tratar respostas
+ * curtas como "cancele" ou "criar tarefa" como uma nova intenção completa.
+ * Esse guard impede que uma pergunta/confirmação antiga capture um pedido novo.
  */
-function isExplicitNewCalendarCommand(text: string): boolean {
+function isExplicitNewCommand(text: string): boolean {
   const normalized = text.trim().toLocaleLowerCase('pt-BR');
-  return /^(agende|marque|mude|remarque|cancele)\s+\S.{2,}$/u.test(normalized);
+  const calendarCommand = /^(agende|marque|mude|remarque|cancele)\s+\S.{2,}$/u;
+  const taskCommand = /^(crie|criar)\s+(?:uma\s+)?tarefa\s*[:\-]?\s+\S.{2,}$/u;
+  return calendarCommand.test(normalized) || taskCommand.test(normalized);
 }
 
 function translateFirstTurnResult(result: FirstTurnResult): ConversationEntryResult {
@@ -207,10 +209,10 @@ export async function handleConversationMessage(
 
     case 'found':
       // Um novo comando completo e inequívoco invalida a pergunta/proposta
-      // anterior por CAS e reentra no fluxo normal de NLU. Isso evita que
-      // "Mude o compromisso..." seja tratado como resposta a "sim/não" ou
-      // "quanto tempo?". Se houver corrida entre dispositivos, falha fechado.
-      if (isExplicitNewCalendarCommand(text)) {
+      // anterior por CAS e reentra no fluxo normal de NLU. Isso evita que um
+      // novo pedido de agenda ou tarefa seja tratado como resposta ao contexto
+      // antigo. Se houver corrida entre dispositivos, falha fechado.
+      if (isExplicitNewCommand(text)) {
         return interruptPendingStateAndHandleNewCommand(
           current.value.stateId,
           text,
