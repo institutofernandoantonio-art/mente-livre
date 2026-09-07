@@ -47,6 +47,8 @@ assert.ok(!conversaPage.includes('createAdminClient'));
 assert.ok(conversaPanel.includes("scheduleTaskTitle ? 'Que horário?'"));
 assert.ok(conversaPanel.includes('Diga apenas o horário de hoje'));
 assert.ok(conversaPanel.includes('`Agende ${scheduleTaskTitle} hoje às ${trimmed}`'));
+assert.ok(conversaPanel.includes("const isConfirmation = /^(sim|n[aã]o)$/iu.test(trimmed)"));
+assert.ok(conversaPanel.includes('scheduleTaskTitle && !alreadyExplicit && !isConfirmation'));
 assert.ok(conversaPanel.includes('sendConversationMessage(backendText, timezone)'));
 assert.ok(!conversaPanel.includes('access_token'));
 assert.ok(!conversaPanel.includes('refresh_token'));
@@ -59,6 +61,6 @@ console.log('[PASS] checklist do dia usa apenas tarefas pendentes e confirmadas 
 console.log('[PASS] recorte de hoje respeita timezone civil do aparelho');
 console.log('[PASS] Eisenhower é apresentado em linguagem simples e resolvido em um toque');
 console.log('[PASS] agendar horário usa apenas id opaco e resolve a tarefa no servidor por usuário');
-console.log('[PASS] usuário pode dizer apenas o horário e continua passando pela confirmação existente');
+console.log('[PASS] usuário pode dizer apenas o horário e sim/não continuam sendo confirmação');
 console.log('[PASS] checklist permite concluir sem criar evento no Google Calendar');
 console.log('[PASS] tela Hoje incorpora o checklist');
