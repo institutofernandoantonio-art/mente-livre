@@ -96,6 +96,12 @@ check('mostra consumo mensal e teto interno quando disponível', () => {
   assert.match(voiceSource, /internalLimitUsd/);
 });
 
+check('atualiza orçamento exibido também após falha de transcrição', () => {
+  assert.match(voiceSource, /const refreshUsage = useCallback/);
+  assert.match(voiceSource, /let usageReturnedByTranscription = false/);
+  assert.match(voiceSource, /if \(!usageReturnedByTranscription\) \{\s*await refreshUsage\(\);\s*\}/);
+});
+
 check('componente de voz continua separado das ações de agenda', () => {
   assert.ok(!voiceSource.includes('sendConversationMessage'));
   assert.ok(!voiceSource.includes('Google'));
