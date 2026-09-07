@@ -27,11 +27,14 @@ export default async function ConversaPage() {
         <UpcomingCalendarEvents calendarUrl={calendarUrl} accountEmail={email} />
 
         <div className="mt-6 flex flex-col items-center gap-3">
+          <Link href="/hoje" className={buttonVariants('primary')}>
+            Ver meu foco de hoje
+          </Link>
           <a
             href={calendarUrl}
             target="_blank"
             rel="noreferrer"
-            className={buttonVariants('primary')}
+            className={buttonVariants('secondary')}
           >
             Abrir Google Agenda
           </a>
