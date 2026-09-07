@@ -26,7 +26,11 @@ function nextId(): string {
   return `msg-${Math.random().toString(36).slice(2)}`;
 }
 
-export function ConversationPanel() {
+function isExplicitCalendarCommand(text: string): boolean {
+  return /^(agende|marque|remarque|mude|cancele)\b/iu.test(text.trim());
+}
+
+export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTitle?: string | null }) {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [text, setText] = useState('');
   const [pending, setPending] = useState(false);
@@ -54,9 +58,7 @@ export function ConversationPanel() {
           { id: nextId(), role: 'assistant', kind: 'text', text: 'Algo deu errado. Tente novamente.' },
         ]);
       } finally {
-        if (active) {
-          setBootstrapping(false);
-        }
+        if (active) setBootstrapping(false);
       }
     }
 
@@ -79,21 +81,26 @@ export function ConversationPanel() {
     return () => window.cancelAnimationFrame(frame);
   }, [latestAssistantId, latestAssistantElement, logElement]);
 
-  async function submitText(text: string) {
+  async function submitText(displayText: string) {
     if (pending || bootstrapping) return;
 
-    const trimmed = text.trim();
+    const trimmed = displayText.trim();
     if (trimmed.length === 0) return;
 
-    setMessages((prev) => [...prev, { id: nextId(), role: 'user', kind: 'text', text }]);
+    const backendText =
+      scheduleTaskTitle && !isExplicitCalendarCommand(trimmed)
+        ? `Agende ${scheduleTaskTitle} hoje às ${trimmed}`
+        : trimmed;
+
+    setMessages((prev) => [...prev, { id: nextId(), role: 'user', kind: 'text', text: displayText }]);
     setPending(true);
 
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const result = await sendConversationMessage(text, timezone);
+      const result = await sendConversationMessage(backendText, timezone);
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
-      if (clearInput || text === 'sim' || text === 'não') {
+      if (clearInput || displayText === 'sim' || displayText === 'não') {
         setText('');
       }
     } catch {
@@ -131,6 +138,14 @@ export function ConversationPanel() {
     <div className="flex w-full flex-col gap-4">
       <h1 className="text-lg font-semibold text-ink">Conversa</h1>
 
+      {scheduleTaskTitle && (
+        <div className="rounded-xl border border-brand-200 bg-mist-50 p-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-brand-600">Agendar horário</p>
+          <p className="mt-1 font-medium text-ink">{scheduleTaskTitle}</p>
+          <p className="mt-1 text-sm text-ink-soft">Diga apenas o horário de hoje. Ex.: “15 horas”.</p>
+        </div>
+      )}
+
       <div
         ref={setLogElement}
         role="log"
@@ -156,7 +171,7 @@ export function ConversationPanel() {
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <Textarea
-          label="O que está ocupando sua mente?"
+          label={scheduleTaskTitle ? 'Que horário?' : 'O que está ocupando sua mente?'}
           maxLength={10000}
           value={text}
           onChange={handleTextChange}
