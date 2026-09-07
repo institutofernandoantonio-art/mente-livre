@@ -28,7 +28,7 @@ function nextId(): string {
 
 export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTitle?: string | null }) {
   const [messages, setMessages] = useState<UiMessage[]>([]);
-  const [inputText, setInputText] = useState('');
+  const [text, setText] = useState('');
   const [pending, setPending] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [logElement, setLogElement] = useState<HTMLDivElement | null>(null);
@@ -100,7 +100,7 @@ export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTi
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
       if (clearInput || isConfirmation) {
-        setInputText('');
+        setText('');
       }
     } catch {
       setMessages((prev) => [
@@ -114,15 +114,15 @@ export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTi
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void submitText(inputText);
+    void submitText(text);
   }
 
   function handleTextChange(event: ChangeEvent<HTMLTextAreaElement>) {
-    setInputText(event.target.value);
+    setText(event.target.value);
   }
 
   function handleVoiceTranscript(transcript: string) {
-    setInputText(transcript.slice(0, 10000));
+    setText(transcript.slice(0, 10000));
   }
 
   function offersYesNoQuickReply(message: UiMessage): boolean {
@@ -172,7 +172,7 @@ export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTi
         <Textarea
           label={scheduleTaskTitle ? 'Que horário?' : 'O que está ocupando sua mente?'}
           maxLength={10000}
-          value={inputText}
+          value={text}
           onChange={handleTextChange}
           disabled={inputDisabled}
         />
