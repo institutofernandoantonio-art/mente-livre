@@ -104,12 +104,14 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
   const recordingStartedAtRef = useRef(0);
   const currentRequestIdRef = useRef<string | null>(null);
   const recordingFailedRef = useRef(false);
+  const recordingCancelledRef = useRef(false);
   const autoStopRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
 
   const [state, setState] = useState<VoiceState>('idle');
   const [message, setMessage] = useState<string>('A fala vira texto para você revisar antes de enviar.');
   const [usage, setUsage] = useState<VoiceUsageSummary | null>(null);
+  const [inputLabel, setInputLabel] = useState<string | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -222,6 +224,9 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
         return;
       }
 
+      const audioTrack = stream.getAudioTracks()[0];
+      setInputLabel(audioTrack?.label.trim() || 'Microfone do dispositivo');
+
       const mimeType = preferredMimeType();
       const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       const chunks: Blob[] = [];
@@ -230,6 +235,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
       recorderRef.current = recorder;
       currentRequestIdRef.current = requestId();
       recordingFailedRef.current = false;
+      recordingCancelledRef.current = false;
       recordingStartedAtRef.current = Date.now();
 
       recorder.ondataavailable = (event) => {
@@ -241,6 +247,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
         // captura como falha e invalidar o request_id impede que esse `stop`
         // transforme áudio parcial em uma chamada paga ao STT.
         recordingFailedRef.current = true;
+        recordingCancelledRef.current = false;
         currentRequestIdRef.current = null;
         releaseCapture();
         if (mountedRef.current) {
@@ -251,7 +258,9 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
       recorder.onstop = () => {
         const failed = recordingFailedRef.current;
+        const cancelled = recordingCancelledRef.current;
         recordingFailedRef.current = false;
+        recordingCancelledRef.current = false;
         const elapsed = Date.now() - recordingStartedAtRef.current;
         const durationMs = Math.max(250, Math.min(VOICE_MAX_DURATION_MS, elapsed));
         const id = currentRequestIdRef.current;
@@ -260,6 +269,13 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
         releaseCapture();
 
         if (failed) return;
+        if (cancelled) {
+          if (mountedRef.current) {
+            setState('idle');
+            setMessage('Gravação cancelada. Nenhum áudio foi enviado para transcrição.');
+          }
+          return;
+        }
 
         if (!id || blob.size === 0) {
           if (mountedRef.current) {
@@ -304,6 +320,24 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     if (recorder && recorder.state !== 'inactive') recorder.stop();
   }
 
+  function cancelRecording() {
+    if (state !== 'recording') return;
+    recordingCancelledRef.current = true;
+    currentRequestIdRef.current = null;
+    setMessage('Cancelando gravação...');
+
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
+      return;
+    }
+
+    releaseCapture();
+    recordingCancelledRef.current = false;
+    setState('idle');
+    setMessage('Gravação cancelada. Nenhum áudio foi enviado para transcrição.');
+  }
+
   const buttonLabel = state === 'requesting'
     ? 'Abrindo microfone...'
     : state === 'recording'
@@ -314,19 +348,33 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
   return (
     <div className="flex flex-col gap-2">
-      <Button
-        type="button"
-        variant="secondary"
-        disabled={disabled || state === 'requesting' || state === 'transcribing'}
-        onClick={state === 'recording' ? stopRecording : startRecording}
-        className="w-full"
-        aria-pressed={state === 'recording'}
-      >
-        <span aria-hidden="true" className="text-base leading-none">🎙️</span>
-        {buttonLabel}
-      </Button>
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={disabled || state === 'requesting' || state === 'transcribing'}
+          onClick={state === 'recording' ? stopRecording : startRecording}
+          className="min-w-0 flex-1"
+          aria-pressed={state === 'recording'}
+        >
+          <span aria-hidden="true" className="text-base leading-none">🎙️</span>
+          {buttonLabel}
+        </Button>
+
+        {state === 'recording' && (
+          <Button type="button" variant="ghost" onClick={cancelRecording} className="shrink-0 px-4">
+            Cancelar
+          </Button>
+        )}
+      </div>
 
       <p aria-live="polite" className="text-xs text-ink-soft">{message}</p>
+
+      {inputLabel && (
+        <p className="text-[11px] leading-relaxed text-ink-soft">
+          {state === 'recording' || state === 'transcribing' ? 'Microfone em uso' : 'Último microfone usado'}: {inputLabel}.
+        </p>
+      )}
 
       {usage && (
         <p className="text-[11px] leading-relaxed text-ink-soft">
