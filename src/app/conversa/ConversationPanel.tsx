@@ -63,7 +63,9 @@ export function ConversationPanel() {
           { id: nextId(), role: 'assistant', kind: 'text', text: 'Algo deu errado. Tente novamente.' },
         ]);
       } finally {
-        if (active) setBootstrapping(false);
+        if (active) {
+          setBootstrapping(false);
+        }
       }
     }
 
@@ -102,10 +104,16 @@ export function ConversationPanel() {
     setPending(true);
 
     try {
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const result = scheduleTaskTitle
-        ? await sendConversationMessage(backendText, timezone)
-        : await sendConversationMessage(text, timezone);
+      let result: Awaited<ReturnType<typeof sendConversationMessage>>;
+      if (scheduleTaskTitle) {
+        result = await sendConversationMessage(
+          backendText,
+          Intl.DateTimeFormat().resolvedOptions().timeZone,
+        );
+      } else {
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        result = await sendConversationMessage(text, timezone);
+      }
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
       if (clearInput || isConfirmation) {
