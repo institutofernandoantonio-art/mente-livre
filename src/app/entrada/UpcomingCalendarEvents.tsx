@@ -8,6 +8,7 @@ import { buildGoogleCalendarAccountUrl } from '@/lib/google/calendar-web-url';
 type CalendarEvent = {
   title: string;
   start: string;
+  end: string | null;
   allDay: boolean;
   htmlLink: string | null;
 };
@@ -22,9 +23,14 @@ type LoadState =
 type UpcomingCalendarEventsProps = {
   calendarUrl: string;
   accountEmail: string;
+  focusTitle?: string | null;
 };
 
-export function UpcomingCalendarEvents({ calendarUrl, accountEmail }: UpcomingCalendarEventsProps) {
+export function UpcomingCalendarEvents({
+  calendarUrl,
+  accountEmail,
+  focusTitle = null,
+}: UpcomingCalendarEventsProps) {
   const [state, setState] = useState<LoadState>({ status: 'loading', events: [] });
   const [now, setNow] = useState(() => Date.now());
   const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
@@ -62,9 +68,18 @@ export function UpcomingCalendarEvents({ calendarUrl, accountEmail }: UpcomingCa
   }
 
   const proximity = state.status === 'ok' ? getUpcomingProximity(state.events, now) : null;
+  const focusGuidance = state.status === 'ok' ? getFocusGuidance(state.events, now, focusTitle) : null;
 
   return (
     <div className="mt-5">
+      {focusGuidance && (
+        <Card className="mb-4 border border-brand-600/25 bg-brand-600/[0.04]">
+          <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">{focusGuidance.label}</p>
+          <p className="mt-2 text-sm font-medium text-ink">{focusGuidance.detail}</p>
+          <p className="mt-1 text-xs text-ink-soft">A sugestão usa apenas sua prioridade atual e o próximo compromisso conhecido.</p>
+        </Card>
+      )}
+
       <Card>
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -157,6 +172,63 @@ function getUpcomingProximity(events: CalendarEvent[], now: number): { event: Ca
   }
 
   return null;
+}
+
+function getFocusGuidance(
+  events: CalendarEvent[],
+  now: number,
+  focusTitle: string | null,
+): { label: string; detail: string } | null {
+  const focus = focusTitle?.trim();
+  if (!focus) return null;
+
+  for (const event of events) {
+    if (event.allDay) continue;
+
+    const startMs = Date.parse(event.start);
+    if (!Number.isFinite(startMs)) continue;
+    const endMs = event.end ? Date.parse(event.end) : Number.NaN;
+
+    if (startMs <= now && Number.isFinite(endMs) && endMs > now) {
+      const remaining = Math.max(1, Math.ceil((endMs - now) / 60_000));
+      return {
+        label: 'Compromisso em andamento',
+        detail: `${event.title} termina em cerca de ${remaining} min. Depois, retome: ${focus}.`,
+      };
+    }
+
+    if (startMs > now) {
+      const minutes = Math.ceil((startMs - now) / 60_000);
+
+      if (minutes <= 10) {
+        return {
+          label: 'Prepare-se para o próximo compromisso',
+          detail: `${event.title} começa em cerca de ${minutes} min. Evite iniciar uma tarefa longa agora.`,
+        };
+      }
+
+      if (minutes < 30) {
+        return {
+          label: 'Janela curta agora',
+          detail: `Você tem cerca de ${minutes} min até ${event.title}. Use esse tempo para uma etapa pequena de: ${focus}.`,
+        };
+      }
+
+      if (minutes <= 480) {
+        return {
+          label: 'Bloco recomendado agora',
+          detail: `Você tem cerca de ${minutes} min até ${event.title}. Avance primeiro: ${focus}.`,
+        };
+      }
+
+      break;
+    }
+  }
+
+  return {
+    label: 'Bloco recomendado agora',
+    detail: `Sem compromisso próximo bloqueando seu foco. Avance primeiro: ${focus}.`,
+  };
 }
 
 function formatEventWhen(event: CalendarEvent, timeZone: string): string {

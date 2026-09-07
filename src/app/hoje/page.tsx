@@ -56,6 +56,8 @@ export default async function HojePage() {
     loadFailed = true;
   }
 
+  const missionTitle = focusTasks[0]?.title ?? null;
+
   return (
     <main className="flex flex-1 flex-col items-center px-6 py-16">
       <div className="w-full max-w-sm">
@@ -89,7 +91,11 @@ export default async function HojePage() {
           </Card>
         )}
 
-        <UpcomingCalendarEvents calendarUrl={calendarUrl} accountEmail={email} />
+        <UpcomingCalendarEvents
+          calendarUrl={calendarUrl}
+          accountEmail={email}
+          focusTitle={missionTitle}
+        />
 
         <div className="mt-6 flex flex-col items-center gap-3">
           <Link href="/tarefas" className={buttonVariants('secondary')}>
