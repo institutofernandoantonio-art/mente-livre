@@ -77,6 +77,26 @@ function formatUsd(value: number): string {
   });
 }
 
+async function fetchVoiceUsageSummary(): Promise<VoiceUsageSummary | null> {
+  try {
+    const response = await fetch('/api/voice/usage', { cache: 'no-store' });
+    if (!response.ok) return null;
+    const payload: unknown = await response.json();
+    if (
+      typeof payload === 'object' &&
+      payload !== null &&
+      'usage' in payload &&
+      typeof payload.usage === 'object' &&
+      payload.usage !== null
+    ) {
+      return payload.usage as VoiceUsageSummary;
+    }
+  } catch {
+    // O resumo é informativo; falha nele nunca bloqueia a conversa.
+  }
+  return null;
+}
+
 export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationButtonProps) {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -95,22 +115,8 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     mountedRef.current = true;
 
     async function loadUsage() {
-      try {
-        const response = await fetch('/api/voice/usage', { cache: 'no-store' });
-        if (!response.ok) return;
-        const payload: unknown = await response.json();
-        if (
-          typeof payload === 'object' &&
-          payload !== null &&
-          'usage' in payload &&
-          typeof payload.usage === 'object' &&
-          payload.usage !== null
-        ) {
-          setUsage(payload.usage as VoiceUsageSummary);
-        }
-      } catch {
-        // O resumo é informativo; falha nele nunca bloqueia a conversa.
-      }
+      const latestUsage = await fetchVoiceUsageSummary();
+      if (mountedRef.current && latestUsage) setUsage(latestUsage);
     }
 
     void loadUsage();
@@ -148,6 +154,8 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     form.append('duration_ms', String(durationMs));
     form.append('audio', blob, `voice.${extensionForMime(type)}`);
 
+    let usageReturnedByTranscription = false;
+
     try {
       const response = await fetch('/api/voice/transcribe', {
         method: 'POST',
@@ -170,7 +178,10 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
       if (mountedRef.current) {
         onTranscript(payload.text.slice(0, 10_000));
-        if (payload.usage) setUsage(payload.usage);
+        if (payload.usage) {
+          setUsage(payload.usage);
+          usageReturnedByTranscription = true;
+        }
         setMessage('Texto reconhecido. Revise antes de enviar.');
       }
     } catch {
@@ -178,6 +189,13 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
         setMessage('Não consegui enviar o áudio para transcrição. Confira sua conexão e tente novamente.');
       }
     } finally {
+      // Em falhas o endpoint de transcrição não inclui o resumo mensal. Como a
+      // reserva conservadora pode ter sido contabilizada, atualizamos o painel
+      // imediatamente para não exibir orçamento antigo após uma tentativa.
+      if (!usageReturnedByTranscription) {
+        const latestUsage = await fetchVoiceUsageSummary();
+        if (mountedRef.current && latestUsage) setUsage(latestUsage);
+      }
       if (mountedRef.current) setState('idle');
     }
   }
