@@ -6,22 +6,40 @@ import { createClient } from '@/lib/supabase/server';
 import { buildGoogleCalendarAccountUrl } from '@/lib/google/calendar-web-url';
 import { ConversationPanel } from './ConversationPanel';
 
-/**
- * Rota isolada da UI conversacional. A conversa continua sendo o centro da
- * tela, com a agenda logo abaixo para reduzir trocas de contexto: próximos
- * compromissos, avisos de proximidade e atalho direto para o Google Agenda.
- */
-export default async function ConversaPage() {
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function ConversaPage({ searchParams }: { searchParams: SearchParams }) {
   const supabase = await createClient();
   const { data } = await supabase.auth.getClaims();
+  const userId = data?.claims.sub;
   const email = typeof data?.claims.email === 'string' ? data.claims.email : '';
   const calendarUrl = buildGoogleCalendarAccountUrl(email);
+
+  let scheduleTaskTitle: string | null = null;
+  const params = await searchParams;
+  const rawTaskId = params.agendarTask;
+  const taskId = typeof rawTaskId === 'string' ? rawTaskId.trim() : '';
+
+  if (taskId && typeof userId === 'string' && userId) {
+    const { data: task } = await supabase
+      .from('items')
+      .select('title')
+      .eq('id', taskId)
+      .eq('user_id', userId)
+      .eq('status', 'pending')
+      .eq('needs_confirmation', false)
+      .maybeSingle();
+
+    if (task && typeof task.title === 'string' && task.title.trim()) {
+      scheduleTaskTitle = task.title.trim();
+    }
+  }
 
   return (
     <main className="flex flex-1 flex-col items-center justify-center px-6 py-16">
       <div className="w-full max-w-sm">
         <Card>
-          <ConversationPanel />
+          <ConversationPanel scheduleTaskTitle={scheduleTaskTitle} />
         </Card>
 
         <UpcomingCalendarEvents calendarUrl={calendarUrl} accountEmail={email} />
