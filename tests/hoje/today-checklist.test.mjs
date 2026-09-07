@@ -17,6 +17,13 @@ assert.ok(!actions.includes('createAdminClient'));
 
 assert.ok(component.includes('Checklist do dia'));
 assert.ok(component.includes('Para fazer hoje, sem horário marcado'));
+assert.ok(component.includes('Decida em um toque o que merece sua atenção.'));
+assert.ok(component.includes('Fazer hoje'));
+assert.ok(component.includes('Urgente + importante'));
+assert.ok(component.includes('Planejar'));
+assert.ok(component.includes('Delegar'));
+assert.ok(component.includes('Depois'));
+assert.ok(component.includes('setTaskPriority(taskId, priority)'));
 assert.ok(component.includes("completeTask(taskId)"));
 assert.ok(component.includes("state.items.filter((item) => item.id !== taskId)"));
 assert.ok(!component.includes('Google Calendar'));
@@ -27,5 +34,6 @@ assert.ok(page.includes('<TodayChecklist />'));
 
 console.log('[PASS] checklist do dia usa apenas tarefas pendentes e confirmadas do usuário');
 console.log('[PASS] recorte de hoje respeita timezone civil do aparelho');
+console.log('[PASS] Eisenhower é apresentado em linguagem simples e resolvido em um toque');
 console.log('[PASS] checklist permite concluir sem criar evento no Google Calendar');
 console.log('[PASS] tela Hoje incorpora o checklist');
