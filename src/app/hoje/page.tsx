@@ -3,6 +3,7 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Button, buttonVariants } from '@/components/ui/Button';
+import { BackButton } from '@/components/navigation/BackButton';
 import { UpcomingCalendarEvents } from '@/app/entrada/UpcomingCalendarEvents';
 import { createClient } from '@/lib/supabase/server';
 import { buildGoogleCalendarAccountUrl } from '@/lib/google/calendar-web-url';
@@ -62,6 +63,10 @@ export default async function HojePage() {
   return (
     <main className="flex flex-1 flex-col items-center px-6 py-16">
       <div className="w-full max-w-sm">
+        <div className="mb-5 flex justify-start">
+          <BackButton />
+        </div>
+
         <div className="mb-6 text-center">
           <p className="text-xs font-medium uppercase tracking-wide text-ink-soft">Hoje</p>
           <h1 className="mt-1 text-xl font-semibold text-ink">Seu foco de agora</h1>
