@@ -47,6 +47,7 @@ export async function setTaskPriority(
     if (data === null) return { status: 'not_found' };
 
     revalidatePath('/tarefas');
+    revalidatePath('/hoje');
     return { status: 'updated', priority };
   } catch {
     return { status: 'error' };
