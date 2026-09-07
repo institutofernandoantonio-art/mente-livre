@@ -32,7 +32,7 @@ export function ConversationPanel() {
   const [text, setText] = useState('');
   const [pending, setPending] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
-  const [scheduleTaskTitle, setScheduleTaskTitle] = useState<string | null>(null);
+  const [scheduleTaskTitle, setScheduleTaskTitle] = useState('');
   const [logElement, setLogElement] = useState<HTMLDivElement | null>(null);
   const [latestAssistantElement, setLatestAssistantElement] = useState<HTMLDivElement | null>(null);
 
@@ -49,6 +49,13 @@ export function ConversationPanel() {
         if (content !== null) {
           setMessages((prev) => [...prev, { ...content, id: nextId() }]);
         }
+
+        const taskId = new URLSearchParams(window.location.search).get('agendarTask')?.trim() ?? '';
+        if (taskId) {
+          const task = await resolveScheduleTask(taskId);
+          if (!active) return;
+          setScheduleTaskTitle(task.status === 'ok' ? task.title : '');
+        }
       } catch {
         if (!active) return;
         setMessages((prev) => [
@@ -61,21 +68,6 @@ export function ConversationPanel() {
     }
 
     void bootstrap();
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    const taskId = new URLSearchParams(window.location.search).get('agendarTask')?.trim() ?? '';
-    if (!taskId) return () => { active = false; };
-
-    resolveScheduleTask(taskId).then((result) => {
-      if (!active) return;
-      setScheduleTaskTitle(result.status === 'ok' ? result.title : null);
-    });
-
     return () => {
       active = false;
     };
