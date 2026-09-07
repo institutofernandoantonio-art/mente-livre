@@ -98,6 +98,9 @@ export default async function HojePage() {
         />
 
         <div className="mt-6 flex flex-col items-center gap-3">
+          <Link href="/resumo" className={buttonVariants('secondary')}>
+            Ver resumo do dia
+          </Link>
           <Link href="/tarefas" className={buttonVariants('secondary')}>
             Organizar prioridades
           </Link>
