@@ -38,6 +38,18 @@ check('chave OpenAI é dedicada e só existe no servidor', () => {
   assert.ok(!provider.includes('NEXT_PUBLIC_OPENAI'));
 });
 
+check('diagnóstico do provider expõe só categoria derivada do status HTTP', () => {
+  assert.match(provider, /categoryFromStatus\(status: number\)/);
+  assert.match(provider, /response\.status/);
+  assert.match(provider, /VoiceSttProviderError/);
+  assert.ok(!provider.includes('await response.text()'));
+  assert.ok(!provider.includes('await response.json()') || provider.includes('const payload: unknown = await response.json()'));
+  assert.match(route, /provider_unauthorized/);
+  assert.match(route, /provider_forbidden/);
+  assert.match(route, /provider_rate_limited/);
+  assert.match(route, /provider_bad_request/);
+});
+
 check('configuração do provider falha antes da reserva financeira', () => {
   assert.match(provider, /constructor\(\) \{[\s\S]*?getApiKey\(\);[\s\S]*?\}/);
   const providerIndex = route.indexOf('provider = getSpeechToTextProvider()');

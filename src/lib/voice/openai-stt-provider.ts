@@ -5,6 +5,33 @@ const OPENAI_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcription
 const OPENAI_STT_MODEL = 'gpt-transcribe';
 const REQUEST_TIMEOUT_MS = 25_000;
 
+export type VoiceSttProviderErrorCategory =
+  | 'bad_request'
+  | 'unauthorized'
+  | 'forbidden'
+  | 'rate_limited'
+  | 'unavailable'
+  | 'unknown';
+
+export class VoiceSttProviderError extends Error {
+  readonly category: VoiceSttProviderErrorCategory;
+
+  constructor(category: VoiceSttProviderErrorCategory) {
+    super('Voice transcription provider request failed.');
+    this.name = 'VoiceSttProviderError';
+    this.category = category;
+  }
+}
+
+function categoryFromStatus(status: number): VoiceSttProviderErrorCategory {
+  if (status === 400 || status === 413 || status === 415 || status === 422) return 'bad_request';
+  if (status === 401) return 'unauthorized';
+  if (status === 403) return 'forbidden';
+  if (status === 429) return 'rate_limited';
+  if (status >= 500) return 'unavailable';
+  return 'unknown';
+}
+
 function getApiKey(): string {
   const key = process.env.MENTE_LIVRE_OPENAI_STT_API_KEY;
   if (!key) {
@@ -47,9 +74,9 @@ export class OpenAISttProvider implements SpeechToTextProvider {
       });
 
       if (!response.ok) {
-        // Nunca incluir corpo da resposta ou chave em erro/log. O chamador
-        // devolve mensagem genérica e finaliza a reserva como failed.
-        throw new Error('Voice transcription provider request failed.');
+        // Só propaga uma categoria derivada do status HTTP. Nunca inclui corpo
+        // da resposta, texto do usuário, áudio, request headers ou chave.
+        throw new VoiceSttProviderError(categoryFromStatus(response.status));
       }
 
       const payload: unknown = await response.json();
@@ -59,12 +86,12 @@ export class OpenAISttProvider implements SpeechToTextProvider {
         !('text' in payload) ||
         typeof payload.text !== 'string'
       ) {
-        throw new Error('Voice transcription provider returned an invalid response.');
+        throw new VoiceSttProviderError('unknown');
       }
 
       const text = payload.text.trim();
       if (text.length === 0 || text.length > 10_000) {
-        throw new Error('Voice transcription provider returned invalid text.');
+        throw new VoiceSttProviderError('unknown');
       }
 
       return { text };
