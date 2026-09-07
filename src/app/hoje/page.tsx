@@ -50,7 +50,7 @@ export default async function HojePage() {
       focusTasks = [...data]
         .filter((task) => task.priority !== null)
         .sort((a, b) => focusOrder(a) - focusOrder(b))
-        .slice(0, 3);
+        .slice(0, 4);
     }
   } else {
     loadFailed = true;
@@ -79,7 +79,7 @@ export default async function HojePage() {
               {focusTasks.map((task, index) => (
                 <li key={task.id} className="rounded-xl border border-mist-200 p-4">
                   <p className="text-xs font-medium text-ink-soft">
-                    {index === 0 ? 'Missão principal sugerida' : `Prioridade ${index + 1}`}
+                    {index === 0 ? 'Missão principal sugerida' : `Prioridade ${index}`}
                   </p>
                   <p className="mt-1 font-medium text-ink">{task.title}</p>
                   <form action={completeTaskAction.bind(null, task.id)} className="mt-3">
