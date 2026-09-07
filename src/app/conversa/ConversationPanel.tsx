@@ -28,7 +28,7 @@ function nextId(): string {
 
 export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTitle?: string | null }) {
   const [messages, setMessages] = useState<UiMessage[]>([]);
-  const [text, setText] = useState('');
+  const [inputText, setInputText] = useState('');
   const [pending, setPending] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [logElement, setLogElement] = useState<HTMLDivElement | null>(null);
@@ -77,10 +77,10 @@ export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTi
     return () => window.cancelAnimationFrame(frame);
   }, [latestAssistantId, latestAssistantElement, logElement]);
 
-  async function submitText(displayText: string) {
+  async function submitText(text: string) {
     if (pending || bootstrapping) return;
 
-    const trimmed = displayText.trim();
+    const trimmed = text.trim();
     if (trimmed.length === 0) return;
 
     const alreadyExplicit = /^(agende|marque|remarque|mude|cancele)\b/iu.test(trimmed);
@@ -89,16 +89,18 @@ export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTi
       ? `Agende ${scheduleTaskTitle} hoje às ${trimmed}`
       : trimmed;
 
-    setMessages((prev) => [...prev, { id: nextId(), role: 'user', kind: 'text', text: displayText }]);
+    setMessages((prev) => [...prev, { id: nextId(), role: 'user', kind: 'text', text }]);
     setPending(true);
 
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const result = await sendConversationMessage(backendText, timezone);
+      const result = scheduleTaskTitle
+        ? await sendConversationMessage(backendText, timezone)
+        : await sendConversationMessage(text, timezone);
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
       if (clearInput || isConfirmation) {
-        setText('');
+        setInputText('');
       }
     } catch {
       setMessages((prev) => [
@@ -112,15 +114,15 @@ export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTi
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void submitText(text);
+    void submitText(inputText);
   }
 
   function handleTextChange(event: ChangeEvent<HTMLTextAreaElement>) {
-    setText(event.target.value);
+    setInputText(event.target.value);
   }
 
   function handleVoiceTranscript(transcript: string) {
-    setText(transcript.slice(0, 10000));
+    setInputText(transcript.slice(0, 10000));
   }
 
   function offersYesNoQuickReply(message: UiMessage): boolean {
@@ -170,7 +172,7 @@ export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTi
         <Textarea
           label={scheduleTaskTitle ? 'Que horário?' : 'O que está ocupando sua mente?'}
           maxLength={10000}
-          value={text}
+          value={inputText}
           onChange={handleTextChange}
           disabled={inputDisabled}
         />
