@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/server';
 import { buildGoogleCalendarAccountUrl } from '@/lib/google/calendar-web-url';
 import { completeTaskAction } from '@/app/tarefas/actions';
 import type { TaskPriority } from '@/app/tarefas/priority-actions';
+import { TodayChecklist } from './TodayChecklist';
 
 type FocusTask = {
   id: string;
@@ -90,6 +91,8 @@ export default async function HojePage() {
             </ol>
           </Card>
         )}
+
+        <TodayChecklist />
 
         <UpcomingCalendarEvents
           calendarUrl={calendarUrl}

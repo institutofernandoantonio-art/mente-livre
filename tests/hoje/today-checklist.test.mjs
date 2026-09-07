@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+const actions = readFileSync(new URL('../../src/app/hoje/checklist-actions.ts', import.meta.url), 'utf8');
+const component = readFileSync(new URL('../../src/app/hoje/TodayChecklist.tsx', import.meta.url), 'utf8');
+const page = readFileSync(new URL('../../src/app/hoje/page.tsx', import.meta.url), 'utf8');
+
+assert.ok(actions.includes("'use server'"));
+assert.ok(actions.includes(".eq('user_id', userId)"));
+assert.ok(actions.includes(".eq('status', 'pending')"));
+assert.ok(actions.includes(".eq('needs_confirmation', false)"));
+assert.ok(actions.includes(".gte('deadline_at', start.utc.toISOString())"));
+assert.ok(actions.includes(".lt('deadline_at', end.utc.toISOString())"));
+assert.ok(actions.includes('isValidTimeZone(timeZone)'));
+assert.ok(!actions.includes('service_role'));
+assert.ok(!actions.includes('createAdminClient'));
+
+assert.ok(component.includes('Checklist do dia'));
+assert.ok(component.includes('Para fazer hoje, sem horário marcado'));
+assert.ok(component.includes("completeTask(taskId)"));
+assert.ok(component.includes("state.items.filter((item) => item.id !== taskId)"));
+assert.ok(!component.includes('Google Calendar'));
+assert.ok(!component.includes('create_event'));
+
+assert.ok(page.includes("import { TodayChecklist } from './TodayChecklist'"));
+assert.ok(page.includes('<TodayChecklist />'));
+
+console.log('[PASS] checklist do dia usa apenas tarefas pendentes e confirmadas do usuário');
+console.log('[PASS] recorte de hoje respeita timezone civil do aparelho');
+console.log('[PASS] checklist permite concluir sem criar evento no Google Calendar');
+console.log('[PASS] tela Hoje incorpora o checklist');
