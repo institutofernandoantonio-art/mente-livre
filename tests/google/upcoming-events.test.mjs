@@ -106,7 +106,8 @@ check('atalhos da agenda usam a conta autenticada no Mente Livre', () => {
 });
 
 check('seletor do Google recebe o e-mail da sessão e continua somente para calendar.google.com', () => {
-  assert.ok(calendarWebUrl.includes("new URL('https://accounts.google.com/AccountChooser')"));
+  assert.ok(calendarWebUrl.includes("const GOOGLE_ACCOUNT_CHOOSER = 'https://accounts.google.com/AccountChooser'"));
+  assert.ok(calendarWebUrl.includes('new URL(GOOGLE_ACCOUNT_CHOOSER)'));
   assert.ok(calendarWebUrl.includes("chooser.searchParams.set('Email', normalizedEmail)"));
   assert.ok(calendarWebUrl.includes("chooser.searchParams.set('continue', target.toString())"));
   assert.ok(calendarWebUrl.includes("target.hostname !== 'calendar.google.com'"));
