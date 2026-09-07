@@ -6,11 +6,17 @@ const hojePath = fileURLToPath(new URL('../../src/app/hoje/page.tsx', import.met
 const conversaPath = fileURLToPath(new URL('../../src/app/conversa/page.tsx', import.meta.url));
 const tarefasPath = fileURLToPath(new URL('../../src/app/tarefas/page.tsx', import.meta.url));
 const proxyPath = fileURLToPath(new URL('../../src/proxy.ts', import.meta.url));
+const resumoActionsPath = fileURLToPath(new URL('../../src/app/resumo/actions.ts', import.meta.url));
+const resumoClientPath = fileURLToPath(new URL('../../src/app/resumo/TodaySummary.tsx', import.meta.url));
+const resumoPagePath = fileURLToPath(new URL('../../src/app/resumo/page.tsx', import.meta.url));
 
 const hoje = readFileSync(hojePath, 'utf8');
 const conversa = readFileSync(conversaPath, 'utf8');
 const tarefas = readFileSync(tarefasPath, 'utf8');
 const proxy = readFileSync(proxyPath, 'utf8');
+const resumoActions = readFileSync(resumoActionsPath, 'utf8');
+const resumoClient = readFileSync(resumoClientPath, 'utf8');
+const resumoPage = readFileSync(resumoPagePath, 'utf8');
 
 const checks = [];
 function check(name, fn) {
@@ -80,6 +86,41 @@ check('Hoje está protegido pelo mesmo gate AAL2 das rotas privadas principais',
 check('Conversa e tarefas oferecem navegação visível para Hoje', () => {
   assert.ok(conversa.includes('href="/hoje"'));
   assert.ok(tarefas.includes('href="/hoje"'));
+});
+
+check('Resumo usa a implementação central de timezone e valida o fuso do aparelho', () => {
+  assert.ok(resumoActions.includes("from '@/lib/conversation/timezone'"));
+  assert.ok(resumoActions.includes('isValidTimeZone(timeZone)'));
+  assert.ok(resumoActions.includes('getCivilDateInTimeZone(now, timeZone)'));
+  assert.ok(resumoActions.includes('addCivilDays(today, 1)'));
+  assert.ok(resumoActions.includes('resolveCivilDateTimeInTimeZone'));
+  assert.ok(resumoClient.includes('Intl.DateTimeFormat().resolvedOptions().timeZone'));
+});
+
+check('Resumo lê somente conclusões confirmadas do usuário dentro do dia civil', () => {
+  assert.ok(resumoActions.includes('supabase.auth.getClaims()'));
+  assert.ok(resumoActions.includes(".eq('user_id', userId)"));
+  assert.ok(resumoActions.includes(".eq('status', 'completed')"));
+  assert.ok(resumoActions.includes(".eq('needs_confirmation', false)"));
+  assert.ok(resumoActions.includes(".gte('completed_at'"));
+  assert.ok(resumoActions.includes(".lt('completed_at'"));
+  assert.ok(!resumoActions.includes('createAdminClient'));
+  assert.ok(!resumoActions.includes('service_role'));
+});
+
+check('Resumo é somente leitura, limita detalhes e mantém contagem exata', () => {
+  assert.ok(resumoActions.includes("{ count: 'exact' }"));
+  assert.ok(resumoActions.includes('.limit(10)'));
+  assert.ok(!resumoActions.includes('.update('));
+  assert.ok(!resumoActions.includes('.insert('));
+  assert.ok(!resumoActions.includes('.delete('));
+  assert.ok(resumoClient.includes('Mostrando as 10 conclusões mais recentes.'));
+});
+
+check('Resumo está protegido e navegável a partir de Hoje', () => {
+  assert.ok(proxy.includes("'/resumo'"));
+  assert.ok(hoje.includes('href="/resumo"'));
+  assert.ok(resumoPage.includes('Voltar para Hoje'));
 });
 
 const passed = checks.filter(Boolean).length;
