@@ -54,7 +54,9 @@ export function ConversationPanel() {
           { id: nextId(), role: 'assistant', kind: 'text', text: 'Algo deu errado. Tente novamente.' },
         ]);
       } finally {
-        if (active) setBootstrapping(false);
+        if (active) {
+          setBootstrapping(false);
+        }
       }
     }
 
