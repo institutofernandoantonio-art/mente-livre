@@ -27,7 +27,6 @@ const NATURAL_TASK_VERBS = new Set([
   'enviar',
   'mandar',
   'pagar',
-  'comprar',
   'fazer',
   'preparar',
   'organizar',
