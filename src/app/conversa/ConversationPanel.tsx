@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
@@ -17,102 +17,12 @@ import {
   type UiMessageContent,
 } from '@/lib/conversation/presentation-ui';
 
-// ============================================================================
-// Painel conversacional mínimo — o único Client Component desta rota.
-//
-// Transport boundary consumida: SOMENTE `sendConversationMessage(text,
-// timezone)` (envio) e `getConversationPresentationState()` (bootstrap na
-// montagem) — os dois únicos pontos públicos já aprovados. Nenhum outro
-// import de `src/lib/conversation/` além desses dois, do type
-// `ProposedAction` (só para tipar o preview) e do helper puro
-// `presentation-ui.ts` (mapeamento DTO→UI, sem lógica de domínio).
-//
-// `timezone` (novo nesta subfase, query_calendar read-only): capturado via
-// `Intl.DateTimeFormat().resolvedOptions().timeZone` (API global do
-// browser, não um import de Calendar) a cada envio — nunca persistido
-// (localStorage/contexto global/estado do componente), nunca validado
-// aqui (validação real vive em `calendar-query.ts`, a única camada que
-// precisa dele). Mesma técnica já usada por `BrainDumpForm.tsx`.
-//
-// Fase 9 — primeira fatia de voz: `VoiceDictationButton` usa somente a API
-// de reconhecimento de fala disponibilizada pelo navegador/aparelho e
-// devolve TEXTO para este componente. O transcript entra no mesmo `text`
-// controlado já usado pela digitação e exige revisão + clique em Enviar.
-// Nenhum áudio cru, stream, blob ou permissão de microfone atravessa as
-// Server Functions do Mente Livre nesta fatia.
-//
-// Este componente NUNCA:
-// - importa Supabase/`conversation-entry` internals/`runtime-state-storage`/
-//   `conversation-turn`/`proposal-turn`/`intent-extraction`/`confirmation`/
-//   `local-task-execution`/Anthropic/`../google/calendar`/tokens — o ÚNICO
-//   contato com o domínio "calendar" é `buildEventProposalPreview`
-//   (presentation-ui.ts, Subfase 8), uma formatação pura de instantes já
-//   validados que o servidor devolveu — zero OAuth, zero fetch, zero
-//   Calendar API real;
-// - conhece `stateId`/`proposalId`/`userId`/`expiresAt`/`ConversationState`/
-//   `ProposalState` — o único id que o DTO de envio chega a carregar
-//   (`confirmed.itemId`) é deliberadamente descartado por
-//   `mapEntryResultToUiEffect` (presentation-ui.ts), nunca lido aqui;
-// - persiste o transcript — `useState<UiMessage[]>` é só memória da página;
-//   nenhum `localStorage`/`sessionStorage`/cookie/IndexedDB/tabela nova;
-// - reutiliza o fluxo antigo de brain dump (`createBrainDump`/
-//   `organizeBrainDump`/`getCalendarPlanningContext`) — fluxo
-//   deliberadamente independente.
-//
-// --- `id` visual --------------------------------------------------------
-//
-// Gerado só aqui (`crypto.randomUUID()`, com fallback), só para `key` do
-// React — nunca enviado ao servidor, nunca relacionado a
-// `stateId`/`proposalId`/`itemId` reais.
-//
-// --- Visibilidade da resposta mais recente -------------------------------
-//
-// Em telas menores ou depois de usar voz, o foco visual tende a permanecer
-// no formulário, abaixo do histórico. Sempre que uma NOVA resposta do
-// Mente Livre entra em `messages`, fazemos duas coisas puramente visuais:
-// 1) levamos o scroll interno do histórico até o final;
-// 2) trazemos a resposta mais recente para a área visível da página.
-// Isso nunca reenvia mensagem, nunca altera estado de domínio e nunca muda
-// confirmação/execução. A resposta mais recente também recebe destaque
-// visual e o rótulo "Mente Livre" para o usuário identificar rapidamente
-// o que precisa ler/confirmar.
-//
-// --- Bootstrap sob Strict Mode: aceitar 2 leituras, nunca travar ----------
-//
-// `reactStrictMode` não está desligado em `next.config.ts` (fica no
-// default do Next.js, que é `true`), então em desenvolvimento o efeito de
-// montagem roda 2x (monta→limpa→monta de novo). Uma versão anterior deste
-// componente usava um `useRef` para garantir NO MÁXIMO uma chamada real a
-// `getConversationPresentationState()` — só que a combinação de um guard
-// que SOBREVIVE às duas invocações com uma flag de cancelamento que só
-// vale DENTRO de cada invocação tinha um efeito colateral real: a função
-// de limpeza da primeira invocação marcava a ÚNICA promise em voo como
-// cancelada (porque a segunda invocação, bloqueada pelo guard, nunca
-// registrava uma nova flag "viva") — `setBootstrapping(false)` nunca
-// rodava, e a UI ficava presa em "Carregando..." para sempre (bug
-// reproduzido e documentado na subfase de teste manual correspondente).
-//
-// Correção: nenhum guard persistente entre invocações. Cada execução do
-// efeito tem sua PRÓPRIA flag `active`, fechada só sobre aquela chamada —
-// a função de limpeza de uma invocação nunca pode envenenar a promise de
-// outra. Sob Strict Mode isso pode custar uma segunda leitura real em
-// desenvolvimento (a primeira é descartada pelo cleanup, a segunda é a
-// que efetivamente atualiza a UI) — aceitável porque
-// `getConversationPresentationState()` é 100% read-only e idempotente
-// (nunca muta runtime state, nunca dispara NLU/Confirmation/Execution).
-// Em produção (sem Strict Mode) o efeito roda uma vez só, então há sempre
-// exatamente 1 leitura real ali. Nenhum estado global, nenhuma promise
-// compartilhada, nenhuma dependência nova.
-// ============================================================================
-
 type UiMessage = UiMessageContent & { id: string };
 
 function nextId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
-  // Fallback só para ambientes sem `crypto.randomUUID` — ainda assim só
-  // uma key de React, nunca um identificador que atravessa o servidor.
   return `msg-${Math.random().toString(36).slice(2)}`;
 }
 
@@ -121,8 +31,8 @@ export function ConversationPanel() {
   const [text, setText] = useState('');
   const [pending, setPending] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
-  const logRef = useRef<HTMLDivElement | null>(null);
-  const latestAssistantRef = useRef<HTMLDivElement | null>(null);
+  const [logElement, setLogElement] = useState<HTMLDivElement | null>(null);
+  const [latestAssistantElement, setLatestAssistantElement] = useState<HTMLDivElement | null>(null);
 
   const latestAssistantId = [...messages].reverse().find((message) => message.role === 'assistant')?.id ?? null;
 
@@ -140,9 +50,6 @@ export function ConversationPanel() {
           setMessages((prev) => [...prev, { ...content, id: nextId() }]);
         }
       } catch {
-        // Mesma disciplina do catch de submit: nunca loga detalhe, só
-        // mostra uma mensagem genérica — só se esta execução ainda for a
-        // ativa (ver `active` acima).
         if (!active) {
           return;
         }
@@ -151,9 +58,6 @@ export function ConversationPanel() {
           { id: nextId(), role: 'assistant', kind: 'text', text: 'Algo deu errado. Tente novamente.' },
         ]);
       } finally {
-        // `bootstrapping` só é liberado pela execução que ainda é a
-        // ativa — uma execução descartada pelo cleanup (Strict Mode)
-        // nunca reabre a UI depois que a execução seguinte já terminou.
         if (active) {
           setBootstrapping(false);
         }
@@ -168,20 +72,19 @@ export function ConversationPanel() {
   }, []);
 
   useEffect(() => {
-    if (latestAssistantId === null) {
+    if (latestAssistantId === null || latestAssistantElement === null) {
       return;
     }
 
     const frame = window.requestAnimationFrame(() => {
-      const log = logRef.current;
-      if (log) {
-        log.scrollTo({ top: log.scrollHeight, behavior: 'smooth' });
+      if (logElement) {
+        logElement.scrollTo({ top: logElement.scrollHeight, behavior: 'smooth' });
       }
-      latestAssistantRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      latestAssistantElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [latestAssistantId]);
+  }, [latestAssistantId, latestAssistantElement, logElement]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -192,8 +95,6 @@ export function ConversationPanel() {
 
     const trimmed = text.trim();
     if (trimmed.length === 0) {
-      // Proteção de UX mínima — nunca envia mensagem vazia/só espaço.
-      // O dispatcher continua sendo a fonte real de validação de conteúdo.
       return;
     }
 
@@ -201,11 +102,6 @@ export function ConversationPanel() {
     setPending(true);
 
     try {
-      // Timezone real do browser — necessário para query_calendar resolver
-      // "hoje"/"amanhã" corretamente (o NLU nunca recebe timezone, só um
-      // `now` em UTC — ver calendar-query.ts). Nunca persistido
-      // (localStorage/contexto global): recalculado a cada envio, mesmo
-      // padrão já usado por BrainDumpForm.tsx.
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const result = await sendConversationMessage(text, timezone);
       const { message, clearInput } = mapEntryResultToUiEffect(result);
@@ -214,9 +110,6 @@ export function ConversationPanel() {
         setText('');
       }
     } catch {
-      // A Server Action já faz catch estreito internamente — isto cobre
-      // só falha de transporte/framework na chamada em si. Nunca loga o
-      // texto do usuário nem detalhe da exceção.
       setMessages((prev) => [
         ...prev,
         { id: nextId(), role: 'assistant', kind: 'text', text: 'Algo deu errado. Tente novamente.' },
@@ -231,8 +124,6 @@ export function ConversationPanel() {
   }
 
   function handleVoiceTranscript(transcript: string) {
-    // Ditado nunca dispara ação sozinho: apenas substitui o campo editável.
-    // O usuário vê/revisa o transcript e continua precisando tocar Enviar.
     setText(transcript.slice(0, 10000));
   }
 
@@ -243,7 +134,7 @@ export function ConversationPanel() {
       <h1 className="text-lg font-semibold text-ink">Conversa</h1>
 
       <div
-        ref={logRef}
+        ref={setLogElement}
         role="log"
         aria-live="polite"
         className="flex max-h-96 scroll-smooth flex-col gap-3 overflow-y-auto"
@@ -256,7 +147,7 @@ export function ConversationPanel() {
               key={message.id}
               message={message}
               isLatestAssistant={isLatestAssistant}
-              anchorRef={isLatestAssistant ? latestAssistantRef : undefined}
+              anchorRef={isLatestAssistant ? setLatestAssistantElement : undefined}
             />
           );
         })}
@@ -286,7 +177,7 @@ function MessageBubble({
 }: {
   message: UiMessage;
   isLatestAssistant?: boolean;
-  anchorRef?: React.RefObject<HTMLDivElement | null>;
+  anchorRef?: (node: HTMLDivElement | null) => void;
 }) {
   const isUser = message.role === 'user';
 
@@ -307,12 +198,6 @@ function MessageBubble({
 }
 
 function ProposalPreview({ action }: { action: ProposedAction }) {
-  // Subfase 8 (preview claro da proposta de evento): `event` já chega
-  // com instante absoluto + timezone IANA validados — este componente só
-  // FORMATA (via buildEventProposalPreview, presentation-ui.ts), nunca
-  // recalcula "hoje"/"amanhã", nunca usa o timezone do browser/servidor.
-  // Nenhum dado interno (proposalId/stateId/googleEventId/token) chega
-  // até aqui — `action` é exatamente o `ProposedAction` já público.
   if (action.actionType === 'create_calendar_event') {
     const preview = buildEventProposalPreview(action.event);
 
@@ -338,8 +223,6 @@ function ProposalPreview({ action }: { action: ProposedAction }) {
   }
 
   if (action.actionType !== 'create_local_task') {
-    // Guarda de tipo defensiva — inalcançável hoje (ProposedAction só tem
-    // as duas variantes já tratadas acima).
     return null;
   }
 
