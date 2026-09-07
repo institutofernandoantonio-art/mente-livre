@@ -5,7 +5,7 @@ import {
   VOICE_MAX_DURATION_MS,
   estimateVoiceCostMicrousd,
 } from '@/lib/voice/limits';
-import { VoiceSttProviderError } from '@/lib/voice/openai-stt-provider';
+import { isVoiceSttProviderError } from '@/lib/voice/openai-stt-provider';
 import { getSpeechToTextProvider, isServerVoiceSttEnabled } from '@/lib/voice/stt';
 import { finalizeVoiceUsage, getVoiceUsageSummary, reserveVoiceUsage } from '@/lib/voice/usage';
 
@@ -40,43 +40,85 @@ function errorResponse(message: string, status: number, code: string) {
 }
 
 function providerErrorResponse(error: unknown) {
-  if (!(error instanceof VoiceSttProviderError)) {
-    return errorResponse('Não consegui transcrever sua fala agora. Tente novamente.', 502, 'provider_error');
+  if (!isVoiceSttProviderError(error)) {
+    return errorResponse('Falha interna ao processar a resposta da transcrição.', 502, 'provider_internal');
   }
 
   switch (error.category) {
     case 'unauthorized':
       return errorResponse(
-        'A chave de transcrição foi recusada pela OpenAI. Verifique a credencial configurada.',
+        'A chave de transcrição foi recusada pela OpenAI (HTTP 401).',
         502,
         'provider_unauthorized',
       );
+    case 'billing':
+      return errorResponse(
+        'A OpenAI recusou a chamada por configuração de cobrança ou crédito do projeto (HTTP 402).',
+        502,
+        'provider_billing',
+      );
     case 'forbidden':
       return errorResponse(
-        'A chave de transcrição não tem permissão para esta chamada na OpenAI.',
+        'A chave de transcrição não tem permissão para esta chamada na OpenAI (HTTP 403).',
         502,
         'provider_forbidden',
       );
+    case 'model_unavailable':
+      return errorResponse(
+        'O modelo ou endpoint de transcrição não está disponível para este projeto (HTTP 404).',
+        502,
+        'provider_model_unavailable',
+      );
     case 'rate_limited':
       return errorResponse(
-        'A OpenAI bloqueou a chamada por limite de uso ou cota do projeto.',
+        'A OpenAI bloqueou a chamada por limite de uso ou cota do projeto (HTTP 429).',
         502,
         'provider_rate_limited',
       );
     case 'bad_request':
       return errorResponse(
-        'A OpenAI recusou o formato ou os parâmetros do áudio enviado.',
+        `A OpenAI recusou o formato ou os parâmetros do áudio${error.httpStatus ? ` (HTTP ${error.httpStatus})` : ''}.`,
         502,
         'provider_bad_request',
       );
     case 'unavailable':
       return errorResponse(
-        'O serviço de transcrição da OpenAI está temporariamente indisponível.',
+        `O serviço de transcrição da OpenAI está temporariamente indisponível${error.httpStatus ? ` (HTTP ${error.httpStatus})` : ''}.`,
         502,
         'provider_unavailable',
       );
+    case 'timeout':
+      return errorResponse(
+        'A chamada para transcrição excedeu o tempo máximo de 25 segundos.',
+        502,
+        'provider_timeout',
+      );
+    case 'network':
+      return errorResponse(
+        'O servidor do Mente Livre não conseguiu conectar ao serviço de transcrição da OpenAI.',
+        502,
+        'provider_network',
+      );
+    case 'invalid_response':
+      return errorResponse(
+        'A OpenAI respondeu à transcrição, mas em um formato inesperado.',
+        502,
+        'provider_invalid_response',
+      );
+    case 'empty_transcript':
+      return errorResponse(
+        'A OpenAI recebeu o áudio, mas devolveu uma transcrição vazia.',
+        502,
+        'provider_empty_transcript',
+      );
+    case 'http_error':
+      return errorResponse(
+        `A OpenAI recusou a chamada de transcrição${error.httpStatus ? ` (HTTP ${error.httpStatus})` : ''}.`,
+        502,
+        'provider_http_error',
+      );
     default:
-      return errorResponse('Não consegui transcrever sua fala agora. Tente novamente.', 502, 'provider_error');
+      return errorResponse('Falha interna ao processar a resposta da transcrição.', 502, 'provider_internal');
   }
 }
 
