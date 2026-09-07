@@ -8,6 +8,7 @@ import { sendConversationMessage } from '@/lib/conversation/actions';
 import { getConversationPresentationState } from '@/lib/conversation/presentation';
 import type { ProposedAction } from '@/lib/conversation/proposed-action';
 import { VoiceDictationButton } from './VoiceDictationButton';
+import { resolveScheduleTask } from './schedule-task-action';
 import {
   mapPresentationBootstrap,
   mapEntryResultToUiEffect,
@@ -26,11 +27,12 @@ function nextId(): string {
   return `msg-${Math.random().toString(36).slice(2)}`;
 }
 
-export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTitle?: string | null }) {
+export function ConversationPanel() {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [text, setText] = useState('');
   const [pending, setPending] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
+  const [scheduleTaskTitle, setScheduleTaskTitle] = useState<string | null>(null);
   const [logElement, setLogElement] = useState<HTMLDivElement | null>(null);
   const [latestAssistantElement, setLatestAssistantElement] = useState<HTMLDivElement | null>(null);
 
@@ -59,6 +61,21 @@ export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTi
     }
 
     void bootstrap();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const taskId = new URLSearchParams(window.location.search).get('agendarTask')?.trim() ?? '';
+    if (!taskId) return () => { active = false; };
+
+    resolveScheduleTask(taskId).then((result) => {
+      if (!active) return;
+      setScheduleTaskTitle(result.status === 'ok' ? result.title : null);
+    });
+
     return () => {
       active = false;
     };
