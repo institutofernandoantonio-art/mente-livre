@@ -97,9 +97,9 @@ check('mostra consumo mensal e teto interno quando disponível', () => {
 });
 
 check('atualiza orçamento exibido também após falha de transcrição', () => {
-  assert.match(voiceSource, /const refreshUsage = useCallback/);
+  assert.match(voiceSource, /async function fetchVoiceUsageSummary/);
   assert.match(voiceSource, /let usageReturnedByTranscription = false/);
-  assert.match(voiceSource, /if \(!usageReturnedByTranscription\) \{\s*await refreshUsage\(\);\s*\}/);
+  assert.match(voiceSource, /if \(!usageReturnedByTranscription\) \{\s*const latestUsage = await fetchVoiceUsageSummary\(\);\s*if \(mountedRef\.current && latestUsage\) setUsage\(latestUsage\);\s*\}/);
 });
 
 check('componente de voz continua separado das ações de agenda', () => {
