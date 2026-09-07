@@ -33,12 +33,17 @@ check('Hoje lê somente tarefas confirmadas e pendentes do usuário autenticado'
   assert.ok(!hoje.includes('service_role'));
 });
 
-check('Hoje usa apenas prioridades explícitas e limita o foco a três itens', () => {
+check('Hoje usa apenas prioridades explícitas e limita o foco a uma missão mais três prioridades', () => {
   assert.ok(hoje.includes('task.priority !== null'));
-  assert.ok(hoje.includes('.slice(0, 3)'));
+  assert.ok(hoje.includes('.slice(0, 4)'));
   assert.ok(hoje.includes("alta: 0"));
   assert.ok(hoje.includes("média: 1"));
   assert.ok(hoje.includes("baixa: 2"));
+});
+
+check('Hoje numera corretamente as prioridades depois da missão sugerida', () => {
+  assert.ok(hoje.includes("index === 0 ? 'Missão principal sugerida' : `Prioridade ${index}`"));
+  assert.ok(!hoje.includes('`Prioridade ${index + 1}`'));
 });
 
 check('Hoje marca a primeira prioridade como sugestão, não como decisão automática', () => {
