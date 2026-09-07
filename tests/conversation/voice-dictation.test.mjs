@@ -102,6 +102,22 @@ check('atualiza orçamento exibido também após falha de transcrição', () => 
   assert.match(voiceSource, /if \(!usageReturnedByTranscription\) \{\s*const latestUsage = await fetchVoiceUsageSummary\(\);\s*if \(mountedRef\.current && latestUsage\) setUsage\(latestUsage\);\s*\}/);
 });
 
+check('cancelar gravação impede envio ao STT e informa o usuário', () => {
+  assert.match(voiceSource, /const recordingCancelledRef = useRef\(false\)/);
+  assert.match(voiceSource, /function cancelRecording\(\)/);
+  assert.match(voiceSource, /recordingCancelledRef\.current = true/);
+  assert.match(voiceSource, /currentRequestIdRef\.current = null/);
+  assert.match(voiceSource, /if \(cancelled\) \{[\s\S]*?Nenhum áudio foi enviado para transcrição[\s\S]*?return;/);
+  assert.match(voiceSource, />\s*Cancelar\s*</);
+});
+
+check('mostra o microfone realmente selecionado após permissão', () => {
+  assert.match(voiceSource, /stream\.getAudioTracks\(\)\[0\]/);
+  assert.match(voiceSource, /audioTrack\?\.label\.trim\(\)/);
+  assert.match(voiceSource, /Microfone em uso/);
+  assert.match(voiceSource, /Último microfone usado/);
+});
+
 check('componente de voz continua separado das ações de agenda', () => {
   assert.ok(!voiceSource.includes('sendConversationMessage'));
   assert.ok(!voiceSource.includes('Google'));
