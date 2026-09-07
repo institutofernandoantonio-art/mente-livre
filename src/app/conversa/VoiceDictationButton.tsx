@@ -26,8 +26,6 @@ type VoiceApiPayload = {
 
 type VoiceState = 'idle' | 'requesting' | 'recording' | 'transcribing';
 
-// Pequena margem para o callback de stop do navegador não ultrapassar o
-// limite server-side de 20s por atraso do event loop.
 const AUTO_STOP_MS = VOICE_MAX_DURATION_MS - 500;
 
 function requestId(): string {
@@ -191,9 +189,6 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
         setMessage('Não consegui enviar o áudio para transcrição. Confira sua conexão e tente novamente.');
       }
     } finally {
-      // Em falhas o endpoint de transcrição não inclui o resumo mensal. Como a
-      // reserva conservadora pode ter sido contabilizada, atualizamos o painel
-      // imediatamente para não exibir orçamento antigo após uma tentativa.
       if (!usageReturnedByTranscription) {
         const latestUsage = await fetchVoiceUsageSummary();
         if (mountedRef.current && latestUsage) setUsage(latestUsage);
@@ -243,9 +238,6 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
       };
 
       recorder.onerror = () => {
-        // Alguns navegadores disparam `stop` depois de `error`. Marcar a
-        // captura como falha e invalidar o request_id impede que esse `stop`
-        // transforme áudio parcial em uma chamada paga ao STT.
         recordingFailedRef.current = true;
         recordingCancelledRef.current = false;
         currentRequestIdRef.current = null;
@@ -376,15 +368,17 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
         </p>
       )}
 
-      {usage && (
-        <p className="text-[11px] leading-relaxed text-ink-soft">
-          Voz neste mês: {usage.minutes.toLocaleString('pt-BR')} min · ~{formatUsd(usage.estimatedCostUsd)} · proteção de orçamento {formatUsd(usage.reservedBudgetUsd)} / {formatUsd(usage.internalLimitUsd)}.
+      <details className="text-[11px] text-ink-soft">
+        <summary className="cursor-pointer select-none">Uso e privacidade da voz</summary>
+        {usage && (
+          <p className="mt-2 leading-relaxed">
+            Voz neste mês: {usage.minutes.toLocaleString('pt-BR')} min · ~{formatUsd(usage.estimatedCostUsd)} · proteção de orçamento {formatUsd(usage.reservedBudgetUsd)} / {formatUsd(usage.internalLimitUsd)}.
+          </p>
+        )}
+        <p className="mt-2 leading-relaxed">
+          Ao tocar em Falar, o Mente Livre captura no máximo 20 segundos e envia o áudio temporariamente por HTTPS para transcrição. O áudio bruto não é salvo no Supabase nem em logs; só o texto volta para você revisar antes de Enviar.
         </p>
-      )}
-
-      <p className="text-[11px] leading-relaxed text-ink-soft">
-        Ao tocar em Falar, o Mente Livre captura no máximo 20 segundos e envia o áudio temporariamente por HTTPS para transcrição. O áudio bruto não é salvo no Supabase nem em logs; só o texto volta para você revisar antes de Enviar.
-      </p>
+      </details>
     </div>
   );
 }
