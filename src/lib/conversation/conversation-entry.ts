@@ -18,6 +18,7 @@ import { prepareCalendarRescheduleNluInput } from './calendar-reschedule-nlu-inp
 import { applyCreateEventDefaults } from './create-event-defaults';
 import { normalizeCreateTaskRelativeDay } from './create-task-temporal-normalization';
 import { normalizeConversationInput } from './conversation-input-normalization';
+import { parseExplicitCreateTaskInput } from './explicit-create-task-input';
 
 export type ConversationEntryResult =
   | { status: 'clarification_required'; question: string }
@@ -107,6 +108,18 @@ function translateProposalResult(result: ProposalTurnResult): ConversationEntryR
 }
 
 async function handleFirstMessage(text: string, now: number, timezone: string): Promise<ConversationEntryResult> {
+  const explicitTask = parseExplicitCreateTaskInput(text);
+  if (explicitTask !== null) {
+    const withEventDefaults = applyCreateEventDefaults(explicitTask);
+    const intent = normalizeCreateTaskRelativeDay(withEventDefaults, now, timezone);
+    const expirations = {
+      clarificationExpiresAt: getClarificationExpiresAt(now),
+      proposalExpiresAt: getProposalExpiresAt(now),
+    };
+    const result = await resolveFirstConversationalTurn(intent, now, expirations, timezone);
+    return translateFirstTurnResult(result);
+  }
+
   const prepared = prepareCalendarRescheduleNluInput(text);
   const extraction = await extractStructuredIntent(prepared.text, now);
 
