@@ -8,8 +8,14 @@ const serverPath = fileURLToPath(
 const uiPath = fileURLToPath(
   new URL('../../src/app/entrada/UpcomingCalendarEvents.tsx', import.meta.url),
 );
+const entryPagePath = fileURLToPath(
+  new URL('../../src/app/entrada/page.tsx', import.meta.url),
+);
 const conversationPagePath = fileURLToPath(
   new URL('../../src/app/conversa/page.tsx', import.meta.url),
+);
+const calendarWebUrlPath = fileURLToPath(
+  new URL('../../src/lib/google/calendar-web-url.ts', import.meta.url),
 );
 const voicePath = fileURLToPath(
   new URL('../../src/app/conversa/VoiceDictationButton.tsx', import.meta.url),
@@ -17,7 +23,9 @@ const voicePath = fileURLToPath(
 
 const server = readFileSync(serverPath, 'utf8');
 const ui = readFileSync(uiPath, 'utf8');
+const entryPage = readFileSync(entryPagePath, 'utf8');
 const conversationPage = readFileSync(conversationPagePath, 'utf8');
+const calendarWebUrl = readFileSync(calendarWebUrlPath, 'utf8');
 const voice = readFileSync(voicePath, 'utf8');
 
 const results = [];
@@ -88,9 +96,24 @@ check('401/403 exigem reconexão em vez de simular agenda vazia', () => {
   assert.ok(ui.includes('Reconecte o Google Calendar'));
 });
 
+check('atalhos da agenda usam a conta autenticada no Mente Livre', () => {
+  assert.ok(conversationPage.includes('data?.claims.email'));
+  assert.ok(conversationPage.includes('buildGoogleCalendarAccountUrl(email)'));
+  assert.ok(entryPage.includes('buildGoogleCalendarAccountUrl(email ?? "")'));
+  assert.ok(ui.includes('calendarUrl'));
+  assert.ok(ui.includes('accountEmail'));
+  assert.ok(ui.includes('buildGoogleCalendarAccountUrl(accountEmail, event.htmlLink)'));
+});
+
+check('seletor do Google recebe o e-mail da sessão e continua somente para calendar.google.com', () => {
+  assert.ok(calendarWebUrl.includes("new URL('https://accounts.google.com/AccountChooser')"));
+  assert.ok(calendarWebUrl.includes("chooser.searchParams.set('Email', normalizedEmail)"));
+  assert.ok(calendarWebUrl.includes("chooser.searchParams.set('continue', target.toString())"));
+  assert.ok(calendarWebUrl.includes("target.hostname !== 'calendar.google.com'"));
+});
+
 check('UI oferece acesso ao evento e ao Google Calendar sem criar segunda fonte de verdade', () => {
   assert.ok(ui.includes('event.htmlLink'));
-  assert.ok(ui.includes('https://calendar.google.com/calendar/u/0/r'));
   assert.ok(!ui.includes('localStorage'));
   assert.ok(!ui.includes('sessionStorage'));
 });
@@ -103,9 +126,9 @@ check('leitura conversacional usa janela explícita e limite controlado', () => 
 });
 
 check('conversa mostra próximos compromissos e atalho destacado para a agenda', () => {
-  assert.ok(conversationPage.includes('<UpcomingCalendarEvents />'));
+  assert.ok(conversationPage.includes('<UpcomingCalendarEvents calendarUrl={calendarUrl} accountEmail={email} />'));
   assert.ok(conversationPage.includes('Abrir Google Agenda'));
-  assert.ok(conversationPage.includes('https://calendar.google.com/calendar/u/0/r'));
+  assert.ok(conversationPage.includes('href={calendarUrl}'));
 });
 
 check('aviso de proximidade aparece apenas para compromissos até 60 minutos', () => {
