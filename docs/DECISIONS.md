@@ -789,3 +789,48 @@ novo provedor de STT, segredo, dependência, migration ou armazenamento de
 **Fora desta fatia:** envio automático ao terminar de falar, modo mãos
 livres contínuo, wake word, resposta falada/TTS, gravação de áudio, serviço
 próprio de STT e mudança de `brain_dumps.source` para `voice`.
+
+---
+
+### Fase 9B — STT server-side com isolamento de custo
+
+**Data:** 2026-09-06.
+**Fase:** Fase 9 — Voz (segunda fatia, ainda bloqueada para produção até
+os gates externos serem concluídos).
+**Problema observado em teste real:** o Web Speech funcionou no iPhone +
+Safari, mas no Mac + Safari abriu o microfone sem entregar transcrição de
+forma confiável. A API de reconhecimento do navegador não será tratada
+como base definitiva multiplataforma.
+**Decisão:** capturar apenas um trecho curto via `MediaRecorder`, enviar o
+áudio por HTTPS para uma rota autenticada do Mente Livre e transcrever no
+servidor por meio de um contrato `SpeechToTextProvider`. O MVP permite
+somente o provider OpenAI com `gpt-transcribe`; trocar modelo/provedor exige
+mudança explícita de código e revisão, para evitar aumento silencioso de
+custo. O texto retornado apenas preenche o textarea atual; nunca é enviado
+automaticamente ao dispatcher e toda a lógica de agenda permanece
+inalterada.
+**Privacidade:** áudio somente em memória durante a requisição; sem
+persistência de áudio, transcript ou conteúdo de agenda na tabela de uso e
+sem logs de conteúdo. Respostas de transcrição usam `Cache-Control:
+no-store`.
+**Controle interno de custo:** máximo de 20 segundos e 2 MB por áudio; uma
+reserva conservadora é feita antes de qualquer chamada paga; teto global de
+reservas de US$ 4,00 por mês-calendário UTC para todo o Mente Livre; lock
+transacional mensal; idempotência por `(user_id, request_id)`; no máximo 6
+novas reservas por minuto por usuário; nenhum retry automático no cliente
+ou provider. A RPC pública aceita somente `request_id`; provider, modelo,
+preço e reserva ficam fixos na função privilegiada do banco.
+**Isolamento externo obrigatório:** antes de produção deve existir um
+projeto OpenAI dedicado exclusivamente ao Mente Livre, com chave exclusiva
+e limite rígido externo de US$ 5,00/mês. A chave não pode ser reutilizada
+por nenhum outro app. Qualquer aumento de teto, duração, rate limit, retry,
+modelo ou provedor exige nova autorização explícita do dono.
+**Fail-closed:** `MENTE_LIVRE_STT_ENABLED` permanece diferente de `true`
+até os gates externos e a migration de consumo estarem concluídos.
+**Acompanhamento:** a aplicação mede chamadas concluídas, minutos
+estimados, custo estimado e orçamento reservado; a contabilização oficial
+deve ser conferida também no projeto OpenAI dedicado.
+**Motivo:** obter transcrição confiável em iPhone e Mac sem depender da
+implementação inconsistente do navegador, mantendo custo previsível,
+segredo somente no servidor e possibilidade de trocar o motor de STT no
+futuro sem refazer a experiência de voz.
