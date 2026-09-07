@@ -4,6 +4,7 @@ import { buttonVariants } from "@/components/ui/Button";
 import { createClient } from "@/lib/supabase/server";
 import { logout } from "@/lib/supabase/actions";
 import { connectGoogleCalendar } from "@/lib/google/calendar";
+import { buildGoogleCalendarAccountUrl } from "@/lib/google/calendar-web-url";
 import { BrainDumpForm } from "./BrainDumpForm";
 import { UpcomingCalendarEvents } from "./UpcomingCalendarEvents";
 
@@ -20,6 +21,7 @@ export default async function EntradaPage({
   const supabase = await createClient();
   const { data } = await supabase.auth.getClaims();
   const email = typeof data?.claims.email === "string" ? data.claims.email : undefined;
+  const calendarUrl = buildGoogleCalendarAccountUrl(email ?? "");
   const { calendar } = await searchParams;
 
   return (
@@ -51,7 +53,7 @@ export default async function EntradaPage({
           <BrainDumpForm />
         </Card>
 
-        {email && <UpcomingCalendarEvents />}
+        {email && <UpcomingCalendarEvents calendarUrl={calendarUrl} accountEmail={email} />}
 
         <div className="mt-6 flex flex-col items-center gap-3">
           <Link href="/conversa" className={buttonVariants("secondary")}>

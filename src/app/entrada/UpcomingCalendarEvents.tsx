@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { getUpcomingGoogleCalendarEvents } from '@/lib/google/upcoming-events';
+import { buildGoogleCalendarAccountUrl } from '@/lib/google/calendar-web-url';
 
 type CalendarEvent = {
   title: string;
@@ -18,7 +19,12 @@ type LoadState =
   | { status: 'permissions'; events: CalendarEvent[] }
   | { status: 'error'; events: CalendarEvent[] };
 
-export function UpcomingCalendarEvents() {
+type UpcomingCalendarEventsProps = {
+  calendarUrl: string;
+  accountEmail: string;
+};
+
+export function UpcomingCalendarEvents({ calendarUrl, accountEmail }: UpcomingCalendarEventsProps) {
   const [state, setState] = useState<LoadState>({ status: 'loading', events: [] });
   const [now, setNow] = useState(() => Date.now());
   const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
@@ -66,7 +72,7 @@ export function UpcomingCalendarEvents() {
             <p className="mt-1 text-xs text-ink-soft">O que vem a seguir na sua agenda.</p>
           </div>
           <a
-            href="https://calendar.google.com/calendar/u/0/r"
+            href={calendarUrl}
             target="_blank"
             rel="noreferrer"
             className="text-xs font-medium text-brand-600 hover:underline"
@@ -117,7 +123,7 @@ export function UpcomingCalendarEvents() {
                 <li key={`${event.start}-${event.title}-${index}`}>
                   {event.htmlLink ? (
                     <a
-                      href={event.htmlLink}
+                      href={buildGoogleCalendarAccountUrl(accountEmail, event.htmlLink)}
                       target="_blank"
                       rel="noreferrer"
                       aria-label={`Abrir ${event.title} no Google Calendar`}
