@@ -26,10 +26,6 @@ function nextId(): string {
   return `msg-${Math.random().toString(36).slice(2)}`;
 }
 
-function isExplicitCalendarCommand(text: string): boolean {
-  return /^(agende|marque|remarque|mude|cancele)\b/iu.test(text.trim());
-}
-
 export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTitle?: string | null }) {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [text, setText] = useState('');
@@ -87,10 +83,10 @@ export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTi
     const trimmed = displayText.trim();
     if (trimmed.length === 0) return;
 
-    const backendText =
-      scheduleTaskTitle && !isExplicitCalendarCommand(trimmed)
-        ? `Agende ${scheduleTaskTitle} hoje às ${trimmed}`
-        : trimmed;
+    const alreadyExplicit = /^(agende|marque|remarque|mude|cancele)\b/iu.test(trimmed);
+    const backendText = scheduleTaskTitle && !alreadyExplicit
+      ? `Agende ${scheduleTaskTitle} hoje às ${trimmed}`
+      : trimmed;
 
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', kind: 'text', text: displayText }]);
     setPending(true);
