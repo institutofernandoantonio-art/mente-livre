@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { getRuntimeState } from './runtime-state-storage';
+import { consumeRuntimeState, getRuntimeState } from './runtime-state-storage';
 import {
   resolveFirstConversationalTurn,
   resolveClarificationConversationalTurn,
@@ -16,62 +16,6 @@ import { handleCalendarCancellationRuntime, startCalendarCancellation } from './
 import { handleCalendarRescheduleRuntime, startCalendarReschedule } from './calendar-reschedule-flow';
 import { prepareCalendarRescheduleNluInput } from './calendar-reschedule-nlu-input';
 import { applyCreateEventDefaults } from './create-event-defaults';
-
-// ============================================================================
-// Conversation entry — dispatcher server-side único da conversa.
-//
-// O fluxo padrão continua dividido em clarification-turn, proposal-turn e
-// NLU+first-turn. Ações mutáveis sobre compromissos REAIS do Google Calendar
-// (cancelar/remarcar) são interceptadas aqui por fatias especializadas:
-// ambas resolvem o alvo sem expor googleEventId e revalidam o evento antes
-// da mutação. Este arquivo só roteia; matching, confirmação, CAS e Google
-// write vivem nos módulos específicos.
-//
-// --- Regra central: zero fallback entre handlers -------------------------
-//
-// A leitura classificadora deste módulo (`getRuntimeState(now)`) decide qual
-// família será chamada. Para uma clarification encontrada, os handlers de
-// Calendar reconhecem SOMENTE os próprios marcadores internos; qualquer
-// outro state devolve `not_applicable` e segue para o fluxo padrão. Nunca há
-// NLU/fallback depois de um runtime found.
-//
-// --- Regra formal de autorização de NLU -----------------------------------
-//
-// `extractStructuredIntent` (IA) só é chamada quando a leitura inicial
-// retornou `not_found` OU `expired` — nunca depois de `found`/`error`, e
-// nunca como segunda tentativa após um handler. `cancel_event` e
-// `reschedule_event` seguem para suas fatias especializadas sem segunda NLU.
-//
-// Frases inequívocas de remarcação que contêm horário de origem + destino
-// passam antes por `prepareCalendarRescheduleNluInput`: a CÓPIA enviada à
-// NLU omite só o horário antigo para que o guard temporal compare o destino
-// correto. O texto ORIGINAL continua sendo passado a startCalendarReschedule
-// e é a fonte usada para localizar o evento. Se a NLU preparada não voltar
-// como reschedule_event, o fluxo falha fechado em `needs_input` e nunca usa
-// o texto transformado para outra ação.
-//
-// --- Duração padrão de create_event --------------------------------------
-//
-// Depois da extração e antes da Clarification Policy, `create_event` passa
-// por `applyCreateEventDefaults`: duração explicitamente dita pelo usuário
-// é preservada; um intervalo fixo usa o próprio start/end; sem duração
-// explícita, a regra de produto preenche 60 minutos. Isso elimina a pergunta
-// "quanto tempo?" sem eliminar a proposta nem a confirmação explícita antes
-// do write no Google Calendar.
-//
-// --- `now` / timezone -----------------------------------------------------
-//
-// `now` é recebido explicitamente desta camada interna e o browser nunca o
-// fornece. `timezone` vem do browser como contexto civil e nunca como dado
-// de identidade/autorização. A validação continua nas camadas que realmente
-// usam o valor.
-//
-// --- Segurança -------------------------------------------------------------
-//
-// Recebe SÓ `text`/`now`/`timezone` — nunca `userId`/`stateId`/`proposalId`/
-// client Supabase/admin. `ConversationEntryResult` nunca expõe ids internos
-// nem googleEventId.
-// ============================================================================
 
 export type ConversationEntryResult =
   | { status: 'clarification_required'; question: string }
@@ -98,6 +42,17 @@ function isNonBlankString(value: unknown): value is string {
 
 function isValidNow(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value);
+}
+
+/**
+ * Detecta apenas novos comandos inequívocos de agenda. A exigência de
+ * conteúdo depois do verbo evita tratar respostas curtas como "cancele" ou
+ * "mude" como uma nova intenção. Esse guard existe para impedir que uma
+ * pergunta/confirmacao antiga capture um pedido novo completo do usuário.
+ */
+function isExplicitNewCalendarCommand(text: string): boolean {
+  const normalized = text.trim().toLocaleLowerCase('pt-BR');
+  return /^(agende|marque|mude|remarque|cancele)\s+\S.{2,}$/u.test(normalized);
 }
 
 function translateFirstTurnResult(result: FirstTurnResult): ConversationEntryResult {
@@ -179,7 +134,11 @@ function translateProposalResult(result: ProposalTurnResult): ConversationEntryR
   }
 }
 
-async function handleFirstMessage(text: string, now: number, timezone: string): Promise<ConversationEntryResult> {
+async function handleFirstMessage(
+  text: string,
+  now: number,
+  timezone: string,
+): Promise<ConversationEntryResult> {
   const prepared = prepareCalendarRescheduleNluInput(text);
   const extraction = await extractStructuredIntent(prepared.text, now);
 
@@ -189,9 +148,6 @@ async function handleFirstMessage(text: string, now: number, timezone: string): 
     case 'error':
       return { status: 'error' };
     case 'extracted': {
-      // Texto transformado existe SOMENTE para destravar a interpretação do
-      // destino em uma remarcação com dois horários. Nunca permitimos que
-      // essa cópia gere outra família de ação.
       if (prepared.transformed && extraction.intent.intentType !== 'reschedule_event') {
         return { status: 'needs_input' };
       }
@@ -214,6 +170,23 @@ async function handleFirstMessage(text: string, now: number, timezone: string): 
   }
 }
 
+async function interruptPendingStateAndHandleNewCommand(
+  stateId: string,
+  text: string,
+  now: number,
+  timezone: string,
+): Promise<ConversationEntryResult> {
+  const consumed = await consumeRuntimeState(stateId, now);
+  switch (consumed.status) {
+    case 'consumed':
+      return handleFirstMessage(text, now, timezone);
+    case 'conflict':
+      return { status: 'conflict' };
+    case 'error':
+      return { status: 'error' };
+  }
+}
+
 export async function handleConversationMessage(
   text: string,
   now: number,
@@ -233,6 +206,19 @@ export async function handleConversationMessage(
       return { status: 'error' };
 
     case 'found':
+      // Um novo comando completo e inequívoco invalida a pergunta/proposta
+      // anterior por CAS e reentra no fluxo normal de NLU. Isso evita que
+      // "Mude o compromisso..." seja tratado como resposta a "sim/não" ou
+      // "quanto tempo?". Se houver corrida entre dispositivos, falha fechado.
+      if (isExplicitNewCalendarCommand(text)) {
+        return interruptPendingStateAndHandleNewCommand(
+          current.value.stateId,
+          text,
+          now,
+          timezone,
+        );
+      }
+
       if (current.value.kind === 'clarification') {
         const calendarCancellation = await handleCalendarCancellationRuntime(current.value, text, now);
         if (calendarCancellation.status === 'handled') {
