@@ -38,16 +38,26 @@ check('chave OpenAI é dedicada e só existe no servidor', () => {
   assert.ok(!provider.includes('NEXT_PUBLIC_OPENAI'));
 });
 
-check('diagnóstico do provider expõe só categoria derivada do status HTTP', () => {
+check('diagnóstico do provider expõe só categoria e status, nunca corpo de erro', () => {
   assert.match(provider, /categoryFromStatus\(status: number\)/);
   assert.match(provider, /response\.status/);
   assert.match(provider, /VoiceSttProviderError/);
+  assert.match(provider, /isVoiceSttProviderError/);
+  assert.match(provider, /'timeout'/);
+  assert.match(provider, /'network'/);
+  assert.match(provider, /'invalid_response'/);
+  assert.match(provider, /'empty_transcript'/);
   assert.ok(!provider.includes('await response.text()'));
-  assert.ok(!provider.includes('await response.json()') || provider.includes('const payload: unknown = await response.json()'));
+  assert.ok(!provider.includes('response.headers'));
+  assert.ok(!route.includes('response.text()'));
   assert.match(route, /provider_unauthorized/);
   assert.match(route, /provider_forbidden/);
   assert.match(route, /provider_rate_limited/);
   assert.match(route, /provider_bad_request/);
+  assert.match(route, /provider_timeout/);
+  assert.match(route, /provider_network/);
+  assert.match(route, /provider_invalid_response/);
+  assert.match(route, /provider_empty_transcript/);
 });
 
 check('configuração do provider falha antes da reserva financeira', () => {
