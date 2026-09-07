@@ -16,6 +16,7 @@ import { handleCalendarCancellationRuntime, startCalendarCancellation } from './
 import { handleCalendarRescheduleRuntime, startCalendarReschedule } from './calendar-reschedule-flow';
 import { prepareCalendarRescheduleNluInput } from './calendar-reschedule-nlu-input';
 import { applyCreateEventDefaults } from './create-event-defaults';
+import { normalizeCreateTaskRelativeDay } from './create-task-temporal-normalization';
 
 export type ConversationEntryResult =
   | { status: 'clarification_required'; question: string }
@@ -161,7 +162,8 @@ async function handleFirstMessage(
         return startCalendarReschedule(extraction.intent, text, now, timezone);
       }
 
-      const intent = applyCreateEventDefaults(extraction.intent);
+      const withEventDefaults = applyCreateEventDefaults(extraction.intent);
+      const intent = normalizeCreateTaskRelativeDay(withEventDefaults, now, timezone);
       const expirations = {
         clarificationExpiresAt: getClarificationExpiresAt(now),
         proposalExpiresAt: getProposalExpiresAt(now),
