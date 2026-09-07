@@ -1,10 +1,11 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { Button } from '@/components/ui/Button';
+import { Button, buttonVariants } from '@/components/ui/Button';
 import { completeTask } from '@/app/tarefas/actions';
 import { setTaskPriority, type TaskPriorityInput } from '@/app/tarefas/priority-actions';
 import { getTodayChecklist, type TodayChecklistResult } from './checklist-actions';
@@ -120,6 +121,15 @@ export function TodayChecklist() {
                 >
                   {isBusy ? 'Salvando...' : 'Feito'}
                 </Button>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2 border-t border-mist-200 pt-3">
+                <Link
+                  href={`/conversa?agendarTask=${encodeURIComponent(item.id)}`}
+                  className={buttonVariants('secondary', 'px-3 py-2 text-sm')}
+                >
+                  Agendar horário
+                </Link>
               </div>
 
               <div className="mt-3 border-t border-mist-200 pt-3">
