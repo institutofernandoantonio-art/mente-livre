@@ -84,7 +84,8 @@ export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTi
     if (trimmed.length === 0) return;
 
     const alreadyExplicit = /^(agende|marque|remarque|mude|cancele)\b/iu.test(trimmed);
-    const backendText = scheduleTaskTitle && !alreadyExplicit
+    const isConfirmation = /^(sim|n[aã]o)$/iu.test(trimmed);
+    const backendText = scheduleTaskTitle && !alreadyExplicit && !isConfirmation
       ? `Agende ${scheduleTaskTitle} hoje às ${trimmed}`
       : trimmed;
 
@@ -96,7 +97,7 @@ export function ConversationPanel({ scheduleTaskTitle = null }: { scheduleTaskTi
       const result = await sendConversationMessage(backendText, timezone);
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
-      if (clearInput || displayText === 'sim' || displayText === 'não') {
+      if (clearInput || isConfirmation) {
         setText('');
       }
     } catch {
