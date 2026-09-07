@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { VOICE_MAX_AUDIO_BYTES, VOICE_MAX_DURATION_MS } from '@/lib/voice/limits';
 
@@ -91,29 +91,29 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
   const [message, setMessage] = useState<string>('A fala vira texto para você revisar antes de enviar.');
   const [usage, setUsage] = useState<VoiceUsageSummary | null>(null);
 
+  const refreshUsage = useCallback(async () => {
+    try {
+      const response = await fetch('/api/voice/usage', { cache: 'no-store' });
+      if (!response.ok) return;
+      const payload: unknown = await response.json();
+      if (
+        mountedRef.current &&
+        typeof payload === 'object' &&
+        payload !== null &&
+        'usage' in payload &&
+        typeof payload.usage === 'object' &&
+        payload.usage !== null
+      ) {
+        setUsage(payload.usage as VoiceUsageSummary);
+      }
+    } catch {
+      // O resumo é informativo; falha nele nunca bloqueia a conversa.
+    }
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
-
-    async function loadUsage() {
-      try {
-        const response = await fetch('/api/voice/usage', { cache: 'no-store' });
-        if (!response.ok) return;
-        const payload: unknown = await response.json();
-        if (
-          typeof payload === 'object' &&
-          payload !== null &&
-          'usage' in payload &&
-          typeof payload.usage === 'object' &&
-          payload.usage !== null
-        ) {
-          setUsage(payload.usage as VoiceUsageSummary);
-        }
-      } catch {
-        // O resumo é informativo; falha nele nunca bloqueia a conversa.
-      }
-    }
-
-    void loadUsage();
+    void refreshUsage();
 
     return () => {
       mountedRef.current = false;
@@ -125,7 +125,7 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
       recorderRef.current = null;
       streamRef.current = null;
     };
-  }, []);
+  }, [refreshUsage]);
 
   function releaseCapture() {
     if (autoStopRef.current !== null) {
@@ -147,6 +147,8 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
     form.append('request_id', id);
     form.append('duration_ms', String(durationMs));
     form.append('audio', blob, `voice.${extensionForMime(type)}`);
+
+    let usageReturnedByTranscription = false;
 
     try {
       const response = await fetch('/api/voice/transcribe', {
@@ -170,7 +172,10 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
 
       if (mountedRef.current) {
         onTranscript(payload.text.slice(0, 10_000));
-        if (payload.usage) setUsage(payload.usage);
+        if (payload.usage) {
+          setUsage(payload.usage);
+          usageReturnedByTranscription = true;
+        }
         setMessage('Texto reconhecido. Revise antes de enviar.');
       }
     } catch {
@@ -178,6 +183,12 @@ export function VoiceDictationButton({ disabled, onTranscript }: VoiceDictationB
         setMessage('Não consegui enviar o áudio para transcrição. Confira sua conexão e tente novamente.');
       }
     } finally {
+      // Em falhas o endpoint de transcrição não inclui o resumo mensal. Como a
+      // reserva conservadora pode ter sido contabilizada, atualizamos o painel
+      // imediatamente para não exibir orçamento antigo após uma tentativa.
+      if (!usageReturnedByTranscription) {
+        await refreshUsage();
+      }
       if (mountedRef.current) setState('idle');
     }
   }
