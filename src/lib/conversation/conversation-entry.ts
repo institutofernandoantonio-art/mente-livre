@@ -15,6 +15,7 @@ import type { CalendarQueryResult } from './calendar-query';
 import { handleCalendarCancellationRuntime, startCalendarCancellation } from './calendar-cancel-flow';
 import { handleCalendarRescheduleRuntime, startCalendarReschedule } from './calendar-reschedule-flow';
 import { prepareCalendarRescheduleNluInput } from './calendar-reschedule-nlu-input';
+import { applyCreateEventDefaults } from './create-event-defaults';
 
 // ============================================================================
 // Conversation entry — dispatcher server-side único da conversa.
@@ -48,6 +49,15 @@ import { prepareCalendarRescheduleNluInput } from './calendar-reschedule-nlu-inp
 // e é a fonte usada para localizar o evento. Se a NLU preparada não voltar
 // como reschedule_event, o fluxo falha fechado em `needs_input` e nunca usa
 // o texto transformado para outra ação.
+//
+// --- Duração padrão de create_event --------------------------------------
+//
+// Depois da extração e antes da Clarification Policy, `create_event` passa
+// por `applyCreateEventDefaults`: duração explicitamente dita pelo usuário
+// é preservada; um intervalo fixo usa o próprio start/end; sem duração
+// explícita, a regra de produto preenche 60 minutos. Isso elimina a pergunta
+// "quanto tempo?" sem eliminar a proposta nem a confirmação explícita antes
+// do write no Google Calendar.
 //
 // --- `now` / timezone -----------------------------------------------------
 //
@@ -193,11 +203,12 @@ async function handleFirstMessage(text: string, now: number, timezone: string): 
         return startCalendarReschedule(extraction.intent, text, now, timezone);
       }
 
+      const intent = applyCreateEventDefaults(extraction.intent);
       const expirations = {
         clarificationExpiresAt: getClarificationExpiresAt(now),
         proposalExpiresAt: getProposalExpiresAt(now),
       };
-      const result = await resolveFirstConversationalTurn(extraction.intent, now, expirations, timezone);
+      const result = await resolveFirstConversationalTurn(intent, now, expirations, timezone);
       return translateFirstTurnResult(result);
     }
   }
