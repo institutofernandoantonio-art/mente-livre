@@ -56,7 +56,15 @@ check('Hoje permite concluir pelo fluxo existente, sem nova mutação', () => {
 
 check('Hoje mostra próximos compromissos usando a conta da sessão', () => {
   assert.ok(hoje.includes('buildGoogleCalendarAccountUrl(email)'));
-  assert.ok(hoje.includes('<UpcomingCalendarEvents calendarUrl={calendarUrl} accountEmail={email} />'));
+  assert.ok(hoje.includes('calendarUrl={calendarUrl}'));
+  assert.ok(hoje.includes('accountEmail={email}'));
+});
+
+check('Hoje conecta somente a missão principal sugerida ao bloco de orientação Agora', () => {
+  assert.ok(hoje.includes('const missionTitle = focusTasks[0]?.title ?? null'));
+  assert.ok(hoje.includes('focusTitle={missionTitle}'));
+  assert.ok(!hoje.includes('anthropic'));
+  assert.ok(!hoje.includes('openai'));
 });
 
 check('Hoje está protegido pelo mesmo gate AAL2 das rotas privadas principais', () => {
