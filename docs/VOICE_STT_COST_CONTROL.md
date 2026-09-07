@@ -1,6 +1,6 @@
 # Voz/STT — controle de custo e gate de produção
 
-**Status:** Fase 9B em desenvolvimento. A integração paga deve permanecer desligada em produção até todos os gates externos desta página estarem confirmados.
+**Status:** Fase 9B com os gates externos concluídos. O código permanece fail-closed em produção (`MENTE_LIVRE_STT_ENABLED=false`) até o Quality Gate final, merge e deploy da implementação server-side.
 
 ## Objetivo do MVP
 
@@ -12,11 +12,11 @@ O desenho mantém um contrato `SpeechToTextProvider`, portanto o provedor/modelo
 
 1. **Teto interno global:** US$ 4,00 por mês-calendário UTC para todo o Mente Livre, compartilhado entre todos os usuários.
 2. **Reserva antes da chamada:** cada nova transcrição reserva US$ 0,0015, equivalente ao pior caso permitido de 20 segundos no preço adotado para o modelo do MVP. A chamada paga só ocorre após a reserva ser aceita pelo banco.
-3. **Teto externo obrigatório:** o projeto OpenAI exclusivo do Mente Livre deve ser configurado com limite rígido de US$ 5,00/mês antes de a feature ser ligada em produção. Esse controle externo ainda precisa ser confirmado fora do repositório.
+3. **Teto externo obrigatório:** o projeto OpenAI exclusivo do Mente Livre está configurado com limite rígido de US$ 5,00/mês, com bloqueio de novas requisições ao atingir o limite. Como a contabilização externa pode ter pequeno atraso, o teto interno de US$ 4,00 é a primeira barreira.
 4. **Áudio curto:** máximo de 20 segundos e 2 MB por requisição.
 5. **Idempotência:** `(user_id, request_id)` é único; a mesma gravação não abre uma segunda reserva.
 6. **Rate limit:** no máximo 6 novas reservas por minuto por usuário.
-7. **Fail-closed:** `MENTE_LIVRE_STT_ENABLED` deve permanecer diferente de `true` enquanto os gates de produção não estiverem completos.
+7. **Fail-closed:** `MENTE_LIVRE_STT_ENABLED` deve permanecer diferente de `true` até a implementação estar mergeada e implantada com todos os controles prontos.
 8. **Configuração antes do orçamento:** a chave dedicada é validada ao construir o provider, antes da reserva financeira. Ligar a feature sem chave não consome o teto interno.
 9. **Falha de captura não chama STT:** se o `MediaRecorder` emitir erro, o `request_id` da gravação é invalidado e um eventual `stop` posterior não pode iniciar transcrição paga com áudio parcial.
 
@@ -24,11 +24,11 @@ O teto interno é propositalmente conservador: mesmo que uma gravação tenha me
 
 ## Separação do Mente Livre
 
-A integração usa a variável server-side `MENTE_LIVRE_OPENAI_STT_API_KEY`. Ela deve receber uma chave criada em **projeto OpenAI dedicado exclusivamente ao Mente Livre**. Não reutilizar essa chave, projeto ou orçamento em outro aplicativo, serviço, automação ou ambiente não relacionado ao Mente Livre.
+A integração usa a variável server-side `MENTE_LIVRE_OPENAI_STT_API_KEY`. Ela recebe uma chave criada no projeto OpenAI **Mente Livre**, dedicado exclusivamente a este aplicativo. Não reutilizar essa chave, projeto ou orçamento em outro aplicativo, serviço, automação ou ambiente não relacionado ao Mente Livre.
 
 O código não lê uma `OPENAI_API_KEY` genérica para STT e a chave nunca deve receber prefixo `NEXT_PUBLIC_`.
 
-**Verificação de 06/09/2026:** na conta OpenAI conectada foi encontrado apenas o projeto inicial `Default project`; ainda não existe um projeto dedicado ao Mente Livre. Por isso nenhuma chave foi criada/configurada nesta etapa e a feature continua desligada. O projeto dedicado e seu limite externo precisam existir antes da criação/uso da chave de produção.
+**Verificação operacional:** o projeto OpenAI dedicado `Mente Livre` foi criado; o hard spend limit de US$ 5,00/mês foi ativado; somente `gpt-transcribe` foi permitido; a chave `Mente Livre STT` foi criada nesse projeto e configurada como segredo server-side no ambiente Production da Vercel. A flag de ativação continua `false` até o deploy da implementação.
 
 ## Dados armazenados
 
@@ -50,17 +50,22 @@ Para controle financeiro, o indicador mais importante é **orçamento reservado 
 
 O acompanhamento externo deve ser feito no painel de uso/custos do projeto OpenAI dedicado ao Mente Livre. Como esse projeto não pode ser compartilhado com outros apps, o valor ali deve representar somente o Mente Livre.
 
-## Gate obrigatório antes de produção
+## Gate obrigatório antes de merge
 
-Não fazer merge/ativação da Fase 9B até confirmar todos os itens:
-
-- [ ] projeto OpenAI criado exclusivamente para o Mente Livre;
-- [ ] limite rígido externo de US$ 5,00/mês confirmado nesse projeto;
-- [ ] chave exclusiva desse projeto criada e configurada somente como segredo server-side no ambiente do Mente Livre;
-- [ ] migration `20260906213000_create_voice_transcription_usage.sql` revisada e aplicada no Supabase de produção;
-- [ ] decisão final da Fase 9B registrada em `docs/DECISIONS.md`;
+- [x] projeto OpenAI criado exclusivamente para o Mente Livre;
+- [x] limite rígido externo de US$ 5,00/mês confirmado nesse projeto;
+- [x] chave exclusiva desse projeto criada e configurada somente como segredo server-side no ambiente Production do Mente Livre;
+- [x] migration `20260906213000_create_voice_transcription_usage.sql` revisada e aplicada no Supabase de produção;
+- [x] decisão final da Fase 9B registrada em `docs/DECISIONS.md`;
 - [ ] Quality Gates verdes no **head exato que será mergeado**;
-- [ ] `MENTE_LIVRE_STT_ENABLED=true` somente depois dos itens anteriores.
+- [ ] merge da PR com `MENTE_LIVRE_STT_ENABLED=false`.
+
+## Gate de ativação após merge
+
+- [ ] confirmar deploy da `main` como Ready;
+- [ ] somente então alterar `MENTE_LIVRE_STT_ENABLED=true` em Production e redeployar;
+- [ ] executar teste real controlado no Mac e no iPhone;
+- [ ] manter issues da Fase 9 abertas até a validação manual dos dois ambientes.
 
 ## Regra de mudança de custo
 
