@@ -158,6 +158,9 @@ export default async function TarefasPage() {
         )}
 
         <div className="mt-6 flex flex-col items-center gap-3">
+          <Link href="/hoje" className={buttonVariants('primary')}>
+            Ver meu foco de hoje
+          </Link>
           <Link href="/conversa" className={buttonVariants('secondary')}>
             Voltar para conversa
           </Link>
