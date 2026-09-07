@@ -6,20 +6,34 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Button } from '@/components/ui/Button';
 import { completeTask } from '@/app/tarefas/actions';
+import { setTaskPriority, type TaskPriorityInput } from '@/app/tarefas/priority-actions';
 import { getTodayChecklist, type TodayChecklistResult } from './checklist-actions';
 
 type ViewState = TodayChecklistResult | { status: 'loading' };
 
+type EisenhowerChoice = {
+  label: string;
+  hint: string;
+  priority: TaskPriorityInput;
+};
+
+const eisenhowerChoices: EisenhowerChoice[] = [
+  { label: 'Fazer hoje', hint: 'Urgente + importante', priority: 'alta' },
+  { label: 'Planejar', hint: 'Importante, sem urgência', priority: 'média' },
+  { label: 'Delegar', hint: 'Urgente, menos importante', priority: 'baixa' },
+  { label: 'Depois', hint: 'Sem urgência agora', priority: null },
+];
+
 function priorityLabel(priority: 'alta' | 'média' | 'baixa' | null) {
-  if (priority === 'alta') return 'Alta prioridade';
-  if (priority === 'média') return 'Prioridade média';
-  if (priority === 'baixa') return 'Prioridade baixa';
+  if (priority === 'alta') return 'Fazer hoje · urgente + importante';
+  if (priority === 'média') return 'Planejar · importante';
+  if (priority === 'baixa') return 'Delegar · urgente';
   return null;
 }
 
 export function TodayChecklist() {
   const [state, setState] = useState<ViewState>({ status: 'loading' });
-  const [completingId, setCompletingId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -35,16 +49,32 @@ export function TodayChecklist() {
   }, []);
 
   async function markDone(taskId: string) {
-    if (state.status !== 'ok' || completingId !== null) return;
+    if (state.status !== 'ok' || busyId !== null) return;
 
-    setCompletingId(taskId);
+    setBusyId(taskId);
     const result = await completeTask(taskId);
     if (result.status === 'completed') {
       setState({ status: 'ok', items: state.items.filter((item) => item.id !== taskId) });
     } else {
       setState({ status: 'error' });
     }
-    setCompletingId(null);
+    setBusyId(null);
+  }
+
+  async function classify(taskId: string, priority: TaskPriorityInput) {
+    if (state.status !== 'ok' || busyId !== null) return;
+
+    setBusyId(taskId);
+    const result = await setTaskPriority(taskId, priority);
+    if (result.status === 'updated') {
+      setState({
+        status: 'ok',
+        items: state.items.map((item) => (item.id === taskId ? { ...item, priority } : item)),
+      });
+    } else {
+      setState({ status: 'error' });
+    }
+    setBusyId(null);
   }
 
   if (state.status === 'loading') {
@@ -68,13 +98,13 @@ export function TodayChecklist() {
       <div>
         <p className="text-xs font-medium uppercase tracking-wide text-ink-soft">Checklist do dia</p>
         <h2 className="mt-1 font-semibold text-ink">Para fazer hoje, sem horário marcado</h2>
-        <p className="mt-1 text-sm text-ink-soft">Faça no seu ritmo e marque quando concluir.</p>
+        <p className="mt-1 text-sm text-ink-soft">Decida em um toque o que merece sua atenção.</p>
       </div>
 
       <ul className="flex flex-col gap-3">
         {state.items.map((item) => {
           const label = priorityLabel(item.priority);
-          const isCompleting = completingId === item.id;
+          const isBusy = busyId === item.id;
           return (
             <li key={item.id} className="rounded-xl border border-mist-200 p-4">
               <div className="flex items-start gap-3">
@@ -85,11 +115,30 @@ export function TodayChecklist() {
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={completingId !== null}
+                  disabled={busyId !== null}
                   onClick={() => markDone(item.id)}
                 >
-                  {isCompleting ? 'Salvando...' : 'Feito'}
+                  {isBusy ? 'Salvando...' : 'Feito'}
                 </Button>
+              </div>
+
+              <div className="mt-3 border-t border-mist-200 pt-3">
+                <p className="mb-2 text-xs font-medium text-ink-soft">Como tratar?</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {eisenhowerChoices.map((choice) => (
+                    <Button
+                      key={choice.label}
+                      type="button"
+                      variant={item.priority === choice.priority ? 'secondary' : 'ghost'}
+                      disabled={busyId !== null}
+                      onClick={() => classify(item.id, choice.priority)}
+                      className="h-auto flex-col items-start px-3 py-2 text-left"
+                    >
+                      <span className="text-sm">{choice.label}</span>
+                      <span className="text-[11px] font-normal text-ink-soft">{choice.hint}</span>
+                    </Button>
+                  ))}
+                </div>
               </div>
             </li>
           );
