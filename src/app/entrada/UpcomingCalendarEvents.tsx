@@ -20,6 +20,7 @@ type LoadState =
 
 export function UpcomingCalendarEvents() {
   const [state, setState] = useState<LoadState>({ status: 'loading', events: [] });
+  const [now, setNow] = useState(() => Date.now());
   const timeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
 
   useEffect(() => {
@@ -30,6 +31,7 @@ export function UpcomingCalendarEvents() {
         const result = await getUpcomingGoogleCalendarEvents(timeZone);
         if (active) {
           setState(result);
+          setNow(Date.now());
         }
       } catch {
         if (active) {
@@ -44,9 +46,16 @@ export function UpcomingCalendarEvents() {
     };
   }, [timeZone]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   if (state.status === 'unavailable') {
     return null;
   }
+
+  const proximity = state.status === 'ok' ? getUpcomingProximity(state.events, now) : null;
 
   return (
     <div className="mt-5">
@@ -54,7 +63,7 @@ export function UpcomingCalendarEvents() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold text-ink">Próximos compromissos</p>
-            <p className="mt-1 text-xs text-ink-soft">Sua agenda, sem sair do Mente Livre.</p>
+            <p className="mt-1 text-xs text-ink-soft">O que vem a seguir na sua agenda.</p>
           </div>
           <a
             href="https://calendar.google.com/calendar/u/0/r"
@@ -65,6 +74,14 @@ export function UpcomingCalendarEvents() {
             Abrir agenda
           </a>
         </div>
+
+        {proximity && (
+          <div role="status" className="mt-4 rounded-xl border border-brand-600/30 bg-brand-600/[0.06] px-3 py-3">
+            <p className="text-xs font-semibold text-brand-600">{proximity.label}</p>
+            <p className="mt-1 text-sm font-medium text-ink">{proximity.event.title}</p>
+            <p className="mt-0.5 text-xs text-ink-soft">{formatEventWhen(proximity.event, timeZone)}</p>
+          </div>
+        )}
 
         {state.status === 'loading' && (
           <p className="mt-4 text-sm text-ink-soft">Carregando compromissos...</p>
@@ -118,6 +135,22 @@ export function UpcomingCalendarEvents() {
       </Card>
     </div>
   );
+}
+
+function getUpcomingProximity(events: CalendarEvent[], now: number): { event: CalendarEvent; label: string } | null {
+  for (const event of events) {
+    if (event.allDay) continue;
+    const startMs = Date.parse(event.start);
+    if (!Number.isFinite(startMs)) continue;
+    const minutes = Math.ceil((startMs - now) / 60_000);
+    if (minutes < -5 || minutes > 60) continue;
+
+    if (minutes <= 0) return { event, label: 'Começando agora' };
+    if (minutes === 1) return { event, label: 'Próximo compromisso em 1 minuto' };
+    return { event, label: `Próximo compromisso em ${minutes} minutos` };
+  }
+
+  return null;
 }
 
 function formatEventWhen(event: CalendarEvent, timeZone: string): string {
