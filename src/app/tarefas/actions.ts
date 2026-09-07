@@ -20,9 +20,10 @@ export async function completeTask(taskId: string): Promise<CompleteTaskResult> 
 
     if (!userId) return { status: 'error' };
 
+    const completedAt = new Date().toISOString();
     const { data, error } = await supabase
       .from('items')
-      .update({ status: 'completed' })
+      .update({ status: 'completed', completed_at: completedAt })
       .eq('id', taskId)
       .eq('user_id', userId)
       .eq('status', 'pending')
