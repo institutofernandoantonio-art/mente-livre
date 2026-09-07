@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
@@ -65,6 +65,18 @@ import {
 // React — nunca enviado ao servidor, nunca relacionado a
 // `stateId`/`proposalId`/`itemId` reais.
 //
+// --- Visibilidade da resposta mais recente -------------------------------
+//
+// Em telas menores ou depois de usar voz, o foco visual tende a permanecer
+// no formulário, abaixo do histórico. Sempre que uma NOVA resposta do
+// Mente Livre entra em `messages`, fazemos duas coisas puramente visuais:
+// 1) levamos o scroll interno do histórico até o final;
+// 2) trazemos a resposta mais recente para a área visível da página.
+// Isso nunca reenvia mensagem, nunca altera estado de domínio e nunca muda
+// confirmação/execução. A resposta mais recente também recebe destaque
+// visual e o rótulo "Mente Livre" para o usuário identificar rapidamente
+// o que precisa ler/confirmar.
+//
 // --- Bootstrap sob Strict Mode: aceitar 2 leituras, nunca travar ----------
 //
 // `reactStrictMode` não está desligado em `next.config.ts` (fica no
@@ -109,6 +121,10 @@ export function ConversationPanel() {
   const [text, setText] = useState('');
   const [pending, setPending] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
+  const logRef = useRef<HTMLDivElement | null>(null);
+  const latestAssistantRef = useRef<HTMLDivElement | null>(null);
+
+  const latestAssistantId = [...messages].reverse().find((message) => message.role === 'assistant')?.id ?? null;
 
   useEffect(() => {
     let active = true;
@@ -150,6 +166,22 @@ export function ConversationPanel() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (latestAssistantId === null) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const log = logRef.current;
+      if (log) {
+        log.scrollTo({ top: log.scrollHeight, behavior: 'smooth' });
+      }
+      latestAssistantRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [latestAssistantId]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -210,11 +242,24 @@ export function ConversationPanel() {
     <div className="flex w-full flex-col gap-4">
       <h1 className="text-lg font-semibold text-ink">Conversa</h1>
 
-      <div role="log" aria-live="polite" className="flex max-h-96 flex-col gap-3 overflow-y-auto">
+      <div
+        ref={logRef}
+        role="log"
+        aria-live="polite"
+        className="flex max-h-96 scroll-smooth flex-col gap-3 overflow-y-auto"
+      >
         {bootstrapping && <p className="text-sm text-ink-soft">Carregando...</p>}
-        {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
-        ))}
+        {messages.map((message) => {
+          const isLatestAssistant = message.role === 'assistant' && message.id === latestAssistantId;
+          return (
+            <MessageBubble
+              key={message.id}
+              message={message}
+              isLatestAssistant={isLatestAssistant}
+              anchorRef={isLatestAssistant ? latestAssistantRef : undefined}
+            />
+          );
+        })}
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
@@ -234,16 +279,27 @@ export function ConversationPanel() {
   );
 }
 
-function MessageBubble({ message }: { message: UiMessage }) {
+function MessageBubble({
+  message,
+  isLatestAssistant = false,
+  anchorRef,
+}: {
+  message: UiMessage;
+  isLatestAssistant?: boolean;
+  anchorRef?: React.RefObject<HTMLDivElement | null>;
+}) {
   const isUser = message.role === 'user';
 
   return (
     <div
+      ref={anchorRef}
       className={cn(
         'max-w-[85%] rounded-xl px-4 py-2 text-sm',
         isUser ? 'self-end bg-brand-600 text-white' : 'self-start bg-mist-50 text-ink',
+        isLatestAssistant && 'border-2 border-brand-600 shadow-sm',
       )}
     >
+      {isLatestAssistant && <p className="mb-1 text-xs font-semibold text-brand-600">Mente Livre</p>}
       {message.kind === 'text' && <p>{message.text}</p>}
       {message.kind === 'proposal' && <ProposalPreview action={message.action} />}
     </div>
