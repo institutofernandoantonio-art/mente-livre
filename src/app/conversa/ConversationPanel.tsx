@@ -26,12 +26,6 @@ function nextId(): string {
   return `msg-${Math.random().toString(36).slice(2)}`;
 }
 
-function offersYesNoQuickReply(message: UiMessage): boolean {
-  if (message.role !== 'assistant') return false;
-  if (message.kind === 'proposal') return true;
-  return /responda\s+[“"]sim[”"]\s+ou\s+[“"]n[aã]o[”"]/i.test(message.text);
-}
-
 export function ConversationPanel() {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [text, setText] = useState('');
@@ -83,21 +77,21 @@ export function ConversationPanel() {
     return () => window.cancelAnimationFrame(frame);
   }, [latestAssistantId, latestAssistantElement, logElement]);
 
-  async function submitText(value: string) {
+  async function submitText(text: string) {
     if (pending || bootstrapping) return;
 
-    const trimmed = value.trim();
+    const trimmed = text.trim();
     if (trimmed.length === 0) return;
 
-    setMessages((prev) => [...prev, { id: nextId(), role: 'user', kind: 'text', text: value }]);
+    setMessages((prev) => [...prev, { id: nextId(), role: 'user', kind: 'text', text }]);
     setPending(true);
 
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const result = await sendConversationMessage(value, timezone);
+      const result = await sendConversationMessage(text, timezone);
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
-      if (clearInput || value === 'sim' || value === 'não') {
+      if (clearInput || text === 'sim' || text === 'não') {
         setText('');
       }
     } catch {
@@ -121,6 +115,12 @@ export function ConversationPanel() {
 
   function handleVoiceTranscript(transcript: string) {
     setText(transcript.slice(0, 10000));
+  }
+
+  function offersYesNoQuickReply(message: UiMessage): boolean {
+    if (message.role !== 'assistant') return false;
+    if (message.kind === 'proposal') return true;
+    return /responda\s+[“"]sim[”"]\s+ou\s+[“"]n[aã]o[”"]/i.test(message.text);
   }
 
   const inputDisabled = pending || bootstrapping;
