@@ -49,7 +49,8 @@ check('ações usam sessão autenticada e nunca admin client', () => {
 });
 
 check('completeTask faz somente pending -> completed com ownership e confirmação', () => {
-  assert.ok(completeSection.includes(".update({ status: 'completed' })"));
+  assert.ok(completeSection.includes(".update({ status: 'completed', completed_at: completedAt })"));
+  assert.ok(completeSection.includes('const completedAt = new Date().toISOString()'));
   assert.ok(completeSection.includes(".eq('id', taskId)"));
   assert.ok(completeSection.includes(".eq('user_id', userId)"));
   assert.ok(completeSection.includes(".eq('status', 'pending')"));
@@ -57,13 +58,14 @@ check('completeTask faz somente pending -> completed com ownership e confirmaç�
   assert.ok(!completeSection.includes("'cancelled'"));
 });
 
-check('cancelTask faz somente pending -> cancelled com ownership e confirmação', () => {
+check('cancelTask faz somente pending -> cancelled e nunca grava completed_at', () => {
   assert.ok(cancelSection.includes(".update({ status: 'cancelled' })"));
   assert.ok(cancelSection.includes(".eq('id', taskId)"));
   assert.ok(cancelSection.includes(".eq('user_id', userId)"));
   assert.ok(cancelSection.includes(".eq('status', 'pending')"));
   assert.ok(cancelSection.includes(".eq('needs_confirmation', false)"));
   assert.ok(!cancelSection.includes("'completed'"));
+  assert.ok(!cancelSection.includes('completed_at'));
 });
 
 check('nenhuma ação faz leitura prévia, delete, insert, upsert ou RPC', () => {
