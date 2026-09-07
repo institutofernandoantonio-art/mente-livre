@@ -46,6 +46,11 @@ check('não cria, apaga ou usa RPC', () => {
   }
 });
 
+check('mudança de prioridade revalida tarefas e o foco de Hoje', () => {
+  assert.ok(action.includes("revalidatePath('/tarefas')"));
+  assert.ok(action.includes("revalidatePath('/hoje')"));
+});
+
 check('UI lê priority, oferece os três níveis e permite limpar', () => {
   assert.ok(page.includes("select('id, title, status, deadline_at, priority')"));
   assert.ok(page.includes("value: 'alta'"));
