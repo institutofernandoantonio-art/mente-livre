@@ -22,9 +22,10 @@ export function FocusTimer({ taskTitle, disabled = false, onDone }: FocusTimerPr
 
   useEffect(() => {
     if (endsAt === null) return;
+    const targetEndsAt = endsAt;
 
     function updateRemaining() {
-      const next = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+      const next = Math.max(0, Math.ceil((targetEndsAt - Date.now()) / 1000));
       setRemainingSeconds(next);
       if (next === 0) {
         setEndsAt(null);
