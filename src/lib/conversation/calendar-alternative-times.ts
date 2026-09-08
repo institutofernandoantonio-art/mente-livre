@@ -8,7 +8,10 @@ import {
   resolveCivilDateTimeInTimeZone,
 } from './timezone';
 
+export type CalendarAlternativeDay = 'today' | 'tomorrow';
+
 export type CalendarAlternativeTime = {
+  day: CalendarAlternativeDay;
   hour: number;
   minute: 0;
   label: string;
@@ -40,14 +43,24 @@ export async function suggestCalendarAlternativeTimes(
 
   const today = getCivilDateInTimeZone(new Date(now), timeZone);
   const tomorrow = addCivilDays(today, 1);
+  const dayAfterTomorrow = addCivilDays(tomorrow, 1);
   const currentCivilHour = Number(
     new Intl.DateTimeFormat('en-US', { hour: '2-digit', hour12: false, timeZone }).format(new Date(now)),
   );
-  const firstHour = Math.max(requestedHour + 1, currentCivilHour + 1, 7);
-  if (firstHour > 22) return { status: 'ok', suggestions: [] };
+  const firstTodayHour = Math.max(requestedHour + 1, currentCivilHour + 1, 7);
+  const hasTodayWindow = firstTodayHour <= 22;
 
-  const rangeStart = resolveCivilDateTimeInTimeZone(today.year, today.month, today.day, firstHour, 0, timeZone);
-  const rangeEnd = resolveCivilDateTimeInTimeZone(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, timeZone);
+  const rangeStart = hasTodayWindow
+    ? resolveCivilDateTimeInTimeZone(today.year, today.month, today.day, firstTodayHour, 0, timeZone)
+    : resolveCivilDateTimeInTimeZone(tomorrow.year, tomorrow.month, tomorrow.day, 7, 0, timeZone);
+  const rangeEnd = resolveCivilDateTimeInTimeZone(
+    dayAfterTomorrow.year,
+    dayAfterTomorrow.month,
+    dayAfterTomorrow.day,
+    0,
+    0,
+    timeZone,
+  );
   if (rangeStart.status !== 'resolved' || rangeEnd.status !== 'resolved') {
     return { status: 'invalid_timezone' };
   }
@@ -56,20 +69,40 @@ export async function suggestCalendarAlternativeTimes(
   if (busyBlocks === null) return { status: 'unavailable' };
 
   const suggestions: CalendarAlternativeTime[] = [];
-  for (let hour = firstHour; hour <= 22 && suggestions.length < 2; hour += 1) {
-    const start = resolveCivilDateTimeInTimeZone(today.year, today.month, today.day, hour, 0, timeZone);
-    const endHour = hour + 1;
-    const end = endHour === 24
-      ? resolveCivilDateTimeInTimeZone(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, timeZone)
-      : resolveCivilDateTimeInTimeZone(today.year, today.month, today.day, endHour, 0, timeZone);
-    if (start.status !== 'resolved' || end.status !== 'resolved') continue;
 
-    const startMs = start.utc.getTime();
-    const endMs = end.utc.getTime();
-    const occupied = busyBlocks.some((block) => overlaps(startMs, endMs, block.start, block.end));
-    if (!occupied) {
-      suggestions.push({ hour, minute: 0, label: `${String(hour).padStart(2, '0')}:00` });
+  function collectDay(
+    day: typeof today,
+    relativeDay: CalendarAlternativeDay,
+    firstHour: number,
+    lastHour: number,
+    nextDay: typeof today,
+  ) {
+    for (let hour = firstHour; hour <= lastHour && suggestions.length < 2; hour += 1) {
+      const start = resolveCivilDateTimeInTimeZone(day.year, day.month, day.day, hour, 0, timeZone);
+      const endHour = hour + 1;
+      const end = endHour === 24
+        ? resolveCivilDateTimeInTimeZone(nextDay.year, nextDay.month, nextDay.day, 0, 0, timeZone)
+        : resolveCivilDateTimeInTimeZone(day.year, day.month, day.day, endHour, 0, timeZone);
+      if (start.status !== 'resolved' || end.status !== 'resolved') continue;
+
+      const occupied = busyBlocks.some((block) => overlaps(start.utc.getTime(), end.utc.getTime(), block.start, block.end));
+      if (!occupied) {
+        const prefix = relativeDay === 'today' ? 'Hoje' : 'Amanhã';
+        suggestions.push({
+          day: relativeDay,
+          hour,
+          minute: 0,
+          label: `${prefix}, ${String(hour).padStart(2, '0')}:00`,
+        });
+      }
     }
+  }
+
+  if (hasTodayWindow) {
+    collectDay(today, 'today', firstTodayHour, 22, tomorrow);
+  }
+  if (suggestions.length < 2) {
+    collectDay(tomorrow, 'tomorrow', 7, 22, dayAfterTomorrow);
   }
 
   return { status: 'ok', suggestions };
