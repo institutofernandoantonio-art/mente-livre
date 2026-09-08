@@ -3,11 +3,13 @@ import type { ConversationPresentationState } from './presentation';
 import type { ConversationEntryResult } from './conversation-entry';
 import type { CalendarQueryResult } from './calendar-query';
 import type { TaskPriorityBucket } from './task-priority-command';
+import type { CalendarAlternativeTime } from './calendar-alternative-times';
 
 export type UiMessageContent =
   | { role: 'user'; kind: 'text'; text: string }
   | { role: 'assistant'; kind: 'text'; text: string }
-  | { role: 'assistant'; kind: 'proposal'; action: ProposedAction };
+  | { role: 'assistant'; kind: 'proposal'; action: ProposedAction }
+  | { role: 'assistant'; kind: 'schedule_suggestions'; taskTitle: string; suggestions: CalendarAlternativeTime[] };
 
 const EXPIRED_TEXT = 'O contexto anterior expirou. Envie sua mensagem novamente para começar de novo.';
 const GENERIC_ERROR_TEXT = 'Algo deu errado. Tente novamente.';
@@ -44,6 +46,10 @@ function assistantText(text: string): UiMessageContent {
 
 function assistantProposal(action: ProposedAction): UiMessageContent {
   return { role: 'assistant', kind: 'proposal', action };
+}
+
+function assistantScheduleSuggestions(taskTitle: string, suggestions: CalendarAlternativeTime[]): UiMessageContent {
+  return { role: 'assistant', kind: 'schedule_suggestions', taskTitle, suggestions };
 }
 
 function taskPriorityUpdatedText(bucket: TaskPriorityBucket): string {
@@ -118,6 +124,8 @@ export function mapEntryResultToUiEffect(result: ConversationEntryResult): Entry
       return { message: assistantText(calendarInformationText(result.result)), clearInput: true };
     case 'schedule_conflict':
       return { message: assistantText(SCHEDULE_CONFLICT_TEXT), clearInput: true };
+    case 'schedule_conflict_suggestions':
+      return { message: assistantScheduleSuggestions(result.taskTitle, result.suggestions), clearInput: true };
     case 'calendar_unavailable':
       return { message: assistantText(CALENDAR_UNAVAILABLE_TEXT), clearInput: false };
     case 'confirmed':
