@@ -5,6 +5,9 @@ import { createClient } from '../supabase/server';
 import { matchEventReference, type ReferenceCandidate } from './reference-matching';
 import type { TaskPriorityBucket, TaskPriorityCommand } from './task-priority-parser';
 
+export { parseTaskPriorityCommand } from './task-priority-parser';
+export type { TaskPriorityBucket, TaskPriorityCommand } from './task-priority-parser';
+
 export type TaskPriorityCommandResult =
   | { status: 'updated'; bucket: TaskPriorityBucket }
   | { status: 'not_found' }
