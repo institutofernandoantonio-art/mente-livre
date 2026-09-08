@@ -29,12 +29,17 @@ import {
   parseScheduleExistingTaskCommand,
   resolveScheduleExistingTaskCommand,
 } from './schedule-existing-task-command';
+import {
+  suggestCalendarAlternativeTimes,
+  type CalendarAlternativeTime,
+} from './calendar-alternative-times';
 
 export type ConversationEntryResult =
   | { status: 'clarification_required'; question: string }
   | { status: 'proposal_ready'; action: ProposedAction }
   | { status: 'calendar_information'; result: CalendarQueryResult }
   | { status: 'schedule_conflict' }
+  | { status: 'schedule_conflict_suggestions'; taskTitle: string; suggestions: CalendarAlternativeTime[] }
   | { status: 'calendar_unavailable' }
   | { status: 'confirmed'; itemId: string }
   | { status: 'cancelled' }
@@ -184,7 +189,19 @@ async function handleScheduleExistingTaskCommand(
         proposalExpiresAt: getProposalExpiresAt(now),
       };
       const result = await resolveFirstConversationalTurn(intent, now, expirations, timezone);
-      return translateFirstTurnResult(result);
+      const translated = translateFirstTurnResult(result);
+      if (translated.status !== 'schedule_conflict') return translated;
+
+      const alternatives = await suggestCalendarAlternativeTimes(timezone, now, command.hour);
+      if (alternatives.status !== 'ok' || alternatives.suggestions.length === 0) {
+        return translated;
+      }
+
+      return {
+        status: 'schedule_conflict_suggestions',
+        taskTitle: resolved.intent.task.title,
+        suggestions: alternatives.suggestions,
+      };
     }
   }
 }

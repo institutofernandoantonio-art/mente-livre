@@ -123,6 +123,10 @@ export function ConversationPanel() {
         return;
       }
 
+      if (result.status === 'schedule_conflict_suggestions') {
+        setScheduleTaskTitle(result.taskTitle);
+      }
+
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
       if (clearInput || isConfirmation) {
@@ -154,6 +158,7 @@ export function ConversationPanel() {
   function offersYesNoQuickReply(message: UiMessage): boolean {
     if (message.role !== 'assistant') return false;
     if (message.kind === 'proposal') return true;
+    if (message.kind !== 'text') return false;
     return /responda\s+[“"]sim[”"]\s+ou\s+[“"]n[aã]o[”"]/i.test(message.text);
   }
 
@@ -189,6 +194,7 @@ export function ConversationPanel() {
               showQuickConfirmation={isLatestAssistant && offersYesNoQuickReply(message)}
               quickReplyDisabled={inputDisabled}
               onQuickReply={(answer) => void submitText(answer)}
+              onScheduleSuggestion={(hour) => void submitText(`${hour} horas`)}
             />
           );
         })}
@@ -218,6 +224,7 @@ function MessageBubble({
   showQuickConfirmation = false,
   quickReplyDisabled = false,
   onQuickReply,
+  onScheduleSuggestion,
 }: {
   message: UiMessage;
   isLatestAssistant?: boolean;
@@ -225,6 +232,7 @@ function MessageBubble({
   showQuickConfirmation?: boolean;
   quickReplyDisabled?: boolean;
   onQuickReply?: (answer: 'sim' | 'não') => void;
+  onScheduleSuggestion?: (hour: number) => void;
 }) {
   const isUser = message.role === 'user';
 
@@ -240,6 +248,25 @@ function MessageBubble({
       {isLatestAssistant && <p className="mb-1 text-xs font-semibold text-brand-600">Mente Livre</p>}
       {message.kind === 'text' && <p>{message.text}</p>}
       {message.kind === 'proposal' && <ProposalPreview action={message.action} />}
+      {message.kind === 'schedule_suggestions' && (
+        <div>
+          <p>Esse horário está ocupado. Encontrei estes horários livres:</p>
+          <div className="mt-3 flex flex-wrap gap-2" aria-label="Horários livres">
+            {message.suggestions.map((suggestion) => (
+              <Button
+                key={suggestion.label}
+                type="button"
+                variant="secondary"
+                disabled={quickReplyDisabled}
+                onClick={() => onScheduleSuggestion?.(suggestion.hour)}
+              >
+                {suggestion.label}
+              </Button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-ink-soft">Toque em um horário ou diga somente o horário por voz.</p>
+        </div>
+      )}
       {showQuickConfirmation && onQuickReply && (
         <div className="mt-3 grid grid-cols-2 gap-2" aria-label="Resposta rápida">
           <Button type="button" variant="primary" disabled={quickReplyDisabled} onClick={() => onQuickReply('sim')}>

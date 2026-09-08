@@ -10,6 +10,8 @@ import {
 } from './timezone';
 import type { StructuredIntent } from './types';
 
+type CreateEventIntent = Extract<StructuredIntent, { intentType: 'create_event' }>;
+
 export type ScheduleExistingTaskCommand = {
   referenceRaw: string;
   hour: number;
@@ -17,7 +19,7 @@ export type ScheduleExistingTaskCommand = {
 };
 
 export type ScheduleExistingTaskResult =
-  | { status: 'ready'; intent: StructuredIntent }
+  | { status: 'ready'; intent: CreateEventIntent }
   | { status: 'not_found' }
   | { status: 'ambiguous' }
   | { status: 'invalid_timezone' }
