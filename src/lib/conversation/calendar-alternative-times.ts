@@ -67,6 +67,7 @@ export async function suggestCalendarAlternativeTimes(
 
   const busyBlocks = await getGoogleCalendarBusyTimes(rangeStart.utc.toISOString(), rangeEnd.utc.toISOString());
   if (busyBlocks === null) return { status: 'unavailable' };
+  const confirmedBusyBlocks = busyBlocks;
 
   const suggestions: CalendarAlternativeTime[] = [];
 
@@ -85,7 +86,9 @@ export async function suggestCalendarAlternativeTimes(
         : resolveCivilDateTimeInTimeZone(day.year, day.month, day.day, endHour, 0, timeZone);
       if (start.status !== 'resolved' || end.status !== 'resolved') continue;
 
-      const occupied = busyBlocks.some((block) => overlaps(start.utc.getTime(), end.utc.getTime(), block.start, block.end));
+      const occupied = confirmedBusyBlocks.some((block) =>
+        overlaps(start.utc.getTime(), end.utc.getTime(), block.start, block.end),
+      );
       if (!occupied) {
         const prefix = relativeDay === 'today' ? 'Hoje' : 'Amanhã';
         suggestions.push({
