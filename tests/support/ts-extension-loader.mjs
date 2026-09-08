@@ -18,6 +18,7 @@ const REDIRECTS = new Map([
   ['./intent-extraction', new URL('./fake-intent-extraction.mjs', import.meta.url).href],
   ['./conversation-entry', new URL('./fake-conversation-entry.mjs', import.meta.url).href],
   ['./calendar-query', new URL('./fake-calendar-query.mjs', import.meta.url).href],
+  ['./task-priority-command', new URL('./fake-task-priority-command.mjs', import.meta.url).href],
   ['../google/calendar', new URL('./fake-google-calendar.mjs', import.meta.url).href],
   ['../google/upcoming-events', new URL('./fake-upcoming-events.mjs', import.meta.url).href],
   ['./calendar-event-availability', new URL('./fake-calendar-event-availability.mjs', import.meta.url).href],
