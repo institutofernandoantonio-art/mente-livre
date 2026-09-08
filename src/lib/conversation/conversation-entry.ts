@@ -24,6 +24,7 @@ import {
   parseTaskPriorityCommand,
   type TaskPriorityBucket,
 } from './task-priority-command';
+import { parseFocusCommand, resolveFocusCommand, type FocusMinutes } from './focus-command';
 
 export type ConversationEntryResult =
   | { status: 'clarification_required'; question: string }
@@ -41,6 +42,9 @@ export type ConversationEntryResult =
   | { status: 'task_priority_updated'; bucket: TaskPriorityBucket }
   | { status: 'task_reference_not_found' }
   | { status: 'task_reference_ambiguous' }
+  | { status: 'focus_ready'; taskId: string; taskTitle: string; minutes: FocusMinutes }
+  | { status: 'focus_task_not_found' }
+  | { status: 'focus_task_ambiguous' }
   | { status: 'needs_input' }
   | { status: 'unsupported' }
   | { status: 'conflict' }
@@ -56,7 +60,7 @@ function isValidNow(value: unknown): value is number {
 }
 
 function isExplicitNewCommand(text: string): boolean {
-  if (parseTaskPriorityCommand(text) !== null) return true;
+  if (parseTaskPriorityCommand(text) !== null || parseFocusCommand(text) !== null) return true;
   const normalized = text.trim().toLocaleLowerCase('pt-BR');
   const calendarCommand = /^(agende|marque|mude|remarque|cancele)\s+\S.{2,}$/u;
   const taskCommand = /^(crie|criar)\s+(?:uma\s+)?tarefa\s*[:\-]?\s+\S.{2,}$/u;
@@ -129,7 +133,34 @@ async function handlePriorityCommand(text: string): Promise<ConversationEntryRes
   }
 }
 
+async function handleFocusCommand(
+  text: string,
+  now: number,
+  timezone: string,
+): Promise<ConversationEntryResult | null> {
+  const command = parseFocusCommand(text);
+  if (command === null) return null;
+
+  const result = await resolveFocusCommand(command, timezone, now);
+  switch (result.status) {
+    case 'ready':
+      return {
+        status: 'focus_ready',
+        taskId: result.taskId,
+        taskTitle: result.taskTitle,
+        minutes: result.minutes,
+      };
+    case 'not_found': return { status: 'focus_task_not_found' };
+    case 'ambiguous': return { status: 'focus_task_ambiguous' };
+    case 'invalid_timezone':
+    case 'error': return { status: 'error' };
+  }
+}
+
 async function handleFirstMessage(text: string, now: number, timezone: string): Promise<ConversationEntryResult> {
+  const focusResult = await handleFocusCommand(text, now, timezone);
+  if (focusResult !== null) return focusResult;
+
   const priorityResult = await handlePriorityCommand(text);
   if (priorityResult !== null) return priorityResult;
 
