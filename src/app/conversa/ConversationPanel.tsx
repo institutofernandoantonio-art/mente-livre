@@ -8,6 +8,7 @@ import { cn } from '@/lib/cn';
 import { sendConversationMessage } from '@/lib/conversation/actions';
 import { getConversationPresentationState } from '@/lib/conversation/presentation';
 import type { ProposedAction } from '@/lib/conversation/proposed-action';
+import { buildSpokenResponse } from '@/lib/conversation/spoken-response';
 import { VoiceDictationButton } from './VoiceDictationButton';
 import { resolveScheduleTask } from './schedule-task-action';
 import {
@@ -37,6 +38,7 @@ export function ConversationPanel() {
   const [bootstrapping, setBootstrapping] = useState(true);
   const [scheduleTaskTitle, setScheduleTaskTitle] = useState('');
   const [scheduleDefaultDay, setScheduleDefaultDay] = useState<ScheduleSuggestionDay>('today');
+  const [voicePrepared, setVoicePrepared] = useState(false);
   const [logElement, setLogElement] = useState<HTMLDivElement | null>(null);
   const [latestAssistantElement, setLatestAssistantElement] = useState<HTMLDivElement | null>(null);
 
@@ -99,6 +101,9 @@ export function ConversationPanel() {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
 
+    const shouldSpeakResponse = voicePrepared;
+    if (shouldSpeakResponse) setVoicePrepared(false);
+
     const alreadyExplicit = /^(agende|marque|remarque|mude|cancele)\b/iu.test(trimmed);
     const isConfirmation = /^(sim|n[aã]o)$/iu.test(trimmed);
     const startsWithDay = /^(hoje|amanh[aã])\b/iu.test(trimmed);
@@ -125,6 +130,16 @@ export function ConversationPanel() {
       }
 
       if (result.status === 'focus_ready') {
+        if (
+          shouldSpeakResponse &&
+          'speechSynthesis' in window &&
+          typeof SpeechSynthesisUtterance !== 'undefined'
+        ) {
+          const utterance = new SpeechSynthesisUtterance(`Iniciando foco de ${result.minutes} minutos em ${result.taskTitle}.`);
+          utterance.lang = 'pt-BR';
+          window.speechSynthesis.cancel();
+          window.speechSynthesis.speak(utterance);
+        }
         const taskId = encodeURIComponent(result.taskId);
         router.push(`/hoje?focusTask=${taskId}&focusMinutes=${result.minutes}`);
         return;
@@ -139,14 +154,42 @@ export function ConversationPanel() {
 
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
+
+      if (
+        shouldSpeakResponse &&
+        'speechSynthesis' in window &&
+        typeof SpeechSynthesisUtterance !== 'undefined'
+      ) {
+        const spokenText = buildSpokenResponse(message);
+        if (spokenText) {
+          const utterance = new SpeechSynthesisUtterance(spokenText);
+          utterance.lang = 'pt-BR';
+          window.speechSynthesis.cancel();
+          window.speechSynthesis.speak(utterance);
+        }
+      }
+
       if (clearInput || isConfirmation) {
         setText('');
       }
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { id: nextId(), role: 'assistant', kind: 'text', text: 'Algo deu errado. Tente novamente.' },
-      ]);
+      const errorMessage: UiMessageContent = {
+        role: 'assistant',
+        kind: 'text',
+        text: 'Algo deu errado. Tente novamente.',
+      };
+      setMessages((prev) => [...prev, { ...errorMessage, id: nextId() }]);
+
+      if (
+        shouldSpeakResponse &&
+        'speechSynthesis' in window &&
+        typeof SpeechSynthesisUtterance !== 'undefined'
+      ) {
+        const utterance = new SpeechSynthesisUtterance(errorMessage.text);
+        utterance.lang = 'pt-BR';
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(utterance);
+      }
     } finally {
       setPending(false);
     }
@@ -158,11 +201,13 @@ export function ConversationPanel() {
   }
 
   function handleTextChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    setVoicePrepared(false);
     setText(event.target.value);
   }
 
   function handleVoiceTranscript(transcript: string) {
     setText(transcript.slice(0, 10000));
+    setVoicePrepared(true);
   }
 
   function offersYesNoQuickReply(message: UiMessage): boolean {
