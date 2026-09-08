@@ -9,6 +9,7 @@ import { sendConversationMessage } from '@/lib/conversation/actions';
 import { getConversationPresentationState } from '@/lib/conversation/presentation';
 import type { ProposedAction } from '@/lib/conversation/proposed-action';
 import { buildSpokenResponse } from '@/lib/conversation/spoken-response';
+import { speakBrowserText } from '@/lib/conversation/browser-speech';
 import { VoiceDictationButton } from './VoiceDictationButton';
 import { resolveScheduleTask } from './schedule-task-action';
 import {
@@ -130,15 +131,8 @@ export function ConversationPanel() {
       }
 
       if (result.status === 'focus_ready') {
-        if (
-          shouldSpeakResponse &&
-          'speechSynthesis' in window &&
-          typeof SpeechSynthesisUtterance !== 'undefined'
-        ) {
-          const utterance = new SpeechSynthesisUtterance(`Iniciando foco de ${result.minutes} minutos em ${result.taskTitle}.`);
-          utterance.lang = 'pt-BR';
-          window.speechSynthesis.cancel();
-          window.speechSynthesis.speak(utterance);
+        if (shouldSpeakResponse) {
+          speakBrowserText(`Iniciando foco de ${result.minutes} minutos em ${result.taskTitle}.`);
         }
         const taskId = encodeURIComponent(result.taskId);
         router.push(`/hoje?focusTask=${taskId}&focusMinutes=${result.minutes}`);
@@ -155,18 +149,9 @@ export function ConversationPanel() {
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
 
-      if (
-        shouldSpeakResponse &&
-        'speechSynthesis' in window &&
-        typeof SpeechSynthesisUtterance !== 'undefined'
-      ) {
+      if (shouldSpeakResponse) {
         const spokenText = buildSpokenResponse(message);
-        if (spokenText) {
-          const utterance = new SpeechSynthesisUtterance(spokenText);
-          utterance.lang = 'pt-BR';
-          window.speechSynthesis.cancel();
-          window.speechSynthesis.speak(utterance);
-        }
+        if (spokenText) speakBrowserText(spokenText);
       }
 
       if (clearInput || isConfirmation) {
@@ -180,15 +165,8 @@ export function ConversationPanel() {
       };
       setMessages((prev) => [...prev, { ...errorMessage, id: nextId() }]);
 
-      if (
-        shouldSpeakResponse &&
-        'speechSynthesis' in window &&
-        typeof SpeechSynthesisUtterance !== 'undefined'
-      ) {
-        const utterance = new SpeechSynthesisUtterance(errorMessage.text);
-        utterance.lang = 'pt-BR';
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(utterance);
+      if (shouldSpeakResponse) {
+        speakBrowserText(errorMessage.text);
       }
     } finally {
       setPending(false);
@@ -240,6 +218,7 @@ export function ConversationPanel() {
         {bootstrapping && <p className="text-sm text-ink-soft">Carregando...</p>}
         {messages.map((message) => {
           const isLatestAssistant = message.role === 'assistant' && message.id === latestAssistantId;
+          const spokenText = isLatestAssistant ? buildSpokenResponse(message) : '';
           return (
             <MessageBubble
               key={message.id}
@@ -249,6 +228,7 @@ export function ConversationPanel() {
               showQuickConfirmation={isLatestAssistant && offersYesNoQuickReply(message)}
               quickReplyDisabled={inputDisabled}
               onQuickReply={(answer) => void submitText(answer)}
+              onSpeak={spokenText ? () => speakBrowserText(spokenText) : undefined}
               onScheduleSuggestion={(day, hour) => {
                 const dayLabel = day === 'tomorrow' ? 'amanhã' : 'hoje';
                 void submitText(`Agende ${scheduleTaskTitle} ${dayLabel} às ${hour} horas`);
@@ -282,6 +262,7 @@ function MessageBubble({
   showQuickConfirmation = false,
   quickReplyDisabled = false,
   onQuickReply,
+  onSpeak,
   onScheduleSuggestion,
 }: {
   message: UiMessage;
@@ -290,6 +271,7 @@ function MessageBubble({
   showQuickConfirmation?: boolean;
   quickReplyDisabled?: boolean;
   onQuickReply?: (answer: 'sim' | 'não') => void;
+  onSpeak?: () => void;
   onScheduleSuggestion?: (day: ScheduleSuggestionDay, hour: number) => void;
 }) {
   const isUser = message.role === 'user';
@@ -334,6 +316,11 @@ function MessageBubble({
             Não
           </Button>
         </div>
+      )}
+      {isLatestAssistant && onSpeak && (
+        <Button type="button" variant="ghost" className="mt-2 px-3 py-2 text-sm" onClick={onSpeak}>
+          🔊 Ouvir resposta
+        </Button>
       )}
     </div>
   );
