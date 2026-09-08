@@ -55,18 +55,21 @@ assert.ok(panel.includes('/hoje?focusTask=${taskId}&focusMinutes=${result.minute
 
 assert.deepEqual(
   parseScheduleExistingTaskCommand('Agende ligar para o contador às 15 horas'),
-  { referenceRaw: 'ligar para o contador', hour: 15, minute: 0 },
+  { referenceRaw: 'ligar para o contador', day: 'today', hour: 15, minute: 0 },
 );
 assert.deepEqual(
   parseScheduleExistingTaskCommand('Marque a tarefa Revisar proposta hoje às 14:30.'),
-  { referenceRaw: 'Revisar proposta', hour: 14, minute: 30 },
+  { referenceRaw: 'Revisar proposta', day: 'today', hour: 14, minute: 30 },
 );
 assert.deepEqual(
   parseScheduleExistingTaskCommand('Agendar Preparar reunião as 9h15'),
-  { referenceRaw: 'Preparar reunião', hour: 9, minute: 15 },
+  { referenceRaw: 'Preparar reunião', day: 'today', hour: 9, minute: 15 },
+);
+assert.deepEqual(
+  parseScheduleExistingTaskCommand('Agende revisar proposta amanhã às 15 horas'),
+  { referenceRaw: 'revisar proposta', day: 'tomorrow', hour: 15, minute: 0 },
 );
 assert.equal(parseScheduleExistingTaskCommand('Agende isso às 15 horas'), null);
-assert.equal(parseScheduleExistingTaskCommand('Agende revisar proposta amanhã às 15 horas'), null);
 assert.equal(parseScheduleExistingTaskCommand('Agende revisar proposta às 25 horas'), null);
 
 const scheduleCommand = readFileSync(new URL('../../src/lib/conversation/schedule-existing-task-command.ts', import.meta.url), 'utf8');
@@ -78,7 +81,7 @@ assert.ok(scheduleCommand.includes(".gte('deadline_at', start.utc.toISOString())
 assert.ok(scheduleCommand.includes(".lt('deadline_at', end.utc.toISOString())"));
 assert.ok(scheduleCommand.includes('matchEventReference'));
 assert.ok(scheduleCommand.includes("intentType: 'create_event'"));
-assert.ok(scheduleCommand.includes("day: 'today'"));
+assert.ok(scheduleCommand.includes("'today' | 'tomorrow'"));
 assert.ok(!scheduleCommand.includes('service_role'));
 assert.ok(!scheduleCommand.includes('createAdminClient'));
 assert.ok(entry.includes('parseScheduleExistingTaskCommand(text) !== null'));
@@ -88,4 +91,4 @@ assert.ok(entry.includes('applyCreateEventDefaults(resolved.intent)'));
 console.log('[PASS] foco por conversa aceita somente 25 ou 50 minutos com tarefa explícita');
 console.log('[PASS] resolução usa somente tarefas de hoje, pendentes, confirmadas e do próprio usuário');
 console.log('[PASS] cronômetro continua local e sem persistência desnecessária');
-console.log('[PASS] agendamento natural converte uma tarefa explícita de hoje em proposta segura de calendário');
+console.log('[PASS] agendamento natural converte uma tarefa explícita de hoje em proposta segura e aceita mover para amanhã');

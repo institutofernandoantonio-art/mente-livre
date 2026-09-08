@@ -76,8 +76,9 @@ assert.ok(conversaPanel.includes("new URLSearchParams(window.location.search).ge
 assert.ok(conversaPanel.includes('resolveScheduleTask(taskId)'));
 assert.ok(conversaPanel.includes("setScheduleTaskTitle(task.status === 'ok' ? task.title : '')"));
 assert.ok(conversaPanel.includes("scheduleTaskTitle ? 'Que horário?'"));
-assert.ok(conversaPanel.includes('Diga apenas o horário de hoje'));
-assert.ok(conversaPanel.includes('`Agende ${scheduleTaskTitle} hoje às ${trimmed}`'));
+assert.ok(conversaPanel.includes('Diga o horário. Ex.: “15 horas” ou “amanhã às 9”.'));
+assert.ok(conversaPanel.includes("const defaultDayLabel = scheduleDefaultDay === 'tomorrow' ? 'amanhã' : 'hoje'"));
+assert.ok(conversaPanel.includes('`Agende ${scheduleTaskTitle} ${defaultDayLabel} às ${trimmed}`'));
 assert.ok(conversaPanel.includes("const isConfirmation = /^(sim|n[aã]o)$/iu.test(trimmed)"));
 assert.ok(conversaPanel.includes('scheduleTaskTitle && !alreadyExplicit && !isConfirmation'));
 assert.ok(conversaPanel.includes('sendConversationMessage(\n          backendText,\n          Intl.DateTimeFormat().resolvedOptions().timeZone'));
@@ -99,6 +100,7 @@ console.log('[PASS] checklist do dia usa apenas tarefas pendentes e confirmadas 
 console.log('[PASS] recorte de hoje respeita timezone civil do aparelho');
 console.log('[PASS] Eisenhower é apresentado em linguagem simples e resolvido em um toque');
 console.log('[PASS] agendar horário envia só id opaco e resolve título no servidor por usuário');
+console.log('[PASS] agendamento assistido aceita hoje/amanhã sem expor lógica de agenda no cliente');
 console.log('[PASS] foco de 25/50 min é local, sem banco, sem agenda e corrige drift por Date.now');
 console.log('[PASS] ao terminar o foco, concluir continua sendo uma ação explícita do usuário');
 console.log('[PASS] bootstrap, timezone e transcrição por voz preservam os contratos existentes');

@@ -20,6 +20,7 @@ import {
 } from '@/lib/conversation/presentation-ui';
 
 type UiMessage = UiMessageContent & { id: string };
+type ScheduleSuggestionDay = 'today' | 'tomorrow';
 
 function nextId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -35,6 +36,7 @@ export function ConversationPanel() {
   const [pending, setPending] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [scheduleTaskTitle, setScheduleTaskTitle] = useState('');
+  const [scheduleDefaultDay, setScheduleDefaultDay] = useState<ScheduleSuggestionDay>('today');
   const [logElement, setLogElement] = useState<HTMLDivElement | null>(null);
   const [latestAssistantElement, setLatestAssistantElement] = useState<HTMLDivElement | null>(null);
 
@@ -57,6 +59,7 @@ export function ConversationPanel() {
           const task = await resolveScheduleTask(taskId);
           if (!active) return;
           setScheduleTaskTitle(task.status === 'ok' ? task.title : '');
+          setScheduleDefaultDay('today');
         }
       } catch {
         if (!active) return;
@@ -98,8 +101,12 @@ export function ConversationPanel() {
 
     const alreadyExplicit = /^(agende|marque|remarque|mude|cancele)\b/iu.test(trimmed);
     const isConfirmation = /^(sim|n[aã]o)$/iu.test(trimmed);
+    const startsWithDay = /^(hoje|amanh[aã])\b/iu.test(trimmed);
+    const defaultDayLabel = scheduleDefaultDay === 'tomorrow' ? 'amanhã' : 'hoje';
     const backendText = scheduleTaskTitle && !alreadyExplicit && !isConfirmation
-      ? `Agende ${scheduleTaskTitle} hoje às ${trimmed}`
+      ? startsWithDay
+        ? `Agende ${scheduleTaskTitle} ${trimmed}`
+        : `Agende ${scheduleTaskTitle} ${defaultDayLabel} às ${trimmed}`
       : trimmed;
 
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', kind: 'text', text }]);
@@ -125,6 +132,9 @@ export function ConversationPanel() {
 
       if (result.status === 'schedule_conflict_suggestions') {
         setScheduleTaskTitle(result.taskTitle);
+        const firstDay = result.suggestions[0]?.day;
+        const allSameDay = firstDay !== undefined && result.suggestions.every((suggestion) => suggestion.day === firstDay);
+        if (allSameDay) setScheduleDefaultDay(firstDay);
       }
 
       const { message, clearInput } = mapEntryResultToUiEffect(result);
@@ -172,7 +182,7 @@ export function ConversationPanel() {
         <div className="rounded-xl border border-brand-200 bg-mist-50 p-3">
           <p className="text-xs font-medium uppercase tracking-wide text-brand-600">Agendar horário</p>
           <p className="mt-1 font-medium text-ink">{scheduleTaskTitle}</p>
-          <p className="mt-1 text-sm text-ink-soft">Diga apenas o horário de hoje. Ex.: “15 horas”.</p>
+          <p className="mt-1 text-sm text-ink-soft">Diga o horário. Ex.: “15 horas” ou “amanhã às 9”.</p>
         </div>
       )}
 
@@ -194,7 +204,10 @@ export function ConversationPanel() {
               showQuickConfirmation={isLatestAssistant && offersYesNoQuickReply(message)}
               quickReplyDisabled={inputDisabled}
               onQuickReply={(answer) => void submitText(answer)}
-              onScheduleSuggestion={(hour) => void submitText(`${hour} horas`)}
+              onScheduleSuggestion={(day, hour) => {
+                const dayLabel = day === 'tomorrow' ? 'amanhã' : 'hoje';
+                void submitText(`Agende ${scheduleTaskTitle} ${dayLabel} às ${hour} horas`);
+              }}
             />
           );
         })}
@@ -232,7 +245,7 @@ function MessageBubble({
   showQuickConfirmation?: boolean;
   quickReplyDisabled?: boolean;
   onQuickReply?: (answer: 'sim' | 'não') => void;
-  onScheduleSuggestion?: (hour: number) => void;
+  onScheduleSuggestion?: (day: ScheduleSuggestionDay, hour: number) => void;
 }) {
   const isUser = message.role === 'user';
 
@@ -250,21 +263,21 @@ function MessageBubble({
       {message.kind === 'proposal' && <ProposalPreview action={message.action} />}
       {message.kind === 'schedule_suggestions' && (
         <div>
-          <p>Esse horário está ocupado. Encontrei estes horários livres:</p>
+          <p>Esse horário não está disponível. Encontrei estas alternativas:</p>
           <div className="mt-3 flex flex-wrap gap-2" aria-label="Horários livres">
             {message.suggestions.map((suggestion) => (
               <Button
-                key={suggestion.label}
+                key={`${suggestion.day}-${suggestion.hour}`}
                 type="button"
                 variant="secondary"
                 disabled={quickReplyDisabled}
-                onClick={() => onScheduleSuggestion?.(suggestion.hour)}
+                onClick={() => onScheduleSuggestion?.(suggestion.day, suggestion.hour)}
               >
                 {suggestion.label}
               </Button>
             ))}
           </div>
-          <p className="mt-2 text-xs text-ink-soft">Toque em um horário ou diga somente o horário por voz.</p>
+          <p className="mt-2 text-xs text-ink-soft">Toque em uma opção ou diga o dia e horário por voz.</p>
         </div>
       )}
       {showQuickConfirmation && onQuickReply && (

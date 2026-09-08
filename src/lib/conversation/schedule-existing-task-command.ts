@@ -11,9 +11,11 @@ import {
 import type { StructuredIntent } from './types';
 
 type CreateEventIntent = Extract<StructuredIntent, { intentType: 'create_event' }>;
+type RelativeScheduleDay = 'today' | 'tomorrow';
 
 export type ScheduleExistingTaskCommand = {
   referenceRaw: string;
+  day: RelativeScheduleDay;
   hour: number;
   minute: number;
 };
@@ -28,7 +30,7 @@ export type ScheduleExistingTaskResult =
 function cleanReference(raw: string): string {
   return raw
     .trim()
-    .replace(/\s+hoje$/iu, '')
+    .replace(/\s+(?:hoje|amanh[aã])$/iu, '')
     .replace(/^(?:(?:a|o)\s+)?tarefa\s+/iu, '')
     .replace(/[.!?]+$/u, '')
     .trim();
@@ -45,18 +47,18 @@ function parseClock(rawHour: string, rawMinute?: string): { hour: number; minute
 export function parseScheduleExistingTaskCommand(text: string): ScheduleExistingTaskCommand | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
-  if (/(?:^|\s)amanh[aã](?:\s|$)/iu.test(trimmed)) return null;
 
   const match = trimmed.match(
-    /^(?:agende|agendar|marque|marcar)\s+(.+?)\s+(?:hoje\s+)?(?:às|as)\s+(\d{1,2})(?::(\d{2})|h(\d{2}))?\s*(?:h|horas?)?[.!?]*$/iu,
+    /^(?:agende|agendar|marque|marcar)\s+(.+?)\s+(?:(hoje|amanh[aã])\s+)?(?:às|as)\s+(\d{1,2})(?::(\d{2})|h(\d{2}))?\s*(?:h|horas?)?[.!?]*$/iu,
   );
   if (!match) return null;
 
   const referenceRaw = cleanReference(match[1]);
   if (!referenceRaw || /^(?:isso|isto|essa|esse|ela|ele)$/iu.test(referenceRaw)) return null;
-  const clock = parseClock(match[2], match[3] ?? match[4]);
+  const clock = parseClock(match[3], match[4] ?? match[5]);
   if (!clock) return null;
-  return { referenceRaw, ...clock };
+  const day: RelativeScheduleDay = match[2] && /^amanh[aã]$/iu.test(match[2]) ? 'tomorrow' : 'today';
+  return { referenceRaw, day, ...clock };
 }
 
 export async function resolveScheduleExistingTaskCommand(
@@ -105,14 +107,15 @@ export async function resolveScheduleExistingTaskCommand(
     if (matched.status === 'ambiguous') return { status: 'ambiguous' };
     if (matched.status !== 'resolved') return { status: 'not_found' };
 
+    const dayLabel = command.day === 'today' ? 'hoje' : 'amanhã';
     return {
       status: 'ready',
       intent: {
         intentType: 'create_event',
         task: { kind: 'new_task', title: matched.candidate.title, description: null },
         temporalWindow: {
-          expression: `hoje às ${String(command.hour).padStart(2, '0')}:${String(command.minute).padStart(2, '0')}`,
-          resolved: { kind: 'relative_day', day: 'today', time: { hour: command.hour, minute: command.minute } },
+          expression: `${dayLabel} às ${String(command.hour).padStart(2, '0')}:${String(command.minute).padStart(2, '0')}`,
+          resolved: { kind: 'relative_day', day: command.day, time: { hour: command.hour, minute: command.minute } },
         },
         duration: null,
         participants: [],
