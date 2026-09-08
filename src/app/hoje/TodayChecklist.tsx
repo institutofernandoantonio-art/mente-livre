@@ -12,6 +12,7 @@ import { getTodayChecklist, type TodayChecklistResult } from './checklist-action
 import { FocusTimer } from './FocusTimer';
 
 type ViewState = TodayChecklistResult | { status: 'loading' };
+type FocusRequest = { taskId: string; minutes: 25 | 50 } | null;
 
 type EisenhowerChoice = {
   label: string;
@@ -33,16 +34,33 @@ function priorityLabel(priority: 'alta' | 'média' | 'baixa' | null) {
   return null;
 }
 
+function readFocusRequest(): FocusRequest {
+  const params = new URLSearchParams(window.location.search);
+  const taskId = params.get('focusTask')?.trim() ?? '';
+  const rawMinutes = params.get('focusMinutes');
+  const minutes = rawMinutes === '25' ? 25 : rawMinutes === '50' ? 50 : null;
+  if (!taskId || minutes === null) return null;
+  return { taskId, minutes };
+}
+
 export function TodayChecklist() {
   const [state, setState] = useState<ViewState>({ status: 'loading' });
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [focusRequest, setFocusRequest] = useState<FocusRequest>(null);
 
   useEffect(() => {
     let active = true;
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const requestedFocus = readFocusRequest();
 
     getTodayChecklist(timeZone).then((result) => {
-      if (active) setState(result);
+      if (!active) return;
+      if (requestedFocus !== null && result.status === 'ok') {
+        const exists = result.items.some((item) => item.id === requestedFocus.taskId);
+        if (exists) setFocusRequest(requestedFocus);
+        window.history.replaceState(null, '', '/hoje');
+      }
+      setState(result);
     });
 
     return () => {
@@ -107,6 +125,7 @@ export function TodayChecklist() {
         {state.items.map((item) => {
           const label = priorityLabel(item.priority);
           const isBusy = busyId === item.id;
+          const autoStartMinutes = focusRequest?.taskId === item.id ? focusRequest.minutes : null;
           return (
             <li key={item.id} className="rounded-xl border border-mist-200 p-4">
               <div className="flex items-start gap-3">
@@ -134,6 +153,7 @@ export function TodayChecklist() {
                 <FocusTimer
                   taskTitle={item.title}
                   disabled={busyId !== null}
+                  autoStartMinutes={autoStartMinutes}
                   onDone={() => void markDone(item.id)}
                 />
               </div>

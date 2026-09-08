@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 
 type FocusTimerProps = {
   taskTitle: string;
   disabled?: boolean;
+  autoStartMinutes?: 25 | 50 | null;
   onDone: () => void;
 };
 
@@ -15,10 +16,25 @@ function formatRemaining(totalSeconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-export function FocusTimer({ taskTitle, disabled = false, onDone }: FocusTimerProps) {
+export function FocusTimer({ taskTitle, disabled = false, autoStartMinutes = null, onDone }: FocusTimerProps) {
   const [endsAt, setEndsAt] = useState<number | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [finished, setFinished] = useState(false);
+  const autoStarted = useRef(false);
+
+  function start(minutes: 25 | 50) {
+    setFinished(false);
+    setRemainingSeconds(minutes * 60);
+    setEndsAt(Date.now() + minutes * 60_000);
+  }
+
+  useEffect(() => {
+    if (autoStartMinutes === null || autoStarted.current) return;
+    autoStarted.current = true;
+    setFinished(false);
+    setRemainingSeconds(autoStartMinutes * 60);
+    setEndsAt(Date.now() + autoStartMinutes * 60_000);
+  }, [autoStartMinutes]);
 
   useEffect(() => {
     if (endsAt === null) return;
@@ -37,12 +53,6 @@ export function FocusTimer({ taskTitle, disabled = false, onDone }: FocusTimerPr
     const interval = window.setInterval(updateRemaining, 1000);
     return () => window.clearInterval(interval);
   }, [endsAt]);
-
-  function start(minutes: 25 | 50) {
-    setFinished(false);
-    setRemainingSeconds(minutes * 60);
-    setEndsAt(Date.now() + minutes * 60_000);
-  }
 
   function stop() {
     setEndsAt(null);
