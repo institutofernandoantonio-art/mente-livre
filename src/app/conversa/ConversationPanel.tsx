@@ -43,7 +43,9 @@ export function ConversationPanel() {
   const [logElement, setLogElement] = useState<HTMLDivElement | null>(null);
   const [latestAssistantElement, setLatestAssistantElement] = useState<HTMLDivElement | null>(null);
 
-  const latestAssistantId = [...messages].reverse().find((message) => message.role === 'assistant')?.id ?? null;
+  const latestAssistantMessage = [...messages].reverse().find((message) => message.role === 'assistant') ?? null;
+  const latestAssistantId = latestAssistantMessage?.id ?? null;
+  const proposalVisible = latestAssistantMessage?.kind === 'proposal';
 
   useEffect(() => {
     let active = true;
@@ -106,10 +108,10 @@ export function ConversationPanel() {
     if (shouldSpeakResponse) setVoicePrepared(false);
 
     const alreadyExplicit = /^(agende|marque|remarque|mude|cancele)\b/iu.test(trimmed);
-    const isConfirmation = /^(sim|n[aã]o)$/iu.test(trimmed);
+    const isConfirmation = /^(sim|n[aã]o)\s*[.!?,;]*$/iu.test(trimmed);
     const startsWithDay = /^(hoje|amanh[aã])\b/iu.test(trimmed);
     const defaultDayLabel = scheduleDefaultDay === 'tomorrow' ? 'amanhã' : 'hoje';
-    const backendText = scheduleTaskTitle && !alreadyExplicit && !isConfirmation
+    const backendText = scheduleTaskTitle && !proposalVisible && !alreadyExplicit && !isConfirmation
       ? startsWithDay
         ? `Agende ${scheduleTaskTitle} ${trimmed}`
         : `Agende ${scheduleTaskTitle} ${defaultDayLabel} às ${trimmed}`
