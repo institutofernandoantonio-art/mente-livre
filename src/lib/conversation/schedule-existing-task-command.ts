@@ -43,7 +43,7 @@ function parseClock(rawHour: string, rawMinute?: string): { hour: number; minute
 export function parseScheduleExistingTaskCommand(text: string): ScheduleExistingTaskCommand | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
-  if (/\bamanh[aã]\b/iu.test(trimmed)) return null;
+  if (/(?:^|\s)amanh[aã](?:\s|$)/iu.test(trimmed)) return null;
 
   const match = trimmed.match(
     /^(?:agende|agendar|marque|marcar)\s+(.+?)\s+(?:hoje\s+)?(?:às|as)\s+(\d{1,2})(?::(\d{2})|h(\d{2}))?\s*(?:h|horas?)?[.!?]*$/iu,
