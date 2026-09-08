@@ -114,6 +114,13 @@ export function ConversationPanel() {
         const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
         result = await sendConversationMessage(text, timezone);
       }
+
+      if (result.status === 'focus_ready') {
+        const taskId = encodeURIComponent(result.taskId);
+        window.location.assign(`/hoje?focusTask=${taskId}&focusMinutes=${result.minutes}`);
+        return;
+      }
+
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
       if (clearInput || isConfirmation) {
