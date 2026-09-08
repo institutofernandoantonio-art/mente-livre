@@ -26,7 +26,7 @@ export type FocusCommandResult =
 function cleanReference(raw: string): string {
   return raw
     .trim()
-    .replace(/^(?:a|o)\s+tarefa\s+/iu, '')
+    .replace(/^(?:(?:a|o)\s+)?tarefa\s+/iu, '')
     .replace(/[.!?]+$/u, '')
     .trim();
 }
