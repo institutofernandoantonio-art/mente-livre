@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { buttonVariants } from "@/components/ui/Button";
 import { createClient } from "@/lib/supabase/server";
@@ -9,20 +10,24 @@ import { BrainDumpForm } from "./BrainDumpForm";
 import { UpcomingCalendarEvents } from "./UpcomingCalendarEvents";
 
 /**
- * Tela 2 (despejo mental) — Fase 3: captura de texto livre. Também é o
- * destino pós-login da Fase 2 (ver docs/DECISIONS.md): mostra a sessão
- * ativa e o logout.
+ * Tela legada de despejo mental. No fluxo normal, a conversa é o centro do
+ * produto; esta rota só permanece visível quando precisa apresentar o retorno
+ * específico da conexão com o Google Calendar.
  */
 export default async function EntradaPage({
   searchParams,
 }: {
   searchParams: Promise<{ calendar?: string }>;
 }) {
+  const { calendar } = await searchParams;
+  if (calendar === undefined) {
+    redirect("/conversa");
+  }
+
   const supabase = await createClient();
   const { data } = await supabase.auth.getClaims();
   const email = typeof data?.claims.email === "string" ? data.claims.email : undefined;
   const calendarUrl = buildGoogleCalendarAccountUrl(email ?? "");
-  const { calendar } = await searchParams;
 
   return (
     <main className="flex flex-1 flex-col items-center justify-center px-6 py-16">
