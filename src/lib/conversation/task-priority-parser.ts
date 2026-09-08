@@ -34,6 +34,8 @@ const CLASSIFICATIONS: Array<{
   },
 ];
 
+const VAGUE_REFERENCES = new Set(['isso', 'isto', 'essa', 'esse', 'esta', 'este', 'ela', 'ele', 'disso', 'dessa', 'desse']);
+
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -63,6 +65,7 @@ export function parseTaskPriorityCommand(text: string): TaskPriorityCommand | nu
         if (!match) continue;
         const referenceRaw = cleanReference(match[1]);
         if (referenceRaw.length === 0) return null;
+        if (VAGUE_REFERENCES.has(referenceRaw.toLocaleLowerCase('pt-BR'))) return null;
         return {
           referenceRaw,
           priority: classification.priority,
