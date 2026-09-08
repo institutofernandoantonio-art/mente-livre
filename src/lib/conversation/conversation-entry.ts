@@ -60,7 +60,8 @@ function isValidNow(value: unknown): value is number {
 }
 
 function isExplicitNewCommand(text: string): boolean {
-  if (parseTaskPriorityCommand(text) !== null || parseFocusCommand(text) !== null) return true;
+  if (parseTaskPriorityCommand(text) !== null) return true;
+  if (parseFocusCommand(text) !== null) return true;
   const normalized = text.trim().toLocaleLowerCase('pt-BR');
   const calendarCommand = /^(agende|marque|mude|remarque|cancele)\s+\S.{2,}$/u;
   const taskCommand = /^(crie|criar)\s+(?:uma\s+)?tarefa\s*[:\-]?\s+\S.{2,}$/u;
