@@ -60,6 +60,7 @@
     "test:timezone": "node --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/timezone.test.mjs",
     "test:calendar-event-proposal": "node --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/calendar-event-proposal.test.mjs",
     "test:calendar-event-availability": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/calendar-event-availability.test.mjs",
+    "test:calendar-alternative-times": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/calendar-alternative-times.test.mjs",
     "test:calendar-event-claim": "node --conditions=react-server --experimental-strip-types --import ./tests/support/register-ts-loader.mjs tests/conversation/calendar-event-claim.test.mjs",
     "test:calendar-event-id": "node tests/conversation/calendar-event-id.test.mjs",
     "test:calendar-event-executions-migration": "node tests/google/calendar-event-executions-migration.test.mjs",
