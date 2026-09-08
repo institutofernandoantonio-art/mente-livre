@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { buttonVariants } from '@/components/ui/Button';
+import { BackButton } from '@/components/navigation/BackButton';
 import { UpcomingCalendarEvents } from '@/app/entrada/UpcomingCalendarEvents';
 import { createClient } from '@/lib/supabase/server';
 import { buildGoogleCalendarAccountUrl } from '@/lib/google/calendar-web-url';
@@ -20,6 +21,10 @@ export default async function ConversaPage() {
   return (
     <main className="flex flex-1 flex-col items-center justify-center px-6 py-16">
       <div className="w-full max-w-sm">
+        <div className="mb-5 flex justify-start">
+          <BackButton />
+        </div>
+
         <Card>
           <ConversationPanel />
         </Card>
@@ -40,9 +45,6 @@ export default async function ConversaPage() {
           </a>
           <Link href="/tarefas" className={buttonVariants('secondary')}>
             Minhas tarefas
-          </Link>
-          <Link href="/entrada" className={buttonVariants('secondary')}>
-            Voltar para entrada
           </Link>
         </div>
       </div>
