@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
@@ -28,6 +29,7 @@ function nextId(): string {
 }
 
 export function ConversationPanel() {
+  const router = useRouter();
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [text, setText] = useState('');
   const [pending, setPending] = useState(false);
@@ -117,7 +119,7 @@ export function ConversationPanel() {
 
       if (result.status === 'focus_ready') {
         const taskId = encodeURIComponent(result.taskId);
-        window.location.assign(`/hoje?focusTask=${taskId}&focusMinutes=${result.minutes}`);
+        router.push(`/hoje?focusTask=${taskId}&focusMinutes=${result.minutes}`);
         return;
       }
 
