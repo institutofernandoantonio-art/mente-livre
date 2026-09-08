@@ -18,6 +18,8 @@ const UNSUPPORTED_TEXT = 'Por enquanto, consigo criar tarefas simples a partir d
 const CONFLICT_TEXT = 'O estado da conversa mudou. Revise o que está na tela e envie novamente.';
 const TASK_REFERENCE_NOT_FOUND_TEXT = 'Não encontrei uma tarefa pendente com esse nome.';
 const TASK_REFERENCE_AMBIGUOUS_TEXT = 'Encontrei mais de uma tarefa parecida. Diga o nome com mais detalhes.';
+const FOCUS_TASK_NOT_FOUND_TEXT = 'Não encontrei essa tarefa no checklist de hoje.';
+const FOCUS_TASK_AMBIGUOUS_TEXT = 'Encontrei mais de uma tarefa parecida no checklist de hoje. Diga o nome com mais detalhes.';
 const CALENDAR_DAY_BUSY_TEXT = 'Você tem compromissos nesse dia.';
 const CALENDAR_HOUR_BUSY_TEXT = 'Esse horário está ocupado na sua agenda.';
 const CALENDAR_DAY_AVAILABLE_TEXT = 'Não encontrei horários ocupados nesse dia.';
@@ -145,6 +147,12 @@ export function mapEntryResultToUiEffect(result: ConversationEntryResult): Entry
       return { message: assistantText(TASK_REFERENCE_NOT_FOUND_TEXT), clearInput: false };
     case 'task_reference_ambiguous':
       return { message: assistantText(TASK_REFERENCE_AMBIGUOUS_TEXT), clearInput: false };
+    case 'focus_ready':
+      return { message: assistantText(`Iniciando foco de ${result.minutes} minutos em “${result.taskTitle}”.`), clearInput: true };
+    case 'focus_task_not_found':
+      return { message: assistantText(FOCUS_TASK_NOT_FOUND_TEXT), clearInput: false };
+    case 'focus_task_ambiguous':
+      return { message: assistantText(FOCUS_TASK_AMBIGUOUS_TEXT), clearInput: false };
     case 'needs_input':
       return { message: assistantText(NEEDS_INPUT_TEXT), clearInput: false };
     case 'unsupported':
