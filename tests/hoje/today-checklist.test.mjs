@@ -44,7 +44,7 @@ assert.ok(focusTimer.includes("'use client'"));
 assert.ok(focusTimer.includes('Foco 25 min'));
 assert.ok(focusTimer.includes('50 min'));
 assert.ok(focusTimer.includes('Date.now() + minutes * 60_000'));
-assert.ok(focusTimer.includes('(endsAt - Date.now()) / 1000'));
+assert.ok(focusTimer.includes('(targetEndsAt - Date.now()) / 1000'));
 assert.ok(focusTimer.includes('window.setInterval(updateRemaining, 1000)'));
 assert.ok(focusTimer.includes('window.clearInterval(interval)'));
 assert.ok(focusTimer.includes('Tempo de foco concluído.'));
