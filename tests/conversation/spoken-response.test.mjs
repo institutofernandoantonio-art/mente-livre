@@ -56,17 +56,26 @@ assert.equal(
 );
 
 const panel = readFileSync(new URL('../../src/app/conversa/ConversationPanel.tsx', import.meta.url), 'utf8');
+const browserSpeech = readFileSync(new URL('../../src/lib/conversation/browser-speech.ts', import.meta.url), 'utf8');
 
 assert.ok(panel.includes('const [voicePrepared, setVoicePrepared] = useState(false)'));
 assert.ok(panel.includes('setVoicePrepared(true)'));
 assert.ok(panel.includes('setVoicePrepared(false)'));
 assert.ok(panel.includes('const shouldSpeakResponse = voicePrepared'));
-assert.ok(panel.includes("'speechSynthesis' in window"));
-assert.ok(panel.includes("utterance.lang = 'pt-BR'"));
-assert.ok(panel.includes('window.speechSynthesis.cancel()'));
-assert.ok(panel.includes('window.speechSynthesis.speak(utterance)'));
+assert.ok(panel.includes('speakBrowserText('));
 assert.ok(panel.includes('buildSpokenResponse(message)'));
+assert.ok(panel.includes('🔊 Ouvir resposta'));
+assert.ok(panel.includes('onSpeak={spokenText ? () => speakBrowserText(spokenText) : undefined}'));
 assert.ok(panel.includes('setText(transcript.slice(0, 10000))'));
+
+assert.ok(browserSpeech.includes("utterance.lang = 'pt-BR'"));
+assert.ok(browserSpeech.includes('utterance.volume = 1'));
+assert.ok(browserSpeech.includes('utterance.rate = 0.95'));
+assert.ok(browserSpeech.includes("voice.lang.toLowerCase() === 'pt-br'"));
+assert.ok(browserSpeech.includes("voice.lang.toLowerCase().startsWith('pt')"));
+assert.ok(browserSpeech.includes('window.speechSynthesis.cancel()'));
+assert.ok(browserSpeech.includes('window.speechSynthesis.resume()'));
+assert.ok(browserSpeech.includes('window.speechSynthesis.speak(utterance)'));
 
 const voiceHandlerStart = panel.indexOf('function handleVoiceTranscript(transcript: string)');
 const nextFunctionStart = panel.indexOf('function offersYesNoQuickReply', voiceHandlerStart);
@@ -77,9 +86,11 @@ assert.ok(!voiceHandler.includes('sendConversationMessage('));
 
 for (const forbidden of ['localStorage', 'sessionStorage', 'indexedDB', 'api.openai.com']) {
   assert.ok(!panel.includes(forbidden), `persistência/serviço proibido no painel: ${forbidden}`);
+  assert.ok(!browserSpeech.includes(forbidden), `persistência/serviço proibido na síntese: ${forbidden}`);
 }
 
 console.log('[PASS] respostas de texto, proposta e alternativas viram fala simples em português');
 console.log('[PASS] fala automática só é armada após transcrição de voz e é desarmada ao editar/enviar');
-console.log('[PASS] síntese usa apenas o recurso local do navegador, sem persistência ou novo provedor');
+console.log('[PASS] última resposta oferece reprodução explícita para navegadores móveis que bloqueiam autoplay');
+console.log('[PASS] síntese prioriza pt-BR, volume máximo e usa apenas o recurso local do navegador');
 console.log('[PASS] transcrição continua exigindo revisão e envio explícito');
