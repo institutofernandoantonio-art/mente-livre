@@ -8,7 +8,6 @@ import { cn } from '@/lib/cn';
 import { sendConversationMessage } from '@/lib/conversation/actions';
 import { getConversationPresentationState } from '@/lib/conversation/presentation';
 import type { ProposedAction } from '@/lib/conversation/proposed-action';
-import type { CalendarAlternativeDay } from '@/lib/conversation/calendar-alternative-times';
 import { VoiceDictationButton } from './VoiceDictationButton';
 import { resolveScheduleTask } from './schedule-task-action';
 import {
@@ -21,6 +20,7 @@ import {
 } from '@/lib/conversation/presentation-ui';
 
 type UiMessage = UiMessageContent & { id: string };
+type ScheduleSuggestionDay = 'today' | 'tomorrow';
 
 function nextId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -36,7 +36,7 @@ export function ConversationPanel() {
   const [pending, setPending] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [scheduleTaskTitle, setScheduleTaskTitle] = useState('');
-  const [scheduleDefaultDay, setScheduleDefaultDay] = useState<CalendarAlternativeDay>('today');
+  const [scheduleDefaultDay, setScheduleDefaultDay] = useState<ScheduleSuggestionDay>('today');
   const [logElement, setLogElement] = useState<HTMLDivElement | null>(null);
   const [latestAssistantElement, setLatestAssistantElement] = useState<HTMLDivElement | null>(null);
 
@@ -245,7 +245,7 @@ function MessageBubble({
   showQuickConfirmation?: boolean;
   quickReplyDisabled?: boolean;
   onQuickReply?: (answer: 'sim' | 'não') => void;
-  onScheduleSuggestion?: (day: CalendarAlternativeDay, hour: number) => void;
+  onScheduleSuggestion?: (day: ScheduleSuggestionDay, hour: number) => void;
 }) {
   const isUser = message.role === 'user';
 
