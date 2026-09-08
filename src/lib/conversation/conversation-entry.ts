@@ -25,6 +25,10 @@ import {
   type TaskPriorityBucket,
 } from './task-priority-command';
 import { parseFocusCommand, resolveFocusCommand, type FocusMinutes } from './focus-command';
+import {
+  parseScheduleExistingTaskCommand,
+  resolveScheduleExistingTaskCommand,
+} from './schedule-existing-task-command';
 
 export type ConversationEntryResult =
   | { status: 'clarification_required'; question: string }
@@ -62,6 +66,7 @@ function isValidNow(value: unknown): value is number {
 function isExplicitNewCommand(text: string): boolean {
   if (parseTaskPriorityCommand(text) !== null) return true;
   if (parseFocusCommand(text) !== null) return true;
+  if (parseScheduleExistingTaskCommand(text) !== null) return true;
   const normalized = text.trim().toLocaleLowerCase('pt-BR');
   const calendarCommand = /^(agende|marque|mude|remarque|cancele)\s+\S.{2,}$/u;
   const taskCommand = /^(crie|criar)\s+(?:uma\s+)?tarefa\s*[:\-]?\s+\S.{2,}$/u;
@@ -158,7 +163,36 @@ async function handleFocusCommand(
   }
 }
 
+async function handleScheduleExistingTaskCommand(
+  text: string,
+  now: number,
+  timezone: string,
+): Promise<ConversationEntryResult | null> {
+  const command = parseScheduleExistingTaskCommand(text);
+  if (command === null) return null;
+
+  const resolved = await resolveScheduleExistingTaskCommand(command, timezone, now);
+  switch (resolved.status) {
+    case 'not_found': return { status: 'task_reference_not_found' };
+    case 'ambiguous': return { status: 'task_reference_ambiguous' };
+    case 'invalid_timezone':
+    case 'error': return { status: 'error' };
+    case 'ready': {
+      const intent = applyCreateEventDefaults(resolved.intent);
+      const expirations = {
+        clarificationExpiresAt: getClarificationExpiresAt(now),
+        proposalExpiresAt: getProposalExpiresAt(now),
+      };
+      const result = await resolveFirstConversationalTurn(intent, now, expirations, timezone);
+      return translateFirstTurnResult(result);
+    }
+  }
+}
+
 async function handleFirstMessage(text: string, now: number, timezone: string): Promise<ConversationEntryResult> {
+  const scheduleExistingTaskResult = await handleScheduleExistingTaskCommand(text, now, timezone);
+  if (scheduleExistingTaskResult !== null) return scheduleExistingTaskResult;
+
   const focusResult = await handleFocusCommand(text, now, timezone);
   if (focusResult !== null) return focusResult;
 
