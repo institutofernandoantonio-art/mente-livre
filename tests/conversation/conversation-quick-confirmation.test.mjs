@@ -12,6 +12,9 @@ const checks = [
   ['resposta rápida não remove voz', source.includes('<VoiceDictationButton')],
   ['botões são desabilitados durante processamento', source.includes('disabled={quickReplyDisabled}')],
   ['somente a resposta mais recente oferece confirmação rápida', source.includes('showQuickConfirmation={isLatestAssistant && offersYesNoQuickReply(message)}')],
+  ['painel sabe quando a proposta está visível', source.includes("const proposalVisible = latestAssistantMessage?.kind === 'proposal'")],
+  ['modo agendar não reescreve resposta enquanto proposta está visível', source.includes('scheduleTaskTitle && !proposalVisible && !alreadyExplicit && !isConfirmation')],
+  ['sim com pontuação terminal é tratado como confirmação no cliente', source.includes('/^(sim|n[aã]o)\\s*[.!?,;]*$/iu')],
 ];
 
 let failed = 0;
