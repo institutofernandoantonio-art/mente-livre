@@ -31,7 +31,9 @@ export function FocusTimer({ taskTitle, disabled = false, autoStartMinutes = nul
   useEffect(() => {
     if (autoStartMinutes === null || autoStarted.current) return;
     autoStarted.current = true;
-    start(autoStartMinutes);
+    setFinished(false);
+    setRemainingSeconds(autoStartMinutes * 60);
+    setEndsAt(Date.now() + autoStartMinutes * 60_000);
   }, [autoStartMinutes]);
 
   useEffect(() => {
