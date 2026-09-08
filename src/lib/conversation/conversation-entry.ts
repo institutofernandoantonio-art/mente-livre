@@ -19,6 +19,11 @@ import { applyCreateEventDefaults } from './create-event-defaults';
 import { normalizeCreateTaskRelativeDay } from './create-task-temporal-normalization';
 import { normalizeConversationInput } from './conversation-input-normalization';
 import { parseExplicitCreateTaskInput } from './explicit-create-task-input';
+import {
+  applyTaskPriorityCommand,
+  parseTaskPriorityCommand,
+  type TaskPriorityBucket,
+} from './task-priority-command';
 
 export type ConversationEntryResult =
   | { status: 'clarification_required'; question: string }
@@ -33,6 +38,9 @@ export type ConversationEntryResult =
   | { status: 'calendar_authorization_required' }
   | { status: 'calendar_execution_uncertain' }
   | { status: 'calendar_finalization_pending' }
+  | { status: 'task_priority_updated'; bucket: TaskPriorityBucket }
+  | { status: 'task_reference_not_found' }
+  | { status: 'task_reference_ambiguous' }
   | { status: 'needs_input' }
   | { status: 'unsupported' }
   | { status: 'conflict' }
@@ -48,6 +56,7 @@ function isValidNow(value: unknown): value is number {
 }
 
 function isExplicitNewCommand(text: string): boolean {
+  if (parseTaskPriorityCommand(text) !== null) return true;
   const normalized = text.trim().toLocaleLowerCase('pt-BR');
   const calendarCommand = /^(agende|marque|mude|remarque|cancele)\s+\S.{2,}$/u;
   const taskCommand = /^(crie|criar)\s+(?:uma\s+)?tarefa\s*[:\-]?\s+\S.{2,}$/u;
@@ -107,7 +116,23 @@ function translateProposalResult(result: ProposalTurnResult): ConversationEntryR
   }
 }
 
+async function handlePriorityCommand(text: string): Promise<ConversationEntryResult | null> {
+  const command = parseTaskPriorityCommand(text);
+  if (command === null) return null;
+
+  const result = await applyTaskPriorityCommand(command);
+  switch (result.status) {
+    case 'updated': return { status: 'task_priority_updated', bucket: result.bucket };
+    case 'not_found': return { status: 'task_reference_not_found' };
+    case 'ambiguous': return { status: 'task_reference_ambiguous' };
+    case 'error': return { status: 'error' };
+  }
+}
+
 async function handleFirstMessage(text: string, now: number, timezone: string): Promise<ConversationEntryResult> {
+  const priorityResult = await handlePriorityCommand(text);
+  if (priorityResult !== null) return priorityResult;
+
   const explicitTask = parseExplicitCreateTaskInput(text);
   if (explicitTask !== null) {
     const withEventDefaults = applyCreateEventDefaults(explicitTask);

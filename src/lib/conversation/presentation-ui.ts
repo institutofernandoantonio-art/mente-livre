@@ -2,6 +2,7 @@ import type { ProposedAction } from './proposed-action';
 import type { ConversationPresentationState } from './presentation';
 import type { ConversationEntryResult } from './conversation-entry';
 import type { CalendarQueryResult } from './calendar-query';
+import type { TaskPriorityBucket } from './task-priority-command';
 
 export type UiMessageContent =
   | { role: 'user'; kind: 'text'; text: string }
@@ -15,6 +16,8 @@ const CANCELLED_TEXT = 'Proposta cancelada.';
 const NEEDS_INPUT_TEXT = 'Não entendi. Pode responder de outro jeito?';
 const UNSUPPORTED_TEXT = 'Por enquanto, consigo criar tarefas simples a partir do que você escreve.';
 const CONFLICT_TEXT = 'O estado da conversa mudou. Revise o que está na tela e envie novamente.';
+const TASK_REFERENCE_NOT_FOUND_TEXT = 'Não encontrei uma tarefa pendente com esse nome.';
+const TASK_REFERENCE_AMBIGUOUS_TEXT = 'Encontrei mais de uma tarefa parecida. Diga o nome com mais detalhes.';
 const CALENDAR_DAY_BUSY_TEXT = 'Você tem compromissos nesse dia.';
 const CALENDAR_HOUR_BUSY_TEXT = 'Esse horário está ocupado na sua agenda.';
 const CALENDAR_DAY_AVAILABLE_TEXT = 'Não encontrei horários ocupados nesse dia.';
@@ -39,6 +42,15 @@ function assistantText(text: string): UiMessageContent {
 
 function assistantProposal(action: ProposedAction): UiMessageContent {
   return { role: 'assistant', kind: 'proposal', action };
+}
+
+function taskPriorityUpdatedText(bucket: TaskPriorityBucket): string {
+  switch (bucket) {
+    case 'fazer_hoje': return 'Prioridade atualizada: Fazer hoje.';
+    case 'planejar': return 'Prioridade atualizada: Planejar.';
+    case 'delegar': return 'Prioridade atualizada: Delegar.';
+    case 'depois': return 'Prioridade atualizada: Depois.';
+  }
 }
 
 type CalendarInformationResult =
@@ -127,6 +139,12 @@ export function mapEntryResultToUiEffect(result: ConversationEntryResult): Entry
         ),
         clearInput: false,
       };
+    case 'task_priority_updated':
+      return { message: assistantText(taskPriorityUpdatedText(result.bucket)), clearInput: true };
+    case 'task_reference_not_found':
+      return { message: assistantText(TASK_REFERENCE_NOT_FOUND_TEXT), clearInput: false };
+    case 'task_reference_ambiguous':
+      return { message: assistantText(TASK_REFERENCE_AMBIGUOUS_TEXT), clearInput: false };
     case 'needs_input':
       return { message: assistantText(NEEDS_INPUT_TEXT), clearInput: false };
     case 'unsupported':

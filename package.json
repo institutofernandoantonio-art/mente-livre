@@ -32,6 +32,7 @@
     "test:tarefas": "node --experimental-strip-types tests/tarefas/tarefas.test.mjs",
     "test:tasks-actions": "node --experimental-strip-types tests/tarefas/tasks-actions.test.mjs",
     "test:task-priority": "node tests/tarefas/task-priority.test.mjs",
+    "test:task-priority-command": "node --experimental-strip-types tests/conversation/task-priority-command.test.mjs",
     "test:top-priorities": "node tests/tarefas/top-priorities.test.mjs",
     "test:hoje": "node tests/hoje/hoje.test.mjs",
     "test:today-checklist": "node tests/hoje/today-checklist.test.mjs",
