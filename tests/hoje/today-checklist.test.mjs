@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const actions = readFileSync(new URL('../../src/app/hoje/checklist-actions.ts', import.meta.url), 'utf8');
 const component = readFileSync(new URL('../../src/app/hoje/TodayChecklist.tsx', import.meta.url), 'utf8');
+const focusTimer = readFileSync(new URL('../../src/app/hoje/FocusTimer.tsx', import.meta.url), 'utf8');
 const page = readFileSync(new URL('../../src/app/hoje/page.tsx', import.meta.url), 'utf8');
 const conversaPage = readFileSync(new URL('../../src/app/conversa/page.tsx', import.meta.url), 'utf8');
 const conversaPanel = readFileSync(new URL('../../src/app/conversa/ConversationPanel.tsx', import.meta.url), 'utf8');
@@ -33,8 +34,29 @@ assert.ok(component.includes('Agendar horário'));
 assert.ok(component.includes('/conversa?agendarTask='));
 assert.ok(component.includes('encodeURIComponent(item.id)'));
 assert.ok(!component.includes('encodeURIComponent(item.title)'));
+assert.ok(component.includes("import { FocusTimer } from './FocusTimer'"));
+assert.ok(component.includes('<FocusTimer'));
+assert.ok(component.includes('onDone={() => void markDone(item.id)}'));
 assert.ok(!component.includes('Google Calendar'));
 assert.ok(!component.includes('create_event'));
+
+assert.ok(focusTimer.includes("'use client'"));
+assert.ok(focusTimer.includes('Foco 25 min'));
+assert.ok(focusTimer.includes('50 min'));
+assert.ok(focusTimer.includes('Date.now() + minutes * 60_000'));
+assert.ok(focusTimer.includes('(targetEndsAt - Date.now()) / 1000'));
+assert.ok(focusTimer.includes('window.setInterval(updateRemaining, 1000)'));
+assert.ok(focusTimer.includes('window.clearInterval(interval)'));
+assert.ok(focusTimer.includes('Tempo de foco concluído.'));
+assert.ok(focusTimer.includes('Concluiu “{taskTitle}”?'));
+assert.ok(focusTimer.includes('onClick={onDone}'));
+assert.ok(focusTimer.includes('+25 min'));
+assert.ok(focusTimer.includes('Parar'));
+assert.ok(!focusTimer.includes('localStorage'));
+assert.ok(!focusTimer.includes('sessionStorage'));
+assert.ok(!focusTimer.includes('fetch('));
+assert.ok(!focusTimer.includes('supabase'));
+assert.ok(!focusTimer.includes('Google'));
 
 assert.ok(scheduleAction.includes("'use server'"));
 assert.ok(scheduleAction.includes('getClaims()'));
@@ -77,6 +99,6 @@ console.log('[PASS] checklist do dia usa apenas tarefas pendentes e confirmadas 
 console.log('[PASS] recorte de hoje respeita timezone civil do aparelho');
 console.log('[PASS] Eisenhower é apresentado em linguagem simples e resolvido em um toque');
 console.log('[PASS] agendar horário envia só id opaco e resolve título no servidor por usuário');
-console.log('[PASS] bootstrap único, timezone e transcrição por voz preservam os contratos existentes');
-console.log('[PASS] usuário pode dizer apenas o horário e sim/não continuam sendo confirmação');
-console.log('[PASS] checklist permite concluir sem criar evento automaticamente no Google Calendar');
+console.log('[PASS] foco de 25/50 min é local, sem banco, sem agenda e corrige drift por Date.now');
+console.log('[PASS] ao terminar o foco, concluir continua sendo uma ação explícita do usuário');
+console.log('[PASS] bootstrap, timezone e transcrição por voz preservam os contratos existentes');

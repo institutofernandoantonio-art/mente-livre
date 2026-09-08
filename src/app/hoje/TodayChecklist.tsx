@@ -9,6 +9,7 @@ import { Button, buttonVariants } from '@/components/ui/Button';
 import { completeTask } from '@/app/tarefas/actions';
 import { setTaskPriority, type TaskPriorityInput } from '@/app/tarefas/priority-actions';
 import { getTodayChecklist, type TodayChecklistResult } from './checklist-actions';
+import { FocusTimer } from './FocusTimer';
 
 type ViewState = TodayChecklistResult | { status: 'loading' };
 
@@ -123,13 +124,18 @@ export function TodayChecklist() {
                 </Button>
               </div>
 
-              <div className="mt-3 flex flex-wrap gap-2 border-t border-mist-200 pt-3">
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-mist-200 pt-3">
                 <Link
                   href={`/conversa?agendarTask=${encodeURIComponent(item.id)}`}
                   className={buttonVariants('secondary', 'px-3 py-2 text-sm')}
                 >
                   Agendar horário
                 </Link>
+                <FocusTimer
+                  taskTitle={item.title}
+                  disabled={busyId !== null}
+                  onDone={() => void markDone(item.id)}
+                />
               </div>
 
               <div className="mt-3 border-t border-mist-200 pt-3">
