@@ -8,6 +8,7 @@ import { sendConversationMessage } from '@/lib/conversation/actions';
 import { getConversationPresentationState } from '@/lib/conversation/presentation';
 import type { ProposedAction } from '@/lib/conversation/proposed-action';
 import { VoiceDictationButton } from './VoiceDictationButton';
+import { resolveScheduleTask } from './schedule-task-action';
 import {
   mapPresentationBootstrap,
   mapEntryResultToUiEffect,
@@ -31,6 +32,7 @@ export function ConversationPanel() {
   const [text, setText] = useState('');
   const [pending, setPending] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
+  const [scheduleTaskTitle, setScheduleTaskTitle] = useState('');
   const [logElement, setLogElement] = useState<HTMLDivElement | null>(null);
   const [latestAssistantElement, setLatestAssistantElement] = useState<HTMLDivElement | null>(null);
 
@@ -46,6 +48,13 @@ export function ConversationPanel() {
         const content = mapPresentationBootstrap(state);
         if (content !== null) {
           setMessages((prev) => [...prev, { ...content, id: nextId() }]);
+        }
+
+        const taskId = new URLSearchParams(window.location.search).get('agendarTask')?.trim() ?? '';
+        if (taskId) {
+          const task = await resolveScheduleTask(taskId);
+          if (!active) return;
+          setScheduleTaskTitle(task.status === 'ok' ? task.title : '');
         }
       } catch {
         if (!active) return;
@@ -85,15 +94,29 @@ export function ConversationPanel() {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
 
+    const alreadyExplicit = /^(agende|marque|remarque|mude|cancele)\b/iu.test(trimmed);
+    const isConfirmation = /^(sim|n[aã]o)$/iu.test(trimmed);
+    const backendText = scheduleTaskTitle && !alreadyExplicit && !isConfirmation
+      ? `Agende ${scheduleTaskTitle} hoje às ${trimmed}`
+      : trimmed;
+
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', kind: 'text', text }]);
     setPending(true);
 
     try {
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const result = await sendConversationMessage(text, timezone);
+      let result: Awaited<ReturnType<typeof sendConversationMessage>>;
+      if (scheduleTaskTitle) {
+        result = await sendConversationMessage(
+          backendText,
+          Intl.DateTimeFormat().resolvedOptions().timeZone,
+        );
+      } else {
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        result = await sendConversationMessage(text, timezone);
+      }
       const { message, clearInput } = mapEntryResultToUiEffect(result);
       setMessages((prev) => [...prev, { ...message, id: nextId() }]);
-      if (clearInput || text === 'sim' || text === 'não') {
+      if (clearInput || isConfirmation) {
         setText('');
       }
     } catch {
@@ -131,6 +154,14 @@ export function ConversationPanel() {
     <div className="flex w-full flex-col gap-4">
       <h1 className="text-lg font-semibold text-ink">Conversa</h1>
 
+      {scheduleTaskTitle && (
+        <div className="rounded-xl border border-brand-200 bg-mist-50 p-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-brand-600">Agendar horário</p>
+          <p className="mt-1 font-medium text-ink">{scheduleTaskTitle}</p>
+          <p className="mt-1 text-sm text-ink-soft">Diga apenas o horário de hoje. Ex.: “15 horas”.</p>
+        </div>
+      )}
+
       <div
         ref={setLogElement}
         role="log"
@@ -156,7 +187,7 @@ export function ConversationPanel() {
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <Textarea
-          label="O que está ocupando sua mente?"
+          label={scheduleTaskTitle ? 'Que horário?' : 'O que está ocupando sua mente?'}
           maxLength={10000}
           value={text}
           onChange={handleTextChange}
